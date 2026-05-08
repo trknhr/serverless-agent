@@ -7,6 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "go:build": "./scripts/run-go.sh build ./...",
+    "go:test": "./scripts/run-go.sh test ./...",
     "synth": "cdk synth",
     "diff": "cdk diff",
     "deploy": "cdk deploy",
