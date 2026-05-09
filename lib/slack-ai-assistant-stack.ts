@@ -5,12 +5,12 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as eventsources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
-import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as scheduler from "aws-cdk-lib/aws-scheduler";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import { Construct } from "constructs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 export class SlackAiAssistantStack extends Stack {
@@ -216,25 +216,18 @@ export class SlackAiAssistantStack extends Stack {
       GOOGLE_CALENDAR_TIME_ZONE: googleCalendarTimeZone,
     };
 
-    const ingress = new nodejs.NodejsFunction(this, "SlackEventsIngressFunction", {
-      runtime: lambda.Runtime.NODEJS_20_X,
-      entry: join(__dirname, "../src/functions/slack-events-ingress/index.ts"),
-      handler: "handler",
+    const ingress = createGoFunction(this, "SlackEventsIngressFunction", {
+      entry: "slack-events-ingress",
       timeout: Duration.seconds(10),
       memorySize: 256,
       environment: {
         ...commonEnvironment,
         SLACK_QUEUE_URL: slackEventsQueue.queueUrl,
       },
-      bundling: {
-        target: "node20",
-      },
     });
 
-    const worker = new nodejs.NodejsFunction(this, "SlackEventsWorkerFunction", {
-      runtime: lambda.Runtime.NODEJS_20_X,
-      entry: join(__dirname, "../src/functions/slack-events-worker/index.ts"),
-      handler: "handler",
+    const worker = createGoFunction(this, "SlackEventsWorkerFunction", {
+      entry: "slack-events-worker",
       timeout: Duration.minutes(5),
       memorySize: 512,
       environment: {
@@ -243,15 +236,10 @@ export class SlackAiAssistantStack extends Stack {
         SOURCE_DOCUMENTS_TABLE_NAME: sourceDocumentsTable.tableName,
         SLACK_ATTACHMENT_ARCHIVE_BUCKET_NAME: attachmentArchiveBucket.bucketName,
       },
-      bundling: {
-        target: "node20",
-      },
     });
 
-    const documentImportApi = new nodejs.NodejsFunction(this, "DocumentImportApiFunction", {
-      runtime: lambda.Runtime.NODEJS_20_X,
-      entry: join(__dirname, "../src/functions/document-import-api/index.ts"),
-      handler: "handler",
+    const documentImportApi = createGoFunction(this, "DocumentImportApiFunction", {
+      entry: "document-import-api",
       timeout: Duration.seconds(30),
       memorySize: 256,
       environment: {
@@ -260,15 +248,10 @@ export class SlackAiAssistantStack extends Stack {
         DOCUMENT_IMPORT_QUEUE_URL: documentImportQueue.queueUrl,
         DOCUMENT_ARCHIVE_BUCKET_NAME: attachmentArchiveBucket.bucketName,
       },
-      bundling: {
-        target: "node20",
-      },
     });
 
-    const documentImportWorker = new nodejs.NodejsFunction(this, "DocumentImportWorkerFunction", {
-      runtime: lambda.Runtime.NODEJS_20_X,
-      entry: join(__dirname, "../src/functions/document-import-worker/index.ts"),
-      handler: "handler",
+    const documentImportWorker = createGoFunction(this, "DocumentImportWorkerFunction", {
+      entry: "document-import-worker",
       timeout: Duration.minutes(5),
       memorySize: 512,
       environment: {
@@ -277,60 +260,40 @@ export class SlackAiAssistantStack extends Stack {
         SOURCE_DOCUMENTS_TABLE_NAME: sourceDocumentsTable.tableName,
         DOCUMENT_ARCHIVE_BUCKET_NAME: attachmentArchiveBucket.bucketName,
       },
-      bundling: {
-        target: "node20",
-      },
     });
 
-    const chatApi = new nodejs.NodejsFunction(this, "ChatApiFunction", {
-      runtime: lambda.Runtime.NODEJS_20_X,
-      entry: join(__dirname, "../src/functions/chat-api/index.ts"),
-      handler: "handler",
+    const chatApi = createGoFunction(this, "ChatApiFunction", {
+      entry: "chat-api",
       timeout: Duration.seconds(29),
       memorySize: 512,
       environment: {
         ...commonEnvironment,
         ...toolEnvironment,
       },
-      bundling: {
-        target: "node20",
-      },
     });
 
-    const scheduledRunner = new nodejs.NodejsFunction(this, "ScheduledAgentRunnerFunction", {
-      runtime: lambda.Runtime.NODEJS_20_X,
-      entry: join(__dirname, "../src/functions/scheduled-agent-runner/index.ts"),
-      handler: "handler",
+    const scheduledRunner = createGoFunction(this, "ScheduledAgentRunnerFunction", {
+      entry: "scheduled-agent-runner",
       timeout: Duration.minutes(5),
       memorySize: 512,
       environment: {
         ...commonEnvironment,
         ...toolEnvironment,
       },
-      bundling: {
-        target: "node20",
-      },
     });
 
-    const slackInteractions = new nodejs.NodejsFunction(this, "SlackInteractionsFunction", {
-      runtime: lambda.Runtime.NODEJS_20_X,
-      entry: join(__dirname, "../src/functions/slack-interactions/index.ts"),
-      handler: "handler",
+    const slackInteractions = createGoFunction(this, "SlackInteractionsFunction", {
+      entry: "slack-interactions",
       timeout: Duration.seconds(30),
       memorySize: 512,
       environment: {
         ...commonEnvironment,
         ...toolEnvironment,
       },
-      bundling: {
-        target: "node20",
-      },
     });
 
-    const googleOAuth = new nodejs.NodejsFunction(this, "GoogleOAuthFunction", {
-      runtime: lambda.Runtime.NODEJS_20_X,
-      entry: join(__dirname, "../src/functions/google-oauth/index.ts"),
-      handler: "handler",
+    const googleOAuth = createGoFunction(this, "GoogleOAuthFunction", {
+      entry: "google-oauth",
       timeout: Duration.seconds(30),
       memorySize: 256,
       environment: {
@@ -338,9 +301,6 @@ export class SlackAiAssistantStack extends Stack {
         GOOGLE_CALENDAR_SECRET_ID: googleCalendarSecretName,
         GOOGLE_OAUTH_CONNECTIONS_TABLE_NAME: googleOAuthConnectionsTable.tableName,
         GOOGLE_CALENDAR_TIME_ZONE: googleCalendarTimeZone,
-      },
-      bundling: {
-        target: "node20",
       },
     });
 
@@ -618,6 +578,72 @@ function resolveOptionalConfigValue(stack: Stack, contextKey: string, envVarName
   }
 
   return undefined;
+}
+
+interface GoFunctionProps {
+  entry: string;
+  timeout: Duration;
+  memorySize: number;
+  environment: Record<string, string>;
+}
+
+function createGoFunction(scope: Construct, id: string, props: GoFunctionProps): lambda.Function {
+  const projectRoot = join(__dirname, "..");
+  const outputBinary = "bootstrap";
+  const goBuildArgs = [
+    "build",
+    "-trimpath",
+    "-ldflags=-s -w",
+    "-o",
+    outputBinary,
+    `./cmd/${props.entry}`,
+  ];
+
+  return new lambda.Function(scope, id, {
+    runtime: lambda.Runtime.PROVIDED_AL2023,
+    architecture: lambda.Architecture.X86_64,
+    handler: outputBinary,
+    timeout: props.timeout,
+    memorySize: props.memorySize,
+    environment: props.environment,
+    code: lambda.Code.fromAsset(projectRoot, {
+      bundling: {
+        image: cdk.DockerImage.fromRegistry("golang:1.26"),
+        local: {
+          tryBundle(outputDir: string) {
+            const result = spawnSync("./scripts/run-go.sh", [...goBuildArgs.slice(0, 4), join(outputDir, outputBinary), ...goBuildArgs.slice(5)], {
+              cwd: projectRoot,
+              stdio: "inherit",
+              env: {
+                ...process.env,
+                CGO_ENABLED: "0",
+                GOOS: "linux",
+                GOARCH: "amd64",
+              },
+            });
+            if (result.error || result.status !== 0) {
+              return false;
+            }
+            return true;
+          },
+        },
+        command: [
+          "bash",
+          "-c",
+          [
+            "set -euo pipefail",
+            "mkdir -p /asset-output",
+            "export PATH=/usr/local/go/bin:$PATH",
+            "export HOME=/tmp",
+            "export GOCACHE=/tmp/go-build",
+            "export GOMODCACHE=/tmp/go-mod",
+            "mkdir -p \"$GOCACHE\" \"$GOMODCACHE\"",
+            `cd /asset-input && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /asset-output/${outputBinary} ./cmd/${props.entry}`,
+          ].join(" && "),
+        ],
+      },
+    }),
+  });
 }
 
 function normalizeConfigValue(value: unknown): string | undefined {

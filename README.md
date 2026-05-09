@@ -89,19 +89,28 @@ Raw attachment archive
 ```text
 bin/
 lib/
-scripts/
-src/
-  aws/
-  claude/
+cmd/
+  <lambda>/main.go
+internal/
+  anthropic/
+  calendar/
   config/
-  functions/
-  memory/
-  repo/
-  shared/
+  conversations/
   documents/
+  integrations/
+  lambdahttp/
+  logger/
+  memory/
+  memorystore/
+  repo/
+  secrets/
   slack/
   tasks/
   tools/
+scripts/
+src/
+  ...
+  legacy TypeScript implementation retained during migration
 ```
 
 ## Prerequisites
@@ -113,7 +122,8 @@ src/
    - `/slack-ai-assistant/google-calendar`
 2. Prepare a Claude Managed Agent `agent_id` and `environment_id`
 3. If your MCP setup requires it, prepare one or more `vault_ids`
-4. Bootstrap CDK in the target AWS account and region
+4. Install Go `1.26+` locally or use Docker for CDK asset bundling fallback
+5. Bootstrap CDK in the target AWS account and region
 
 Google Calendar OAuth client secret JSON:
 
@@ -137,6 +147,7 @@ Add the deployed `GoogleOAuthCallbackUrl` output as an authorized redirect URI i
 
 ```bash
 npm install
+npm run go:test
 npx cdk deploy \
   -c anthropicAgentId=agent_0123456789 \
   -c anthropicEnvironmentId=env_0123456789 \
@@ -147,6 +158,8 @@ npx cdk deploy \
 
 Notes:
 
+- Lambda runtime code is built from `cmd/*` with shared packages in `internal/*`.
+- CDK remains in TypeScript and bundles Go binaries locally through `scripts/run-go.sh`, with Docker `golang:1.26` as a fallback.
 - `defaultScheduleChannel` lets the scheduled runner create a fallback task automatically if `daily-summary` is missing.
 - `anthropicVaultIds` accepts a comma-separated list.
 - `publicBaseUrl` is used inside Slack replies when a user needs to connect Google Calendar.
