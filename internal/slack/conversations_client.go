@@ -38,12 +38,13 @@ func (c *ConversationsClient) ListReplies(ctx context.Context, channel string, t
 	messages := make([]ThreadMessage, 0)
 	cursor := ""
 	for {
-		payload, err := c.call(ctx, "conversations.replies", map[string]any{
+		body := map[string]any{
 			"channel": channel,
 			"ts":      threadTS,
 			"limit":   200,
-			"cursor":  zeroToNil(cursor),
-		})
+		}
+		addStringIfPresent(body, "cursor", cursor)
+		payload, err := c.call(ctx, "conversations.replies", body)
 		if err != nil {
 			return nil, err
 		}

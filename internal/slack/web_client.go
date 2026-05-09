@@ -43,11 +43,7 @@ func (c *WebClient) PostMessage(ctx context.Context, input PostMessageInput) (st
 	chunks := text.SplitTextForSlack(text.NormalizeTextForSlack(input.Text), 3000)
 	var firstTS string
 	for index, chunk := range chunks {
-		payload := map[string]any{
-			"channel":   input.Channel,
-			"text":      chunk,
-			"thread_ts": zeroToNil(input.ThreadTS),
-		}
+		payload := postMessagePayload(input.Channel, chunk, input.ThreadTS)
 		if index == 0 && len(input.Blocks) > 0 {
 			payload["blocks"] = input.Blocks
 		}
@@ -68,12 +64,16 @@ func (c *WebClient) UpdateMessage(ctx context.Context, input UpdateMessageInput)
 		chunks = []string{""}
 	}
 
-	_, err := c.call(ctx, "chat.update", map[string]any{
+	payload := map[string]any{
 		"channel": input.Channel,
 		"ts":      input.TS,
 		"text":    chunks[0],
-		"blocks":  input.Blocks,
-	})
+	}
+	if len(input.Blocks) > 0 {
+		payload["blocks"] = input.Blocks
+	}
+
+	_, err := c.call(ctx, "chat.update", payload)
 	if err != nil {
 		return err
 	}
@@ -83,11 +83,7 @@ func (c *WebClient) UpdateMessage(ctx context.Context, input UpdateMessageInput)
 		threadTS = input.TS
 	}
 	for _, chunk := range chunks[1:] {
-		if _, err := c.call(ctx, "chat.postMessage", map[string]any{
-			"channel":   input.Channel,
-			"text":      chunk,
-			"thread_ts": threadTS,
-		}); err != nil {
+		if _, err := c.call(ctx, "chat.postMessage", postMessagePayload(input.Channel, chunk, threadTS)); err != nil {
 			return err
 		}
 	}
@@ -135,9 +131,17 @@ func (c *WebClient) call(ctx context.Context, method string, body map[string]any
 	return &payloadResponse, nil
 }
 
-func zeroToNil(value string) any {
-	if value == "" {
-		return nil
+func postMessagePayload(channel string, messageText string, threadTS string) map[string]any {
+	payload := map[string]any{
+		"channel": channel,
+		"text":    messageText,
 	}
-	return value
+	addStringIfPresent(payload, "thread_ts", threadTS)
+	return payload
+}
+
+func addStringIfPresent(payload map[string]any, key string, value string) {
+	if value != "" {
+		payload[key] = value
+	}
 }
