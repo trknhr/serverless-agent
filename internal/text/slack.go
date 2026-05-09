@@ -47,7 +47,7 @@ func NormalizeTextForSlack(text string) string {
 	return strings.TrimSpace(transformOutsideCode(text, func(segment string) string {
 		segment = linkPattern.ReplaceAllString(segment, "<$2|$1>")
 		segment = boldPattern.ReplaceAllString(segment, "*$1*")
-		segment = underlinePattern.ReplaceAllString(segment, "_$1_")
+		segment = underlinePattern.ReplaceAllString(segment, "_${1}_")
 		segment = strikethroughPattern.ReplaceAllString(segment, "~$1~")
 		return segment
 	}))
