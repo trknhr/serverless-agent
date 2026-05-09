@@ -84,8 +84,8 @@ func (s *AttachmentArchiveService) archiveAttachment(ctx context.Context, input 
 		UpdatedAt:        now,
 	}
 	if attachment.Status != "ready" || len(attachment.ContentBytes) == 0 {
-		_, err := s.repository.Save(ctx, document)
-		return err
+		s.persistDocument(ctx, input.Logger, document)
+		return nil
 	}
 
 	hash := sha256.Sum256(attachment.ContentBytes)
@@ -117,8 +117,8 @@ func (s *AttachmentArchiveService) archiveAttachment(ctx context.Context, input 
 	document.S3Bucket = s.bucketName
 	document.S3Key = s3Key
 	document.Status = "archived"
-	_, err = s.repository.Save(ctx, document)
-	return err
+	s.persistDocument(ctx, input.Logger, document)
+	return nil
 }
 
 func (s *AttachmentArchiveService) buildS3Key(workspaceID string, sourceID string, label string, mimeType string, timestamp string) string {
@@ -168,4 +168,15 @@ func zeroToNilString(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func (s *AttachmentArchiveService) persistDocument(ctx context.Context, log *logger.Logger, document documents.SourceDocument) {
+	_, err := s.repository.Save(ctx, document)
+	if err != nil && log != nil {
+		log.Warn("Source document metadata persist failed", logger.Fields{
+			"sourceId":    document.SourceID,
+			"slackFileId": document.SlackFileID,
+			"error":       err.Error(),
+		})
+	}
 }

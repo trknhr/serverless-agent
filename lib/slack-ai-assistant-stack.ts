@@ -621,18 +621,23 @@ function createGoFunction(scope: Construct, id: string, props: GoFunctionProps):
                 GOARCH: "amd64",
               },
             });
-            if (result.status !== 0) {
-              throw new Error(`Go bundling failed for ${props.entry}`);
+            if (result.error || result.status !== 0) {
+              return false;
             }
             return true;
           },
         },
         command: [
           "bash",
-          "-lc",
+          "-c",
           [
             "set -euo pipefail",
             "mkdir -p /asset-output",
+            "export PATH=/usr/local/go/bin:$PATH",
+            "export HOME=/tmp",
+            "export GOCACHE=/tmp/go-build",
+            "export GOMODCACHE=/tmp/go-mod",
+            "mkdir -p \"$GOCACHE\" \"$GOMODCACHE\"",
             `cd /asset-input && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /asset-output/${outputBinary} ./cmd/${props.entry}`,
           ].join(" && "),
         ],

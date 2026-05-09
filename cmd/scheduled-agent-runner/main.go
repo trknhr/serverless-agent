@@ -320,10 +320,10 @@ func autoCloseExpiredTasks(ctx context.Context, workspaceID string, scheduledAtI
 				CalendarEventID: task.CalendarEventID,
 				SourceType:      task.SourceType,
 				SourceRef:       task.SourceRef,
-				Metadata: map[string]any{
+				Metadata: mergeMetadata(task.Metadata, map[string]any{
 					"autoClosedReason": "expired",
 					"autoClosedAt":     scheduledAt.UTC().Format(time.RFC3339),
-				},
+				}),
 				CreatedAt: task.CreatedAt,
 			})
 			if err != nil {
@@ -421,4 +421,18 @@ func chooseString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func mergeMetadata(existing map[string]any, updates map[string]any) map[string]any {
+	if len(existing) == 0 && len(updates) == 0 {
+		return nil
+	}
+	merged := make(map[string]any, len(existing)+len(updates))
+	for key, value := range existing {
+		merged[key] = value
+	}
+	for key, value := range updates {
+		merged[key] = value
+	}
+	return merged
 }
