@@ -1,0 +1,7 @@
+node_modules
+dist
+cdk.out
+.git
+.DS_Store
+.env
+.env.*

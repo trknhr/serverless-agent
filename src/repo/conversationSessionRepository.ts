@@ -36,7 +36,7 @@ export class ConversationSessionRepository {
       workspaceId,
       channelId,
       conversationTs,
-      claudeSessionId: response.Item.claude_session_id,
+      agentRuntimeSessionId: response.Item.agent_runtime_session_id,
       memoryStoreId: response.Item.memory_store_id,
       createdAt: response.Item.created_at,
       lastUsedAt: response.Item.last_used_at,
@@ -50,7 +50,7 @@ export class ConversationSessionRepository {
         Item: {
           pk: buildPk(record.workspaceId, record.channelId),
           sk: buildSk(record.conversationTs),
-          claude_session_id: record.claudeSessionId,
+          agent_runtime_session_id: record.agentRuntimeSessionId,
           memory_store_id: record.memoryStoreId,
           created_at: record.createdAt,
           last_used_at: record.lastUsedAt,

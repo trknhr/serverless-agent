@@ -1,5 +1,5 @@
-import { ClaudeInputBlock } from "../claude/client";
-import { buildClaudeContentBlocksForDocument } from "../documents/contentBlocks";
+import { AgentContentBlock } from "../agent/types";
+import { buildAgentContentBlocksForDocument } from "../documents/contentBlocks";
 import { SlackFileReference } from "../shared/contracts";
 import {
   inferMimeTypeFromName,
@@ -37,7 +37,7 @@ export interface PreparedSlackAttachment {
   label: string;
   mimeType?: string;
   status: PreparedSlackAttachmentStatus;
-  contentBlocks: ClaudeInputBlock[];
+  contentBlocks: AgentContentBlock[];
   contentBytes?: Buffer;
 }
 
@@ -73,8 +73,8 @@ export class SlackFilesClient {
     return attachments;
   }
 
-  buildContentBlocks(attachments: PreparedSlackAttachment[], maxInlineFiles = 3): ClaudeInputBlock[] {
-    const blocks: ClaudeInputBlock[] = [];
+  buildContentBlocks(attachments: PreparedSlackAttachment[], maxInlineFiles = 3): AgentContentBlock[] {
+    const blocks: AgentContentBlock[] = [];
 
     for (const attachment of attachments.slice(0, maxInlineFiles)) {
       blocks.push(...attachment.contentBlocks);
@@ -178,7 +178,7 @@ export class SlackFilesClient {
       mimeType,
       status: "ready",
       contentBytes: buffer,
-      contentBlocks: buildClaudeContentBlocksForDocument(label, mimeType, buffer),
+      contentBlocks: buildAgentContentBlocksForDocument(label, mimeType, buffer),
     };
   }
 

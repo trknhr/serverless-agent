@@ -40,7 +40,7 @@ export interface ConversationSessionRecord {
   workspaceId: string;
   channelId: string;
   conversationTs: string;
-  claudeSessionId: string;
+  agentRuntimeSessionId?: string;
   memoryStoreId?: string;
   createdAt: string;
   lastUsedAt: string;

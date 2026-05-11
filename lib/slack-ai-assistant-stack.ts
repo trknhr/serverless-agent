@@ -5,39 +5,30 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as eventsources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as scheduler from "aws-cdk-lib/aws-scheduler";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sqs from "aws-cdk-lib/aws-sqs";
+import {
+  AgentCoreApplication,
+  type AgentCoreProjectSpec,
+  type DirectoryPath,
+  type FilePath,
+} from "@aws/agentcore-cdk";
 import { Construct } from "constructs";
-import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 export class SlackAiAssistantStack extends Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const anthropicAgentId = resolveRequiredConfigValue(
-      this,
-      "anthropicAgentId",
-      "ANTHROPIC_AGENT_ID",
-    );
-    const anthropicEnvironmentId = resolveRequiredConfigValue(
-      this,
-      "anthropicEnvironmentId",
-      "ANTHROPIC_ENVIRONMENT_ID",
-    );
-    const anthropicVaultIds =
-      resolveOptionalConfigValue(this, "anthropicVaultIds", "ANTHROPIC_VAULT_IDS") ?? "";
     const slackSigningSecretName =
       resolveOptionalConfigValue(this, "slackSigningSecretName", "SLACK_SIGNING_SECRET_NAME") ??
       "/slack-ai-assistant/slack-signing-secret";
     const slackBotTokenSecretName =
       resolveOptionalConfigValue(this, "slackBotTokenSecretName", "SLACK_BOT_TOKEN_SECRET_NAME") ??
       "/slack-ai-assistant/slack-bot-token";
-    const anthropicApiKeySecretName =
-      resolveOptionalConfigValue(this, "anthropicApiKeySecretName", "ANTHROPIC_API_KEY_SECRET_NAME") ??
-      "/slack-ai-assistant/anthropic-api-key";
     const googleCalendarSecretName =
       resolveOptionalConfigValue(this, "googleCalendarSecretName", "GOOGLE_CALENDAR_SECRET_NAME") ??
       "/slack-ai-assistant/google-calendar";
@@ -50,6 +41,10 @@ export class SlackAiAssistantStack extends Stack {
     const googleOAuthStartUrl = publicBaseUrl
       ? `${trimTrailingSlash(publicBaseUrl)}/oauth/google/start`
       : undefined;
+    const agentCoreRuntimeQualifier =
+      resolveOptionalConfigValue(this, "agentCoreRuntimeQualifier", "AGENTCORE_RUNTIME_QUALIFIER") ?? "";
+    const bedrockModelId =
+      resolveOptionalConfigValue(this, "bedrockModelId", "BEDROCK_MODEL_ID") ?? "moonshotai.kimi-k2.5";
 
     const sessionTable = new dynamodb.Table(this, "SlackThreadSessionsTable", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
@@ -184,6 +179,16 @@ export class SlackAiAssistantStack extends Stack {
       },
     });
 
+    const agentCoreApplication = new AgentCoreApplication(this, "AgentCoreApplication", {
+      spec: buildAgentCoreProjectSpec({
+        bedrockModelId,
+      }),
+    });
+    const slackAgentRuntime = agentCoreApplication.environments.get("SlackAgent")?.runtime;
+    if (!slackAgentRuntime) {
+      throw new Error("AgentCore runtime SlackAgent was not created.");
+    }
+
     const commonEnvironment = {
       SESSION_TABLE_NAME: sessionTable.tableName,
       CONVERSATION_SESSIONS_TABLE_NAME: conversationSessionsTable.tableName,
@@ -196,12 +201,8 @@ export class SlackAiAssistantStack extends Stack {
       TASK_TABLE_NAME: scheduledTasksTable.tableName,
       SLACK_SIGNING_SECRET_SECRET_ID: slackSigningSecretName,
       SLACK_BOT_TOKEN_SECRET_ID: slackBotTokenSecretName,
-      ANTHROPIC_API_KEY_SECRET_ID: anthropicApiKeySecretName,
-      ANTHROPIC_AGENT_ID: anthropicAgentId,
-      ANTHROPIC_ENVIRONMENT_ID: anthropicEnvironmentId,
-      ANTHROPIC_VAULT_IDS: anthropicVaultIds,
-      ANTHROPIC_MANAGED_AGENTS_BETA: "managed-agents-2026-04-01",
-      ENABLE_USER_MEMORY: "false",
+      AGENTCORE_RUNTIME_ARN: slackAgentRuntime.runtimeArn,
+      AGENTCORE_RUNTIME_QUALIFIER: agentCoreRuntimeQualifier,
       DEFAULT_SCHEDULE_CHANNEL: defaultScheduleChannel,
       EVENT_DEDUP_TTL_SECONDS: "86400",
       AGENT_RESPONSE_TIMEOUT_MS: "120000",
@@ -216,7 +217,7 @@ export class SlackAiAssistantStack extends Stack {
       GOOGLE_CALENDAR_TIME_ZONE: googleCalendarTimeZone,
     };
 
-    const ingress = createGoFunction(this, "SlackEventsIngressFunction", {
+    const ingress = createNodeFunction(this, "SlackEventsIngressFunction", {
       entry: "slack-events-ingress",
       timeout: Duration.seconds(10),
       memorySize: 256,
@@ -226,7 +227,7 @@ export class SlackAiAssistantStack extends Stack {
       },
     });
 
-    const worker = createGoFunction(this, "SlackEventsWorkerFunction", {
+    const worker = createNodeFunction(this, "SlackEventsWorkerFunction", {
       entry: "slack-events-worker",
       timeout: Duration.minutes(5),
       memorySize: 512,
@@ -238,7 +239,7 @@ export class SlackAiAssistantStack extends Stack {
       },
     });
 
-    const documentImportApi = createGoFunction(this, "DocumentImportApiFunction", {
+    const documentImportApi = createNodeFunction(this, "DocumentImportApiFunction", {
       entry: "document-import-api",
       timeout: Duration.seconds(30),
       memorySize: 256,
@@ -250,7 +251,7 @@ export class SlackAiAssistantStack extends Stack {
       },
     });
 
-    const documentImportWorker = createGoFunction(this, "DocumentImportWorkerFunction", {
+    const documentImportWorker = createNodeFunction(this, "DocumentImportWorkerFunction", {
       entry: "document-import-worker",
       timeout: Duration.minutes(5),
       memorySize: 512,
@@ -262,7 +263,7 @@ export class SlackAiAssistantStack extends Stack {
       },
     });
 
-    const chatApi = createGoFunction(this, "ChatApiFunction", {
+    const chatApi = createNodeFunction(this, "ChatApiFunction", {
       entry: "chat-api",
       timeout: Duration.seconds(29),
       memorySize: 512,
@@ -272,7 +273,7 @@ export class SlackAiAssistantStack extends Stack {
       },
     });
 
-    const scheduledRunner = createGoFunction(this, "ScheduledAgentRunnerFunction", {
+    const scheduledRunner = createNodeFunction(this, "ScheduledAgentRunnerFunction", {
       entry: "scheduled-agent-runner",
       timeout: Duration.minutes(5),
       memorySize: 512,
@@ -282,7 +283,7 @@ export class SlackAiAssistantStack extends Stack {
       },
     });
 
-    const slackInteractions = createGoFunction(this, "SlackInteractionsFunction", {
+    const slackInteractions = createNodeFunction(this, "SlackInteractionsFunction", {
       entry: "slack-interactions",
       timeout: Duration.seconds(30),
       memorySize: 512,
@@ -292,7 +293,7 @@ export class SlackAiAssistantStack extends Stack {
       },
     });
 
-    const googleOAuth = createGoFunction(this, "GoogleOAuthFunction", {
+    const googleOAuth = createNodeFunction(this, "GoogleOAuthFunction", {
       entry: "google-oauth",
       timeout: Duration.seconds(30),
       memorySize: 256,
@@ -375,11 +376,6 @@ export class SlackAiAssistantStack extends Stack {
       "SlackBotTokenSecret",
       slackBotTokenSecretName,
     );
-    const anthropicApiKeySecret = secretsmanager.Secret.fromSecretNameV2(
-      this,
-      "AnthropicApiKeySecret",
-      anthropicApiKeySecretName,
-    );
     const googleCalendarSecret = secretsmanager.Secret.fromSecretNameV2(
       this,
       "GoogleCalendarSecret",
@@ -392,16 +388,43 @@ export class SlackAiAssistantStack extends Stack {
     slackBotTokenSecret.grantRead(worker);
     slackBotTokenSecret.grantRead(scheduledRunner);
     slackBotTokenSecret.grantRead(slackInteractions);
-    anthropicApiKeySecret.grantRead(worker);
-    anthropicApiKeySecret.grantRead(scheduledRunner);
-    anthropicApiKeySecret.grantRead(documentImportWorker);
-    anthropicApiKeySecret.grantRead(chatApi);
     googleCalendarSecret.grantRead(worker);
     googleCalendarSecret.grantRead(scheduledRunner);
     googleCalendarSecret.grantRead(documentImportWorker);
     googleCalendarSecret.grantRead(chatApi);
     googleCalendarSecret.grantRead(slackInteractions);
     googleCalendarSecret.grantRead(googleOAuth);
+    googleCalendarSecret.grantRead(slackAgentRuntime.role);
+
+    memoryItemsTable.grantReadWriteData(slackAgentRuntime.role);
+    tasksTable.grantReadWriteData(slackAgentRuntime.role);
+    taskEventsTable.grantReadWriteData(slackAgentRuntime.role);
+    calendarDraftsTable.grantReadWriteData(slackAgentRuntime.role);
+    googleOAuthConnectionsTable.grantReadWriteData(slackAgentRuntime.role);
+    slackAgentRuntime.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+        resources: ["*"],
+      }),
+    );
+    slackAgentRuntime.grantInvoke(worker);
+    slackAgentRuntime.grantInvoke(scheduledRunner);
+    slackAgentRuntime.grantInvoke(documentImportWorker);
+    slackAgentRuntime.grantInvoke(chatApi);
+    for (const agentInvoker of [worker, scheduledRunner, documentImportWorker, chatApi]) {
+      agentInvoker.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: [
+            "bedrock-agentcore:InvokeAgentRuntime",
+            "bedrock-agentcore:InvokeAgentRuntimeForUser",
+          ],
+          resources: [
+            slackAgentRuntime.runtimeArn,
+            cdk.Fn.join("", [slackAgentRuntime.runtimeArn, "/runtime-endpoint/*"]),
+          ],
+        }),
+      );
+    }
 
     const api = new apigateway.RestApi(this, "SlackEventsApi", {
       restApiName: "slack-ai-assistant-events",
@@ -580,70 +603,62 @@ function resolveOptionalConfigValue(stack: Stack, contextKey: string, envVarName
   return undefined;
 }
 
-interface GoFunctionProps {
+interface NodeFunctionProps {
   entry: string;
   timeout: Duration;
   memorySize: number;
   environment: Record<string, string>;
 }
 
-function createGoFunction(scope: Construct, id: string, props: GoFunctionProps): lambda.Function {
-  const projectRoot = join(__dirname, "..");
-  const outputBinary = "bootstrap";
-  const goBuildArgs = [
-    "build",
-    "-trimpath",
-    "-ldflags=-s -w",
-    "-o",
-    outputBinary,
-    `./cmd/${props.entry}`,
-  ];
-
-  return new lambda.Function(scope, id, {
-    runtime: lambda.Runtime.PROVIDED_AL2023,
-    architecture: lambda.Architecture.X86_64,
-    handler: outputBinary,
+function createNodeFunction(scope: Construct, id: string, props: NodeFunctionProps): nodejs.NodejsFunction {
+  return new nodejs.NodejsFunction(scope, id, {
+    runtime: lambda.Runtime.NODEJS_20_X,
+    entry: join(__dirname, `../src/functions/${props.entry}/index.ts`),
+    handler: "handler",
     timeout: props.timeout,
     memorySize: props.memorySize,
     environment: props.environment,
-    code: lambda.Code.fromAsset(projectRoot, {
-      bundling: {
-        image: cdk.DockerImage.fromRegistry("golang:1.26"),
-        local: {
-          tryBundle(outputDir: string) {
-            const result = spawnSync("./scripts/run-go.sh", [...goBuildArgs.slice(0, 4), join(outputDir, outputBinary), ...goBuildArgs.slice(5)], {
-              cwd: projectRoot,
-              stdio: "inherit",
-              env: {
-                ...process.env,
-                CGO_ENABLED: "0",
-                GOOS: "linux",
-                GOARCH: "amd64",
-              },
-            });
-            if (result.error || result.status !== 0) {
-              return false;
-            }
-            return true;
+    bundling: {
+      target: "node20",
+    },
+  });
+}
+
+function buildAgentCoreProjectSpec(input: { bedrockModelId: string }): AgentCoreProjectSpec {
+  return {
+    name: "SlackAiAssistant",
+    version: 1,
+    managedBy: "CDK",
+    tags: {
+      "agentcore:created-by": "cdk",
+      "agentcore:project-name": "SlackAiAssistant",
+    },
+    runtimes: [
+      {
+        name: "SlackAgent",
+        build: "Container",
+        entrypoint: "src/agentcore/runtime.ts" as FilePath,
+        codeLocation: "app/SlackAgent/" as DirectoryPath,
+        dockerfile: "Dockerfile",
+        runtimeVersion: "NODE_22",
+        networkMode: "PUBLIC",
+        protocol: "HTTP",
+        envVars: [
+          {
+            name: "BEDROCK_MODEL_ID",
+            value: input.bedrockModelId,
           },
-        },
-        command: [
-          "bash",
-          "-c",
-          [
-            "set -euo pipefail",
-            "mkdir -p /asset-output",
-            "export PATH=/usr/local/go/bin:$PATH",
-            "export HOME=/tmp",
-            "export GOCACHE=/tmp/go-build",
-            "export GOMODCACHE=/tmp/go-mod",
-            "mkdir -p \"$GOCACHE\" \"$GOMODCACHE\"",
-            `cd /asset-input && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /asset-output/${outputBinary} ./cmd/${props.entry}`,
-          ].join(" && "),
         ],
       },
-    }),
-  });
+    ],
+    memories: [],
+    credentials: [],
+    evaluators: [],
+    onlineEvalConfigs: [],
+    agentCoreGateways: [],
+    policyEngines: [],
+    configBundles: [],
+  };
 }
 
 function normalizeConfigValue(value: unknown): string | undefined {

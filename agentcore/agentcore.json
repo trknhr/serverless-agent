@@ -1,0 +1,29 @@
+{
+  "$schema": "https://schema.agentcore.aws.dev/v1/agentcore.json",
+  "name": "SlackAiAssistant",
+  "version": 1,
+  "managedBy": "CDK",
+  "tags": {
+    "agentcore:created-by": "cdk",
+    "agentcore:project-name": "SlackAiAssistant"
+  },
+  "runtimes": [
+    {
+      "name": "SlackAgent",
+      "build": "Container",
+      "entrypoint": "src/agentcore/runtime.ts",
+      "codeLocation": "app/SlackAgent/",
+      "dockerfile": "Dockerfile",
+      "runtimeVersion": "NODE_22",
+      "networkMode": "PUBLIC",
+      "protocol": "HTTP"
+    }
+  ],
+  "memories": [],
+  "credentials": [],
+  "evaluators": [],
+  "onlineEvalConfigs": [],
+  "agentCoreGateways": [],
+  "policyEngines": [],
+  "configBundles": []
+}

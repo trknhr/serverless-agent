@@ -10,7 +10,8 @@ import { TaskStateRepository } from "../../repo/taskStateRepository";
 import { logger } from "../../shared/logger";
 import { SlackWebClient } from "../../slack/postMessage";
 import { verifySlackSignature } from "../../slack/verifySignature";
-import { CustomToolExecutor, ToolExecutionResult } from "../../tools/executeCustomTool";
+import { ToolExecutionResult } from "../../agent/types";
+import { CustomToolExecutor } from "../../tools/executeCustomTool";
 
 interface SlackInteractionPayload {
   user?: { id?: string };

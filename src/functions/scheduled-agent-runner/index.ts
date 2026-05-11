@@ -1,15 +1,8 @@
 import type { EventBridgeEvent } from "aws-lambda";
+import { AgentCoreRuntimeClient } from "../../agentcore/client";
+import { buildAgentRuntimeResources } from "../../agentcore/contracts";
 import { SecretsProvider } from "../../aws/secretsProvider";
-import { createUserGoogleCalendarClient } from "../../calendar/userGoogleCalendar";
-import { AnthropicManagedAgentsClient } from "../../claude/client";
-import { createSession } from "../../claude/createSession";
-import { sendUserMessage } from "../../claude/sendUserMessage";
-import { waitForCompletion } from "../../claude/waitForCompletion";
 import { loadSchedulerEnv } from "../../config/env";
-import { SCHEDULED_MEMORY_RESOURCE_PROMPT } from "../../memory/instructions";
-import { CalendarDraftRepository } from "../../repo/calendarDraftRepository";
-import { GoogleOAuthConnectionRepository } from "../../repo/googleOAuthConnectionRepository";
-import { MemoryItemRepository } from "../../repo/memoryItemRepository";
 import { SessionRepository } from "../../repo/sessionRepository";
 import { TaskEventRepository } from "../../repo/taskEventRepository";
 import { TaskRepository } from "../../repo/taskRepository";
@@ -19,7 +12,6 @@ import { SlackAuthClient } from "../../slack/authTest";
 import { SlackWebClient } from "../../slack/postMessage";
 import { ScheduledTask } from "../../tasks/taskDefinition";
 import { TaskState } from "../../tasks/taskState";
-import { CustomToolExecutor } from "../../tools/executeCustomTool";
 
 interface SchedulerPayload {
   taskId?: string;
@@ -27,7 +19,6 @@ interface SchedulerPayload {
   outputChannelId?: string;
   prompt?: string;
   name?: string;
-  vaultIds?: string[];
   persistTask?: boolean;
 }
 
@@ -35,19 +26,16 @@ const SCHEDULE_TIMEZONE = "Asia/Tokyo";
 
 const env = loadSchedulerEnv();
 const secretsProvider = new SecretsProvider();
-const claudeClient = new AnthropicManagedAgentsClient({
-  apiKeyProvider: () => secretsProvider.getSecretString(env.ANTHROPIC_API_KEY_SECRET_ID),
-  beta: env.ANTHROPIC_MANAGED_AGENTS_BETA,
+const agentClient = new AgentCoreRuntimeClient({
+  runtimeArn: env.AGENTCORE_RUNTIME_ARN,
+  qualifier: env.AGENTCORE_RUNTIME_QUALIFIER,
 });
 const slackClient = new SlackWebClient(() =>
   secretsProvider.getSecretString(env.SLACK_BOT_TOKEN_SECRET_ID),
 );
-const calendarDraftRepository = new CalendarDraftRepository(env.CALENDAR_DRAFTS_TABLE_NAME);
-const googleOAuthConnectionRepository = new GoogleOAuthConnectionRepository(env.GOOGLE_OAUTH_CONNECTIONS_TABLE_NAME);
 const slackAuthClient = new SlackAuthClient(() =>
   secretsProvider.getSecretString(env.SLACK_BOT_TOKEN_SECRET_ID),
 );
-const memoryItemRepository = new MemoryItemRepository(env.MEMORY_ITEMS_TABLE_NAME);
 const taskRepository = new TaskRepository(env.TASK_TABLE_NAME);
 const taskEventRepository = new TaskEventRepository(env.TASK_EVENTS_TABLE_NAME);
 const taskStateRepository = new TaskStateRepository(env.TASKS_TABLE_NAME);
@@ -82,77 +70,25 @@ export async function handler(
   const reusableSessionRecord = task.reuseSession
     ? await sessionRepository.findByThread(task.workspaceId, task.outputChannelId, task.taskId)
     : null;
-  let sessionId: string | null = null;
-  sessionId = reusableSessionRecord?.sessionId ?? null;
-
-  if (!sessionId) {
-    const session = await createSession(claudeClient, {
-      agentId: task.agentIdOverride ?? env.ANTHROPIC_AGENT_ID,
-      environmentId: task.environmentIdOverride ?? env.ANTHROPIC_ENVIRONMENT_ID,
-      vaultIds: resolveVaultIds(task, detail),
-      title: `Scheduled task ${task.taskId}`,
-      metadata: {
+  const completion = await agentClient.invoke({
+    sessionId: reusableSessionRecord?.sessionId,
+    request: {
+      content: [
+        {
+          type: "text",
+          text: buildScheduledPrompt(task.prompt, scheduledAtIso, autoClosedTasks),
+        },
+      ],
+      context: {
         source: "scheduler",
-        task_id: task.taskId,
-        workspace_id: task.workspaceId,
+        workspaceId: task.workspaceId,
+        taskId: task.taskId,
       },
-      memoryResources: task.memoryStoreId
-        ? [
-            {
-              memoryStoreId: task.memoryStoreId,
-              access: "read_write",
-              prompt: SCHEDULED_MEMORY_RESOURCE_PROMPT,
-            },
-          ]
-        : [],
-    });
-    sessionId = session.id;
-  }
-
-  const seenEventIds = new Set(
-    (await claudeClient.listSessionEvents(sessionId, { order: "asc" })).map((sessionEvent) => sessionEvent.id),
-  );
-  const customToolExecutor = new CustomToolExecutor(
-    {
-      memoryItems: memoryItemRepository,
-      tasks: taskStateRepository,
-      taskEvents: taskEventRepository,
-      calendarDrafts: calendarDraftRepository,
-    },
-    {
-      workspaceId: task.workspaceId,
-      logger: log,
-    },
-    {
-      googleCalendarProvider: () =>
-        createUserGoogleCalendarClient({
-          workspaceId: task.workspaceId,
-          userId: undefined,
-          defaultTimeZone: env.GOOGLE_CALENDAR_TIME_ZONE,
-          googleCalendarSecretId: env.GOOGLE_CALENDAR_SECRET_ID,
-          googleOAuthStartUrl: env.GOOGLE_OAUTH_START_URL,
-          secretsProvider,
-          connections: googleOAuthConnectionRepository,
-        }),
-      defaultCalendarTimeZone: env.GOOGLE_CALENDAR_TIME_ZONE,
-    },
-  );
-
-  await sendUserMessage(claudeClient, {
-    sessionId,
-    content: [
-      {
-        type: "text",
-        text: buildScheduledPrompt(task.prompt, scheduledAtIso, autoClosedTasks),
+      resources: buildAgentRuntimeResources(env),
+      toolContext: {
+        workspaceId: task.workspaceId,
       },
-    ],
-  });
-
-  const completion = await waitForCompletion(claudeClient, {
-    sessionId,
-    sinceEventIds: seenEventIds,
-    timeoutMs: env.AGENT_RESPONSE_TIMEOUT_MS,
-    onCustomToolUse: (event) => customToolExecutor.execute(event),
+    },
   });
 
   await slackClient.postMessage({
@@ -160,7 +96,11 @@ export async function handler(
     text: completion.text,
   });
 
+  const sessionId = completion.sessionId ?? reusableSessionRecord?.sessionId;
   if (task.reuseSession) {
+    if (!sessionId) {
+      throw new Error("AgentCore did not return a reusable runtime session id");
+    }
     const now = new Date().toISOString();
     await sessionRepository.save({
       workspaceId: task.workspaceId,
@@ -276,7 +216,6 @@ async function buildFallbackTask(
     outputChannelId,
     enabled: true,
     reuseSession: false,
-    vaultIds: resolveVaultIds(undefined, detail),
     createdAt: now,
     updatedAt: now,
   };
@@ -292,21 +231,6 @@ function resolveOutputChannelId(payloadChannelId?: string): string | null {
   }
 
   return null;
-}
-
-function resolveVaultIds(
-  task?: Pick<ScheduledTask, "vaultIds">,
-  detail?: Pick<SchedulerPayload, "vaultIds">,
-): string[] {
-  if (detail?.vaultIds && detail.vaultIds.length > 0) {
-    return detail.vaultIds;
-  }
-
-  if (task?.vaultIds && task.vaultIds.length > 0) {
-    return task.vaultIds;
-  }
-
-  return env.ANTHROPIC_VAULT_IDS;
 }
 
 function resolveScheduledAtIso(

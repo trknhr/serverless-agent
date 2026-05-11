@@ -1,39 +1,26 @@
 import type { SQSEvent } from "aws-lambda";
+import { AgentCoreRuntimeClient } from "../../agentcore/client";
+import { buildAgentRuntimeResources } from "../../agentcore/contracts";
 import { SecretsProvider } from "../../aws/secretsProvider";
 import { CalendarDraft } from "../../calendar/calendarDraft";
 import { buildSlackContextBlocks, buildTurnText } from "../../conversations/buildSlackContextBlocks";
-import { AnthropicManagedAgentsClient } from "../../claude/client";
-import { createSession } from "../../claude/createSession";
-import { sendUserMessage } from "../../claude/sendUserMessage";
-import { waitForCompletion } from "../../claude/waitForCompletion";
 import { loadWorkerEnv } from "../../config/env";
-import { MEMORY_RESOURCE_PROMPT } from "../../memory/instructions";
-import { createUserGoogleCalendarClient } from "../../calendar/userGoogleCalendar";
 import { CalendarDraftRepository } from "../../repo/calendarDraftRepository";
-import { ChannelMemoryRepository } from "../../repo/channelMemoryRepository";
-import { MemoryStoreService } from "../../memory/getOrCreateMemoryStore";
-import { MemoryItemRepository } from "../../repo/memoryItemRepository";
 import { ConversationSessionRepository } from "../../repo/conversationSessionRepository";
 import { ConversationTurnRepository } from "../../repo/conversationTurnRepository";
-import { GoogleOAuthConnectionRepository } from "../../repo/googleOAuthConnectionRepository";
 import { SourceDocumentRepository } from "../../repo/sourceDocumentRepository";
-import { TaskEventRepository } from "../../repo/taskEventRepository";
-import { TaskStateRepository } from "../../repo/taskStateRepository";
-import { UserMemoryRepository } from "../../repo/userMemoryRepository";
-import { UserPreferenceRepository } from "../../repo/userPreferenceRepository";
 import { ConversationSessionRecord, ConversationTurnRecord, slackQueueMessageSchema } from "../../shared/contracts";
 import { logger } from "../../shared/logger";
 import { SlackConversationsClient, SlackThreadMessage } from "../../slack/conversationsClient";
 import { SlackFilesClient } from "../../slack/filesClient";
 import { SlackAttachmentArchiveService } from "../../slack/slackAttachmentArchiveService";
 import { SlackBlock, SlackWebClient } from "../../slack/postMessage";
-import { CustomToolExecutor } from "../../tools/executeCustomTool";
 
 const env = loadWorkerEnv();
 const secretsProvider = new SecretsProvider();
-const claudeClient = new AnthropicManagedAgentsClient({
-  apiKeyProvider: () => secretsProvider.getSecretString(env.ANTHROPIC_API_KEY_SECRET_ID),
-  beta: env.ANTHROPIC_MANAGED_AGENTS_BETA,
+const agentClient = new AgentCoreRuntimeClient({
+  runtimeArn: env.AGENTCORE_RUNTIME_ARN,
+  qualifier: env.AGENTCORE_RUNTIME_QUALIFIER,
 });
 const slackClient = new SlackWebClient(() =>
   secretsProvider.getSecretString(env.SLACK_BOT_TOKEN_SECRET_ID),
@@ -46,17 +33,9 @@ const slackFilesClient = new SlackFilesClient(
   env.MAX_SLACK_FILE_BYTES,
 );
 const calendarDraftRepository = new CalendarDraftRepository(env.CALENDAR_DRAFTS_TABLE_NAME);
-const memoryItemRepository = new MemoryItemRepository(env.MEMORY_ITEMS_TABLE_NAME);
-const channelMemoryRepository = new ChannelMemoryRepository(env.MEMORY_ITEMS_TABLE_NAME);
 const conversationSessionRepository = new ConversationSessionRepository(env.CONVERSATION_SESSIONS_TABLE_NAME);
 const conversationTurnRepository = new ConversationTurnRepository(env.CONVERSATION_TURNS_TABLE_NAME);
 const sourceDocumentRepository = new SourceDocumentRepository(env.SOURCE_DOCUMENTS_TABLE_NAME);
-const taskEventRepository = new TaskEventRepository(env.TASK_EVENTS_TABLE_NAME);
-const taskStateRepository = new TaskStateRepository(env.TASKS_TABLE_NAME);
-const userMemoryRepository = new UserMemoryRepository(env.USER_MEMORY_TABLE_NAME);
-const userPreferenceRepository = new UserPreferenceRepository(env.MEMORY_ITEMS_TABLE_NAME);
-const googleOAuthConnectionRepository = new GoogleOAuthConnectionRepository(env.GOOGLE_OAUTH_CONNECTIONS_TABLE_NAME);
-const memoryStoreService = new MemoryStoreService(userMemoryRepository, claudeClient);
 const attachmentArchiveService = new SlackAttachmentArchiveService(
   env.SLACK_ATTACHMENT_ARCHIVE_BUCKET_NAME,
   sourceDocumentRepository,
@@ -87,61 +66,21 @@ export async function handler(event: SQSEvent): Promise<void> {
       continue;
     }
 
-    let memoryStoreId = existingSession?.memoryStoreId;
-    if (env.ENABLE_USER_MEMORY && !memoryStoreId) {
-      const memoryStore = await memoryStoreService.getOrCreateMemoryStore({
-        workspaceId: queueMessage.workspaceId,
-        userId: queueMessage.userId,
-      });
-      memoryStoreId = memoryStore.memoryStoreId;
-    }
-
     const sessionRecord =
       existingSession ??
       createConversationSession(
         queueMessage.workspaceId,
         queueMessage.channelId,
         queueMessage.conversationTs,
-        memoryStoreId,
       );
 
     if (!existingSession) {
-      const session = await createSession(claudeClient, {
-        agentId: env.ANTHROPIC_AGENT_ID,
-        environmentId: env.ANTHROPIC_ENVIRONMENT_ID,
-        vaultIds: env.ANTHROPIC_VAULT_IDS,
-        title: `Slack conversation ${queueMessage.channelId}/${queueMessage.conversationTs}`,
-        metadata: {
-          workspace_id: queueMessage.workspaceId,
-          channel_id: queueMessage.channelId,
-          conversation_ts: queueMessage.conversationTs,
-          ...(queueMessage.replyThreadTs ? { reply_thread_ts: queueMessage.replyThreadTs } : {}),
-          source: "slack",
-        },
-        memoryResources: memoryStoreId
-          ? [
-              {
-                memoryStoreId,
-                access: "read_write",
-                prompt: MEMORY_RESOURCE_PROMPT,
-              },
-            ]
-          : [],
-      });
-      sessionRecord.claudeSessionId = session.id;
-      sessionRecord.lastUsedAt = now;
       await conversationSessionRepository.save(sessionRecord);
 
       if (queueMessage.contextScope === "thread") {
         await backfillThreadHistory(queueMessage, log);
       }
     }
-
-    const seenEventIds = new Set(
-      (await claudeClient.listSessionEvents(sessionRecord.claudeSessionId, { order: "asc" })).map(
-        (sessionEvent) => sessionEvent.id,
-      ),
-    );
 
     const preparedAttachments = await slackFilesClient.prepareAttachments(queueMessage.files);
     await attachmentArchiveService.archiveAttachments({
@@ -183,87 +122,42 @@ export async function handler(event: SQSEvent): Promise<void> {
       text: buildTurnText(queueMessage.text, queueMessage.files),
     });
 
-    const customToolExecutor = new CustomToolExecutor(
-      {
-        memoryItems: memoryItemRepository,
-        channelMemories: channelMemoryRepository,
-        userPreferences: userPreferenceRepository,
-        tasks: taskStateRepository,
-        taskEvents: taskEventRepository,
-        calendarDrafts: calendarDraftRepository,
-      },
-      {
-        workspaceId: queueMessage.workspaceId,
-        userId: queueMessage.userId,
-        channelId: queueMessage.channelId,
-        logger: log,
-        memoryWritePolicy: {
-          allowWorkspaceMemory: false,
-          channelInferredStatus: "candidate",
-          defaultOrigin: "inferred",
-        },
-      },
-      {
-        googleCalendarProvider: () =>
-          createUserGoogleCalendarClient({
-            workspaceId: queueMessage.workspaceId,
-            userId: queueMessage.userId,
-            defaultTimeZone: env.GOOGLE_CALENDAR_TIME_ZONE,
-            googleCalendarSecretId: env.GOOGLE_CALENDAR_SECRET_ID,
-            googleOAuthStartUrl: env.GOOGLE_OAUTH_START_URL,
-            secretsProvider,
-            connections: googleOAuthConnectionRepository,
-          }),
-        defaultCalendarTimeZone: env.GOOGLE_CALENDAR_TIME_ZONE,
-      },
-    );
-
-    await sendUserMessage(claudeClient, {
-      sessionId: sessionRecord.claudeSessionId,
-      content: buildSlackContextBlocks({
-        contextScope: queueMessage.contextScope,
-        priorTurns,
-        currentText: queueMessage.text,
-        attachmentBlocks,
-      }),
-    });
-
     const thinkingMessage = await slackClient.postMessage({
       channel: queueMessage.channelId,
       threadTs: queueMessage.replyThreadTs,
       text: "考え中です...",
     });
-    let lastThinkingText = "考え中です...";
-    const updateThinkingMessage = async (text: string): Promise<void> => {
-      if (!thinkingMessage.ts || text === lastThinkingText) {
-        return;
-      }
 
-      try {
-        await slackClient.updateMessage({
-          channel: queueMessage.channelId,
-          ts: thinkingMessage.ts,
-          threadTs: queueMessage.replyThreadTs,
-          text,
-        });
-        lastThinkingText = text;
-      } catch (error) {
-        log.warn("Failed to update Slack thinking message", {
-          error: error instanceof Error ? error.message : "Unknown Slack update error",
-        });
-      }
-    };
-
-    const completion = await waitForCompletion(claudeClient, {
-      sessionId: sessionRecord.claudeSessionId,
-      sinceEventIds: seenEventIds,
-      timeoutMs: env.AGENT_RESPONSE_TIMEOUT_MS,
-      onCustomToolUse: async (event) => {
-        await updateThinkingMessage(describeToolProgress(event.name));
-        return customToolExecutor.execute(event);
+    const completion = await agentClient.invoke({
+      sessionId: sessionRecord.agentRuntimeSessionId,
+      runtimeUserId: queueMessage.userId,
+      request: {
+        content: buildSlackContextBlocks({
+          contextScope: queueMessage.contextScope,
+          priorTurns,
+          currentText: queueMessage.text,
+          attachmentBlocks,
+        }),
+        context: {
+          source: "slack",
+          workspaceId: queueMessage.workspaceId,
+          userId: queueMessage.userId,
+          channelId: queueMessage.channelId,
+          conversationTs: queueMessage.conversationTs,
+        },
+        resources: buildAgentRuntimeResources(env),
+        toolContext: {
+          workspaceId: queueMessage.workspaceId,
+          userId: queueMessage.userId,
+          channelId: queueMessage.channelId,
+          memoryWritePolicy: {
+            allowWorkspaceMemory: false,
+            channelInferredStatus: "candidate",
+            defaultOrigin: "inferred",
+          },
+        },
       },
     });
-    const summary = customToolExecutor.getSummary();
 
     if (thinkingMessage.ts) {
       try {
@@ -306,7 +200,7 @@ export async function handler(event: SQSEvent): Promise<void> {
       text: completion.text,
     });
 
-    for (const draftId of summary.calendarDraftIds) {
+    for (const draftId of completion.calendarDraftIds) {
       const draft = await calendarDraftRepository.get(queueMessage.workspaceId, queueMessage.userId, draftId);
       if (!draft) {
         continue;
@@ -324,12 +218,12 @@ export async function handler(event: SQSEvent): Promise<void> {
 
     await conversationSessionRepository.save({
       ...sessionRecord,
-      memoryStoreId,
+      agentRuntimeSessionId: completion.sessionId ?? sessionRecord.agentRuntimeSessionId,
       lastUsedAt: now,
     });
 
     log.info("Slack conversation processed", {
-      claudeSessionId: sessionRecord.claudeSessionId,
+      agentRuntimeSessionId: completion.sessionId ?? sessionRecord.agentRuntimeSessionId,
       conversationTs: queueMessage.conversationTs,
       contextScope: queueMessage.contextScope,
       status: completion.status,
@@ -420,15 +314,12 @@ function createConversationSession(
   workspaceId: string,
   channelId: string,
   conversationTs: string,
-  memoryStoreId?: string,
 ): ConversationSessionRecord {
   const now = new Date().toISOString();
   return {
     workspaceId,
     channelId,
     conversationTs,
-    claudeSessionId: "",
-    memoryStoreId,
     createdAt: now,
     lastUsedAt: now,
   };
@@ -491,26 +382,4 @@ function createSyntheticSlackTs(): string {
   const seconds = Math.floor(milliseconds / 1000);
   const micros = `${milliseconds % 1000}`.padStart(3, "0");
   return `${seconds}.${micros}000`;
-}
-
-function describeToolProgress(toolName: unknown): string {
-  switch (toolName) {
-    case "search_memories":
-      return "過去のメモを確認しています...";
-    case "save_memory":
-      return "覚えておく内容を整理しています...";
-    case "list_tasks":
-    case "upsert_task":
-    case "mark_task_done":
-      return "タスクを確認しています...";
-    case "list_calendar_events":
-    case "find_free_busy":
-    case "create_calendar_draft":
-    case "list_calendar_drafts":
-    case "apply_calendar_draft":
-    case "discard_calendar_draft":
-      return "カレンダーを確認しています...";
-    default:
-      return "処理しています...";
-  }
 }

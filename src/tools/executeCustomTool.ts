@@ -6,7 +6,7 @@ import {
   GoogleCalendarClient,
   GoogleCalendarListEntry,
 } from "../calendar/googleCalendarClient";
-import { ClaudeInputBlock, ClaudeSessionEvent } from "../claude/client";
+import { AgentToolUseEvent, ToolExecutionResult } from "../agent/types";
 import { CalendarDraftRepository } from "../repo/calendarDraftRepository";
 import { ChannelMemoryRepository } from "../repo/channelMemoryRepository";
 import { MemoryItemRepository } from "../repo/memoryItemRepository";
@@ -236,11 +236,6 @@ interface ToolIntegrations {
   defaultCalendarTimeZone?: string;
 }
 
-export interface ToolExecutionResult {
-  content: ClaudeInputBlock[];
-  isError?: boolean;
-}
-
 export interface ToolExecutionSummary {
   savedMemoryIds: string[];
   taskIds: string[];
@@ -258,7 +253,7 @@ export class CustomToolExecutor {
     private readonly integrations: ToolIntegrations = {},
   ) {}
 
-  async execute(toolUseEvent: ClaudeSessionEvent): Promise<ToolExecutionResult> {
+  async execute(toolUseEvent: AgentToolUseEvent): Promise<ToolExecutionResult> {
     const toolName = typeof toolUseEvent.name === "string" ? toolUseEvent.name : "";
     const input =
       toolUseEvent.input && typeof toolUseEvent.input === "object"

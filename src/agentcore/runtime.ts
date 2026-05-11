@@ -1,0 +1,367 @@
+import { createUserGoogleCalendarClient } from "../calendar/userGoogleCalendar";
+import {
+  AgentContentBlock,
+  ToolExecutionResult,
+} from "../agent/types";
+import {
+  AgentRuntimeRequest,
+  agentRuntimeRequestSchema,
+} from "./contracts";
+import { CalendarDraftRepository } from "../repo/calendarDraftRepository";
+import { ChannelMemoryRepository } from "../repo/channelMemoryRepository";
+import { GoogleOAuthConnectionRepository } from "../repo/googleOAuthConnectionRepository";
+import { MemoryItemRepository } from "../repo/memoryItemRepository";
+import { TaskEventRepository } from "../repo/taskEventRepository";
+import { TaskStateRepository } from "../repo/taskStateRepository";
+import { UserPreferenceRepository } from "../repo/userPreferenceRepository";
+import { SecretsProvider } from "../aws/secretsProvider";
+import { logger } from "../shared/logger";
+import { CustomToolExecutor } from "../tools/executeCustomTool";
+import { customToolDefinitions } from "../tools/definitions";
+
+type DynamicImport = <T = Record<string, unknown>>(specifier: string) => Promise<T>;
+type SessionHistoryMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+const dynamicImport = new Function("specifier", "return import(specifier)") as DynamicImport;
+const sessionHistories = new Map<string, SessionHistoryMessage[]>();
+const maxSessionHistoryMessages = 20;
+const defaultSystemPrompt = [
+  "You are a Slack AI assistant running on Amazon Bedrock AgentCore.",
+  "Answer in the user's language unless the user asks otherwise.",
+  "Use tools for durable memory, tasks, and calendar operations when they are relevant.",
+  "For Google Calendar writes, create a reviewable calendar draft first unless the request is an explicit approval of an existing draft.",
+  "Keep Slack replies concise and actionable.",
+].join("\n");
+
+const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "ap-northeast-1";
+const modelId = process.env.BEDROCK_MODEL_ID ?? "moonshotai.kimi-k2.5";
+const secretsProvider = new SecretsProvider();
+
+async function main(): Promise<void> {
+  const [{ BedrockAgentCoreApp }, { createAmazonBedrock }, { defaultProvider }, ai] = await Promise.all([
+    dynamicImport<{ BedrockAgentCoreApp: new (options: unknown) => { run: () => void } }>(
+      "bedrock-agentcore/runtime",
+    ),
+    dynamicImport<{ createAmazonBedrock: (options: unknown) => (modelId: string) => unknown }>(
+      "@ai-sdk/amazon-bedrock",
+    ),
+    dynamicImport<{ defaultProvider: () => unknown }>("@aws-sdk/credential-provider-node"),
+    dynamicImport<{
+      ToolLoopAgent: new (options: unknown) => { stream: (options: unknown) => Promise<{ fullStream: AsyncIterable<Record<string, unknown>> }> };
+      jsonSchema: (schema: unknown) => unknown;
+      tool: (options: unknown) => unknown;
+    }>("ai"),
+  ]);
+
+  const bedrock = createAmazonBedrock({
+    region,
+    credentialProvider: defaultProvider(),
+  });
+  const app = new BedrockAgentCoreApp({
+    invocationHandler: {
+      requestSchema: agentRuntimeRequestSchema,
+      process: async function* (request: AgentRuntimeRequest, context: { sessionId?: string }) {
+        const log = logger.child({
+          component: "agentcore-runtime",
+          runtimeSessionId: context.sessionId,
+          source: request.context.source,
+        });
+        const executor = request.disableTools ? null : createToolExecutor(request, log);
+        const tools = executor ? createTools(ai, executor) : {};
+        const agent = new ai.ToolLoopAgent({
+          model: bedrock(modelId),
+          instructions: defaultSystemPrompt,
+          tools,
+        });
+
+        log.info("AgentCore request started", {
+          modelId,
+          hasTools: Object.keys(tools).length > 0,
+        });
+
+        const history = getSessionHistory(context.sessionId, request);
+        const userHistoryText = toHistoryText(request.content);
+        const stream = await agent.stream({
+          messages: [
+            ...history,
+            {
+              role: "user",
+              content: toUserContent(request.content),
+            },
+          ],
+        });
+
+        let assistantText = "";
+        for await (const part of stream.fullStream) {
+          if (part.type === "error") {
+            throw new Error(`Model stream failed: ${formatStreamError(part.error)}`);
+          }
+          if (part.type !== "text-delta" || typeof part.text !== "string") {
+            continue;
+          }
+
+          assistantText += part.text;
+          yield { event: "message", data: { text: part.text } };
+        }
+
+        const summary = executor?.getSummary() ?? {
+          taskIds: [],
+          savedMemoryIds: [],
+          calendarDraftIds: [],
+        };
+        saveSessionHistory(context.sessionId, request, userHistoryText, assistantText);
+        yield { event: "metadata", data: summary };
+        log.info("AgentCore request completed", {
+          taskIds: summary.taskIds,
+          savedMemoryIds: summary.savedMemoryIds,
+          calendarDraftIds: summary.calendarDraftIds,
+        });
+      },
+    },
+  });
+
+  app.run();
+}
+
+function createToolExecutor(
+  request: AgentRuntimeRequest,
+  log: ReturnType<typeof logger.child>,
+): CustomToolExecutor | null {
+  if (!request.resources || !request.toolContext) {
+    return null;
+  }
+
+  const resources = request.resources;
+  return new CustomToolExecutor(
+    {
+      memoryItems: new MemoryItemRepository(resources.memoryItemsTableName),
+      channelMemories: new ChannelMemoryRepository(resources.memoryItemsTableName),
+      userPreferences: new UserPreferenceRepository(resources.memoryItemsTableName),
+      tasks: new TaskStateRepository(resources.tasksTableName),
+      taskEvents: new TaskEventRepository(resources.taskEventsTableName),
+      calendarDrafts: new CalendarDraftRepository(resources.calendarDraftsTableName),
+    },
+    {
+      workspaceId: request.toolContext.workspaceId,
+      userId: request.toolContext.userId,
+      channelId: request.toolContext.channelId,
+      logger: log,
+      memoryWritePolicy: request.toolContext.memoryWritePolicy,
+    },
+    {
+      googleCalendarProvider: () =>
+        createUserGoogleCalendarClient({
+          workspaceId: request.toolContext!.workspaceId,
+          userId: request.toolContext!.userId,
+          defaultTimeZone: resources.googleCalendarTimeZone,
+          googleCalendarSecretId: resources.googleCalendarSecretId,
+          googleOAuthStartUrl: resources.googleOAuthStartUrl,
+          secretsProvider,
+          connections: new GoogleOAuthConnectionRepository(resources.googleOAuthConnectionsTableName),
+        }),
+      defaultCalendarTimeZone: resources.googleCalendarTimeZone,
+    },
+  );
+}
+
+function getSessionHistory(
+  sessionId: string | undefined,
+  request: AgentRuntimeRequest,
+): SessionHistoryMessage[] {
+  if (!shouldUseSessionHistory(sessionId, request)) {
+    return [];
+  }
+
+  return sessionHistories.get(sessionId!) ?? [];
+}
+
+function saveSessionHistory(
+  sessionId: string | undefined,
+  request: AgentRuntimeRequest,
+  userText: string,
+  assistantText: string,
+): void {
+  if (!shouldUseSessionHistory(sessionId, request)) {
+    return;
+  }
+
+  const previous = sessionHistories.get(sessionId!) ?? [];
+  const next = [
+    ...previous,
+    { role: "user" as const, content: userText },
+    { role: "assistant" as const, content: assistantText },
+  ].slice(-maxSessionHistoryMessages);
+  sessionHistories.set(sessionId!, next);
+}
+
+function shouldUseSessionHistory(
+  sessionId: string | undefined,
+  request: AgentRuntimeRequest,
+): boolean {
+  return Boolean(sessionId && ["direct_chat_api", "scheduler"].includes(request.context.source));
+}
+
+function formatStreamError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  return JSON.stringify(error);
+}
+
+function createTools(
+  ai: {
+    jsonSchema: (schema: unknown) => unknown;
+    tool: (options: unknown) => unknown;
+  },
+  executor: CustomToolExecutor,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    customToolDefinitions.map((definition) => [
+      definition.name,
+      ai.tool({
+        description: definition.description,
+        inputSchema: ai.jsonSchema(definition.input_schema),
+        execute: async (input: Record<string, unknown>) => {
+          const result = await executor.execute({
+            id: `agentcore_tool_${Date.now()}_${definition.name}`,
+            type: "agent.tool_use",
+            name: definition.name,
+            input,
+          });
+          return simplifyToolResult(result);
+        },
+      }),
+    ]),
+  );
+}
+
+function simplifyToolResult(result: ToolExecutionResult): Record<string, unknown> {
+  return {
+    isError: Boolean(result.isError),
+    content: (result.content ?? []).map((block) => {
+      if (block.type === "text") {
+        return { type: "text", text: block.text };
+      }
+      return {
+        type: block.type,
+        note: "Non-text tool output was returned.",
+      };
+    }),
+  };
+}
+
+function toHistoryText(blocks: AgentContentBlock[]): string {
+  return blocks
+    .map((block) => {
+      if (block.type === "text") {
+        return block.text;
+      }
+
+      if (block.type === "image") {
+        return block.source.type === "url"
+          ? `[Image attachment: ${block.source.url}]`
+          : `[Image attachment: ${block.source.media_type}]`;
+      }
+
+      const title = block.title ?? "untitled";
+      if (block.source.type === "text") {
+        return [
+          `Attached document: ${title}`,
+          block.context,
+          truncateForHistory(block.source.data),
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+      }
+      if (block.source.type === "url") {
+        return `Attached document: ${title} (${block.source.url})`;
+      }
+      if (block.source.type === "base64") {
+        return `Attached document: ${title} (${block.source.media_type})`;
+      }
+      return `Attached document: ${title} (${block.source.file_id})`;
+    })
+    .join("\n\n")
+    .trim();
+}
+
+function truncateForHistory(value: string): string {
+  const maxLength = 4000;
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength)}\n[truncated]`;
+}
+
+function toUserContent(blocks: AgentContentBlock[]): Array<Record<string, unknown>> {
+  const content: Array<Record<string, unknown>> = [];
+
+  for (const block of blocks) {
+    if (block.type === "text") {
+      content.push({ type: "text", text: block.text });
+      continue;
+    }
+
+    if (block.type === "image") {
+      if (block.source.type === "url") {
+        content.push({ type: "image", image: new URL(block.source.url) });
+        continue;
+      }
+      content.push({
+        type: "image",
+        image: block.source.data,
+        mediaType: block.source.media_type,
+      });
+      continue;
+    }
+
+    if (block.source.type === "text") {
+      content.push({
+        type: "text",
+        text: [
+          `Attached document: ${block.title ?? "untitled"}`,
+          block.context,
+          block.source.data,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      });
+      continue;
+    }
+
+    if (block.source.type === "base64") {
+      content.push({
+        type: "file",
+        data: block.source.data,
+        filename: block.title,
+        mediaType: block.source.media_type,
+      });
+      continue;
+    }
+
+    if (block.source.type === "url") {
+      content.push({
+        type: "file",
+        data: new URL(block.source.url),
+        filename: block.title,
+        mediaType: "application/octet-stream",
+      });
+      continue;
+    }
+
+    content.push({
+      type: "text",
+      text: `Attachment note: ${block.title ?? block.source.file_id} could not be sent to the model.`,
+    });
+  }
+
+  return content;
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

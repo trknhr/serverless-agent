@@ -1,14 +1,14 @@
-import { ClaudeInputBlock } from "../claude/client";
+import { AgentContentBlock } from "../agent/types";
 import { ConversationTurnRecord, SlackFileReference } from "../shared/contracts";
 
 interface BuildSlackContextBlocksInput {
   contextScope: "channel_top_level" | "thread";
   priorTurns: ConversationTurnRecord[];
   currentText: string;
-  attachmentBlocks: ClaudeInputBlock[];
+  attachmentBlocks: AgentContentBlock[];
 }
 
-export function buildSlackContextBlocks(input: BuildSlackContextBlocksInput): ClaudeInputBlock[] {
+export function buildSlackContextBlocks(input: BuildSlackContextBlocksInput): AgentContentBlock[] {
   const text = buildPromptText(input.contextScope, input.priorTurns, input.currentText);
   return [
     {

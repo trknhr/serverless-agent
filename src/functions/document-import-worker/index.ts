@@ -1,26 +1,16 @@
 import { createHash } from "node:crypto";
 import type { SQSEvent } from "aws-lambda";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { SecretsProvider } from "../../aws/secretsProvider";
-import { createUserGoogleCalendarClient } from "../../calendar/userGoogleCalendar";
-import { AnthropicManagedAgentsClient } from "../../claude/client";
-import { createSession } from "../../claude/createSession";
-import { sendUserMessage } from "../../claude/sendUserMessage";
-import { waitForCompletion } from "../../claude/waitForCompletion";
+import { AgentCoreRuntimeClient } from "../../agentcore/client";
+import { buildAgentRuntimeResources } from "../../agentcore/contracts";
 import { loadImportWorkerEnv } from "../../config/env";
 import { SourceDocument } from "../../documents/sourceDocument";
-import { buildClaudeContentBlocksForDocument } from "../../documents/contentBlocks";
+import { buildAgentContentBlocksForDocument } from "../../documents/contentBlocks";
 import { DocumentImportQueueMessage, documentImportQueueMessageSchema } from "../../imports/contracts";
 import { DOCUMENT_IMPORT_MEMORY_INSTRUCTIONS } from "../../memory/instructions";
-import { CalendarDraftRepository } from "../../repo/calendarDraftRepository";
-import { GoogleOAuthConnectionRepository } from "../../repo/googleOAuthConnectionRepository";
-import { MemoryItemRepository } from "../../repo/memoryItemRepository";
 import { SourceDocumentRepository } from "../../repo/sourceDocumentRepository";
-import { TaskEventRepository } from "../../repo/taskEventRepository";
-import { TaskStateRepository } from "../../repo/taskStateRepository";
 import { logger } from "../../shared/logger";
 import { defaultExtensionForMimeType } from "../../slack/fileSupport";
-import { CustomToolExecutor } from "../../tools/executeCustomTool";
 
 const DEFAULT_IMPORT_PROMPT = [
   "Analyze the uploaded household document.",
@@ -37,16 +27,10 @@ const DEFAULT_MARKDOWN_EXTRACTION_PROMPT = [
 
 const env = loadImportWorkerEnv();
 const s3 = new S3Client({});
-const secretsProvider = new SecretsProvider();
-const claudeClient = new AnthropicManagedAgentsClient({
-  apiKeyProvider: () => secretsProvider.getSecretString(env.ANTHROPIC_API_KEY_SECRET_ID),
-  beta: env.ANTHROPIC_MANAGED_AGENTS_BETA,
+const agentClient = new AgentCoreRuntimeClient({
+  runtimeArn: env.AGENTCORE_RUNTIME_ARN,
+  qualifier: env.AGENTCORE_RUNTIME_QUALIFIER,
 });
-const calendarDraftRepository = new CalendarDraftRepository(env.CALENDAR_DRAFTS_TABLE_NAME);
-const googleOAuthConnectionRepository = new GoogleOAuthConnectionRepository(env.GOOGLE_OAUTH_CONNECTIONS_TABLE_NAME);
-const memoryItemRepository = new MemoryItemRepository(env.MEMORY_ITEMS_TABLE_NAME);
-const taskEventRepository = new TaskEventRepository(env.TASK_EVENTS_TABLE_NAME);
-const taskStateRepository = new TaskStateRepository(env.TASKS_TABLE_NAME);
 const sourceDocumentRepository = new SourceDocumentRepository(env.SOURCE_DOCUMENTS_TABLE_NAME);
 
 export async function handler(event: SQSEvent): Promise<void> {
@@ -132,82 +116,44 @@ async function importDocument(
     updatedAt: new Date().toISOString(),
   });
 
-  const session = await createSession(claudeClient, {
-    agentId: env.ANTHROPIC_AGENT_ID,
-    environmentId: env.ANTHROPIC_ENVIRONMENT_ID,
-    vaultIds: env.ANTHROPIC_VAULT_IDS,
-    title: `Imported document ${source.title}`,
-    metadata: {
-      source: "local_import",
-      source_id: source.sourceId,
-      workspace_id: source.workspaceId,
-    },
-  });
-
-  const seenEventIds = new Set(
-    (await claudeClient.listSessionEvents(session.id, { order: "asc" })).map((sessionEvent) => sessionEvent.id),
-  );
-
-  const customToolExecutor = new CustomToolExecutor(
-    {
-      memoryItems: memoryItemRepository,
-      tasks: taskStateRepository,
-      taskEvents: taskEventRepository,
-      calendarDrafts: calendarDraftRepository,
-    },
-    {
-      workspaceId: queueMessage.workspaceId,
-      userId: queueMessage.userId,
-      logger: log,
-    },
-    {
-      googleCalendarProvider: () =>
-        createUserGoogleCalendarClient({
-          workspaceId: queueMessage.workspaceId,
-          userId: queueMessage.userId,
-          defaultTimeZone: env.GOOGLE_CALENDAR_TIME_ZONE,
-          googleCalendarSecretId: env.GOOGLE_CALENDAR_SECRET_ID,
-          googleOAuthStartUrl: env.GOOGLE_OAUTH_START_URL,
-          secretsProvider,
-          connections: googleOAuthConnectionRepository,
-        }),
-      defaultCalendarTimeZone: env.GOOGLE_CALENDAR_TIME_ZONE,
-    },
-  );
-
-  await sendUserMessage(claudeClient, {
-    sessionId: session.id,
-    content: [
-      {
-        type: "text",
-        text: buildImportPrompt(source.sourceRef, queueMessage.prompt),
+  const completion = await agentClient.invoke({
+    runtimeUserId: queueMessage.userId,
+    request: {
+      content: [
+        {
+          type: "text",
+          text: buildImportPrompt(source.sourceRef, queueMessage.prompt),
+        },
+        ...buildAgentContentBlocksForDocument(source.title, source.mimeType, bytes),
+      ],
+      context: {
+        source: "local_import",
+        workspaceId: source.workspaceId,
+        userId: queueMessage.userId,
+        sourceId: source.sourceId,
       },
-      ...buildClaudeContentBlocksForDocument(source.title, source.mimeType, bytes),
-    ],
+      resources: buildAgentRuntimeResources(env),
+      toolContext: {
+        workspaceId: queueMessage.workspaceId,
+        userId: queueMessage.userId,
+      },
+    },
   });
-
-  const completion = await waitForCompletion(claudeClient, {
-    sessionId: session.id,
-    sinceEventIds: seenEventIds,
-    timeoutMs: env.AGENT_RESPONSE_TIMEOUT_MS,
-    onCustomToolUse: (sessionEvent) => customToolExecutor.execute(sessionEvent),
-  });
-  const summary = customToolExecutor.getSummary();
 
   await sourceDocumentRepository.save({
     ...source,
     status: "imported",
     summary: completion.text,
-    importedTaskIds: summary.taskIds,
-    savedMemoryIds: summary.savedMemoryIds,
+    importedTaskIds: completion.taskIds,
+    savedMemoryIds: completion.savedMemoryIds,
     errorMessage: undefined,
     updatedAt: new Date().toISOString(),
   });
 
   log.info("Document imported", {
-    sessionId: session.id,
-    taskCount: summary.taskIds.length,
-    memoryCount: summary.savedMemoryIds.length,
+    sessionId: completion.sessionId,
+    taskCount: completion.taskIds.length,
+    memoryCount: completion.savedMemoryIds.length,
   });
 }
 
@@ -224,46 +170,24 @@ async function extractMarkdown(
     updatedAt: new Date().toISOString(),
   });
 
-  const session = await createSession(claudeClient, {
-    agentId: env.ANTHROPIC_AGENT_ID,
-    environmentId: env.ANTHROPIC_ENVIRONMENT_ID,
-    vaultIds: env.ANTHROPIC_VAULT_IDS,
-    title: `Markdown extraction ${source.title}`,
-    metadata: {
-      source: "markdown_extraction",
-      source_id: source.sourceId,
-      workspace_id: source.workspaceId,
-    },
-  });
-
-  const seenEventIds = new Set(
-    (await claudeClient.listSessionEvents(session.id, { order: "asc" })).map((sessionEvent) => sessionEvent.id),
-  );
-
-  await sendUserMessage(claudeClient, {
-    sessionId: session.id,
-    content: [
-      {
-        type: "text",
-        text: buildMarkdownExtractionPrompt(source.sourceRef, queueMessage.prompt),
-      },
-      ...buildClaudeContentBlocksForDocument(source.title, source.mimeType, bytes),
-    ],
-  });
-
-  const completion = await waitForCompletion(claudeClient, {
-    sessionId: session.id,
-    sinceEventIds: seenEventIds,
-    timeoutMs: env.AGENT_RESPONSE_TIMEOUT_MS,
-    onCustomToolUse: async () => ({
-      isError: true,
+  const completion = await agentClient.invoke({
+    runtimeUserId: queueMessage.userId,
+    request: {
       content: [
         {
           type: "text",
-          text: "Custom tools are not available during markdown extraction.",
+          text: buildMarkdownExtractionPrompt(source.sourceRef, queueMessage.prompt),
         },
+        ...buildAgentContentBlocksForDocument(source.title, source.mimeType, bytes),
       ],
-    }),
+      context: {
+        source: "markdown_extraction",
+        workspaceId: source.workspaceId,
+        userId: queueMessage.userId,
+        sourceId: source.sourceId,
+      },
+      disableTools: true,
+    },
   });
 
   const markdown = completion.text.trim();
@@ -297,7 +221,7 @@ async function extractMarkdown(
   });
 
   log.info("Markdown extracted", {
-    sessionId: session.id,
+    sessionId: completion.sessionId,
     extractedMarkdownS3Key: s3Key,
   });
 }

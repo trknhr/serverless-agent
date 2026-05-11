@@ -1,8 +1,8 @@
 # slack-ai-assistant
 
-AWS Lambda + CDK scaffold for running a Slack-based assistant on top of Claude Managed Agents.
+AWS Lambda + CDK scaffold for running a Slack-based assistant on Amazon Bedrock AgentCore.
 
-This repository provides the application glue around Managed Agents:
+This repository provides the application glue around AgentCore Runtime:
 
 - Slack Events API ingestion
 - asynchronous Slack processing with SQS
@@ -10,9 +10,9 @@ This repository provides the application glue around Managed Agents:
 - session mapping and event deduplication
 - attachment handling for PDFs, images, and text files
 - raw Slack attachment archival to private S3 storage
-- custom tool execution backed by DynamoDB for memories, tasks, and calendar drafts
+- custom tool execution in AgentCore Runtime backed by DynamoDB for memories, tasks, and calendar drafts
 
-The goal is to keep reasoning and sandboxing inside Claude Managed Agents while handling webhooks, state, and integrations in AWS.
+The goal is to keep reasoning, tool loops, and runtime isolation inside AgentCore while handling webhooks, queues, and app-facing integrations in AWS.
 
 ## Architecture
 
@@ -22,13 +22,13 @@ Slack mention / DM
   -> Lambda (slack-events-ingress)
   -> SQS
   -> Lambda (slack-events-worker)
-  -> Claude Managed Agent
+  -> AgentCore Runtime (SlackAgent)
   -> Slack reply
 
 Scheduled reminder
   -> EventBridge Scheduler
   -> Lambda (scheduled-agent-runner)
-  -> Claude Managed Agent
+  -> AgentCore Runtime (SlackAgent)
   -> Slack post
 
 Local bulk import
@@ -38,7 +38,7 @@ Local bulk import
   -> S3 presigned upload
   -> SQS
   -> Lambda (document-import-worker)
-  -> Claude Managed Agent
+  -> AgentCore Runtime (SlackAgent)
 
 State
   -> DynamoDB
@@ -59,20 +59,20 @@ Raw attachment archive
 - 9 DynamoDB tables
 - private S3 bucket for supported Slack attachments
 - EventBridge Scheduler
-- Claude Managed Agents session + event loop integration
-- custom tool execution loop for memory, task, and calendar draft persistence
+- AgentCore Runtime container for model and tool-loop execution
+- custom tool execution for memory, task, and calendar draft persistence
 - local bulk import for `pdf`, `jpg/jpeg`, and `png`
 
 ## DynamoDB tables
 
 - `SlackThreadSessionsTable`
-  Maps Slack `workspace/channel/thread` to Claude `session_id`
+  Maps Slack `workspace/channel/thread` to AgentCore runtime session IDs
 - `ProcessedEventsTable`
   Stores Slack event IDs for deduplication
 - `ScheduledTasksTable`
   Stores scheduled task definitions
 - `UserMemoriesTable`
-  Maps users to Claude memory store IDs
+  Legacy table retained to avoid destructive stack changes
 - `MemoryItemsTable`
   Stores durable semi-structured memories
 - `TasksTable`
@@ -89,28 +89,12 @@ Raw attachment archive
 ```text
 bin/
 lib/
-cmd/
-  <lambda>/main.go
-internal/
-  anthropic/
-  calendar/
-  config/
-  conversations/
-  documents/
-  integrations/
-  lambdahttp/
-  logger/
-  memory/
-  memorystore/
-  repo/
-  secrets/
-  slack/
-  tasks/
-  tools/
+agentcore/
 scripts/
 src/
-  ...
-  legacy TypeScript implementation retained during migration
+  agentcore/
+  functions/
+  tools/
 ```
 
 ## Prerequisites
@@ -118,12 +102,10 @@ src/
 1. Create these AWS Secrets Manager secrets:
    - `/slack-ai-assistant/slack-signing-secret`
    - `/slack-ai-assistant/slack-bot-token`
-   - `/slack-ai-assistant/anthropic-api-key`
    - `/slack-ai-assistant/google-calendar`
-2. Prepare a Claude Managed Agent `agent_id` and `environment_id`
-3. If your MCP setup requires it, prepare one or more `vault_ids`
-4. Install Go `1.26+` locally or use Docker for CDK asset bundling fallback
-5. Bootstrap CDK in the target AWS account and region
+2. Ensure the target account has access to Bedrock AgentCore and the configured Bedrock model.
+3. Install Docker for AgentCore container image builds.
+4. Bootstrap CDK in the target AWS account and region.
 
 Google Calendar OAuth client secret JSON:
 
@@ -147,44 +129,30 @@ Add the deployed `GoogleOAuthCallbackUrl` output as an authorized redirect URI i
 
 ```bash
 npm install
-npm run go:test
 npx cdk deploy \
-  -c anthropicAgentId=agent_0123456789 \
-  -c anthropicEnvironmentId=env_0123456789 \
-  -c anthropicVaultIds=vlt_0123456789 \
   -c defaultScheduleChannel=C0123456789 \
+  -c bedrockModelId=moonshotai.kimi-k2.5 \
   -c publicBaseUrl=https://your-api-id.execute-api.ap-northeast-1.amazonaws.com/prod
 ```
 
 Notes:
 
-- Lambda runtime code is built from `cmd/*` with shared packages in `internal/*`.
-- CDK remains in TypeScript and bundles Go binaries locally through `scripts/run-go.sh`, with Docker `golang:1.26` as a fallback.
+- Lambda runtime code is TypeScript and bundled with `NodejsFunction`.
+- AgentCore runtime code is built as a Node 22 container from `app/SlackAgent/Dockerfile`.
 - `defaultScheduleChannel` lets the scheduled runner create a fallback task automatically if `daily-summary` is missing.
-- `anthropicVaultIds` accepts a comma-separated list.
+- `bedrockModelId` selects the Bedrock model used by the AgentCore runtime.
 - `publicBaseUrl` is used inside Slack replies when a user needs to connect Google Calendar.
 - `googleCalendarSecretName` and `googleCalendarTimeZone` can be overridden with CDK context if needed.
 
-## Sync custom tools to the Managed Agent
+## AgentCore Runtime
 
-The repository stores custom tool definitions in `src/tools/anthropic-custom-tools.json`.
+The `SlackAgent` runtime is defined in `agentcore/agentcore.json` and implemented by `src/agentcore/runtime.ts`.
 
-Sync them to your agent with:
-
-```bash
-npm run sync-agent-tools -- --agent-id=agent_0123456789
-```
-
-Optional overrides:
-
-- `ANTHROPIC_API_KEY`
-- `ANTHROPIC_API_KEY_SECRET_ID`
-- `ANTHROPIC_MANAGED_AGENTS_BETA`
-- `ANTHROPIC_CUSTOM_TOOLS_FILE`
+The CDK stack creates the AgentCore runtime, grants the Lambda functions invoke permission, and grants the runtime access to the DynamoDB tables and Google Calendar secret needed by the tools.
 
 ## Google Calendar draft flow
 
-The MVP integrates Google Calendar as custom tools behind the existing Lambda executor.
+The MVP integrates Google Calendar as custom tools inside the AgentCore runtime.
 
 Available tools:
 
@@ -204,7 +172,7 @@ Recommended flow:
 
 Notes:
 
-- The app uses the Google Calendar REST API directly from Lambda.
+- The app uses the Google Calendar REST API from the AgentCore runtime.
 - Slack users authorize their own Google Calendar accounts through OAuth.
 - All-day events use date-only values and are written with Google Calendar's exclusive end-date semantics under the hood.
 - Draft application is idempotent across re-imports by storing app-specific private extended properties on events.
@@ -243,7 +211,7 @@ Flow:
 1. The script requests a presigned upload URL from `/imports/uploads`.
 2. It uploads the original file to private S3.
 3. It queues processing through `/imports/documents`.
-4. The import worker sends the file to Claude and persists tasks and memories through the existing custom tools.
+4. The import worker sends the file to AgentCore Runtime, which persists tasks and memories through the existing custom tools.
 5. The script can poll `/imports/workspaces/{workspaceId}/sources/{sourceId}` until completion.
 
 Security:
@@ -319,7 +287,7 @@ Flow:
 1. The script reads local markdown files and posts them to `/imports/markdown`.
 2. The API stores the original markdown in private S3 under `raw/private/notes/...`.
 3. It queues processing through the existing document import worker.
-4. The worker sends the note to Claude and persists tasks and memories through the existing custom tools.
+4. The worker sends the note to AgentCore Runtime, which persists tasks and memories through the existing custom tools.
 5. The script can poll `/imports/workspaces/{workspaceId}/sources/{sourceId}` until completion.
 
 Security:
@@ -330,7 +298,7 @@ Security:
 
 ## Direct chat from your terminal
 
-For quick questions outside Slack, you can call the Managed Agent through an IAM-protected API route:
+For quick questions outside Slack, you can call the AgentCore-backed assistant through an IAM-protected API route:
 
 - `POST /chat/messages`
 
@@ -348,7 +316,7 @@ npm run ask-agent -- \
 The response includes:
 
 - `session_id`
-- Claude's text response
+- the assistant text response
 - any saved memory IDs
 - any task IDs touched during the answer
 
@@ -372,11 +340,9 @@ Notes:
 
 ## Current scope
 
-- `ENABLE_USER_MEMORY=false` by default
 - EventBridge Scheduler triggers `daily-summary`
 - scheduled task definitions live in `ScheduledTasksTable`
 - fallback scheduled tasks can be created from `outputChannelId` in the invoke payload or from `defaultScheduleChannel`
-- if your agent requires MCP authentication via vaults, pass `anthropicVaultIds=vlt_...` at deploy time or include `vaultIds` in the scheduled invoke payload
 
 Example scheduled task item:
 
@@ -407,21 +373,20 @@ Requirements and limits:
 
 - your Slack app must include `files:read`
 - the current default max file size is `10MB` per file
-- supported Slack attachments are archived to a private S3 bucket before being sent to Claude
+- supported Slack attachments are archived to a private S3 bucket before being sent to AgentCore Runtime
 - unsupported or oversized files are recorded as skipped metadata and degraded into text notes instead of breaking the conversation
 
-## Managed Agent notes
+## AgentCore notes
 
-- beta header: `managed-agents-2026-04-01`
-- thread conversations are modeled as `Slack thread = Claude session`
-- user-level Claude memory stores can be attached through `resources[]`
-- custom tool execution is handled by the Lambda side when the agent emits `agent.custom_tool_use`
+- thread conversations are modeled as `Slack thread = AgentCore runtime session`
+- custom tool execution runs inside `src/agentcore/runtime.ts`
+- Lambda functions pass tool resource names to the runtime per request
 
 ## Security
 
-- Do not commit real tokens, secret values, vault IDs, agent IDs, or environment IDs.
+- Do not commit real tokens, secret values, account IDs, runtime ARNs, or environment IDs.
 - Do not commit `cdk.out/` artifacts or other generated deployment outputs.
-- Keep Slack signing secrets, bot tokens, and Anthropic API keys in Secrets Manager only.
+- Keep Slack signing secrets, bot tokens, and Google OAuth client secrets in Secrets Manager only.
 
 ## License
 

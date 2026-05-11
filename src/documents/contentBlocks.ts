@@ -1,11 +1,11 @@
-import { ClaudeInputBlock } from "../claude/client";
+import { AgentContentBlock } from "../agent/types";
 import { isTextLikeMimeType } from "../slack/fileSupport";
 
-export function buildClaudeContentBlocksForDocument(
+export function buildAgentContentBlocksForDocument(
   title: string,
   mimeType: string | undefined,
   buffer: Buffer,
-): ClaudeInputBlock[] {
+): AgentContentBlock[] {
   if (mimeType === "application/pdf") {
     return [
       {
