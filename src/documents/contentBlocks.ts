@@ -58,3 +58,46 @@ export function buildAgentContentBlocksForDocument(
     },
   ];
 }
+
+export function buildAgentContentBlocksForDocumentUrl(
+  title: string,
+  mimeType: string | undefined,
+  url: string,
+): AgentContentBlock[] {
+  if (mimeType === "application/pdf" || isTextLikeMimeType(mimeType)) {
+    return [
+      {
+        type: "document",
+        title,
+        source: {
+          type: "url",
+          url,
+          media_type: mimeType,
+        },
+      },
+    ];
+  }
+
+  if (mimeType && mimeType.startsWith("image/")) {
+    return [
+      {
+        type: "text",
+        text: `Attached image: ${title}`,
+      },
+      {
+        type: "image",
+        source: {
+          type: "url",
+          url,
+        },
+      },
+    ];
+  }
+
+  return [
+    {
+      type: "text",
+      text: `Attachment note: ${title} (${mimeType ?? "unknown mime type"}) is not supported for inline analysis.`,
+    },
+  ];
+}

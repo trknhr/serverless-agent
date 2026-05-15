@@ -40,6 +40,7 @@ const defaultSystemPrompt = [
 
 const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "ap-northeast-1";
 const modelId = process.env.BEDROCK_MODEL_ID ?? "moonshotai.kimi-k2.5";
+const documentModelId = process.env.BEDROCK_DOCUMENT_MODEL_ID ?? modelId;
 const secretsProvider = new SecretsProvider();
 
 async function main(): Promise<void> {
@@ -73,14 +74,15 @@ async function main(): Promise<void> {
         });
         const executor = request.disableTools ? null : createToolExecutor(request, log);
         const tools = executor ? createTools(ai, executor) : {};
+        const selectedModelId = selectModelId(request);
         const agent = new ai.ToolLoopAgent({
-          model: bedrock(modelId),
+          model: bedrock(selectedModelId),
           instructions: defaultSystemPrompt,
           tools,
         });
 
         log.info("AgentCore request started", {
-          modelId,
+          modelId: selectedModelId,
           hasTools: Object.keys(tools).length > 0,
         });
 
@@ -207,6 +209,14 @@ function shouldUseSessionHistory(
   request: AgentRuntimeRequest,
 ): boolean {
   return Boolean(sessionId && ["direct_chat_api", "scheduler"].includes(request.context.source));
+}
+
+function selectModelId(request: AgentRuntimeRequest): string {
+  return hasModelDocumentInput(request.content) ? documentModelId : modelId;
+}
+
+function hasModelDocumentInput(blocks: AgentContentBlock[]): boolean {
+  return blocks.some((block) => block.type === "document" && block.source.type !== "text");
 }
 
 function formatStreamError(error: unknown): string {
@@ -352,7 +362,7 @@ function toUserContent(blocks: AgentContentBlock[]): Array<Record<string, unknow
         type: "file",
         data: new URL(block.source.url),
         filename: block.title,
-        mediaType: "application/octet-stream",
+        mediaType: block.source.media_type ?? inferMediaTypeFromTitle(block.title),
       });
       continue;
     }
@@ -364,6 +374,38 @@ function toUserContent(blocks: AgentContentBlock[]): Array<Record<string, unknow
   }
 
   return content;
+}
+
+function inferMediaTypeFromTitle(title: string | undefined): string {
+  const lower = title?.toLowerCase() ?? "";
+  if (lower.endsWith(".pdf")) {
+    return "application/pdf";
+  }
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+    return "text/markdown";
+  }
+  if (lower.endsWith(".txt")) {
+    return "text/plain";
+  }
+  if (lower.endsWith(".csv")) {
+    return "text/csv";
+  }
+  if (lower.endsWith(".docx")) {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  if (lower.endsWith(".doc")) {
+    return "application/msword";
+  }
+  if (lower.endsWith(".xlsx")) {
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  }
+  if (lower.endsWith(".xls")) {
+    return "application/vnd.ms-excel";
+  }
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) {
+    return "text/html";
+  }
+  return "application/octet-stream";
 }
 
 main().catch((error) => {

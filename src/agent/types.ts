@@ -35,6 +35,7 @@ export interface AgentContentDocumentBlock {
     | {
         type: "url";
         url: string;
+        media_type?: string;
       }
     | {
         type: "file";

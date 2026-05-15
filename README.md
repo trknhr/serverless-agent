@@ -146,6 +146,7 @@ npm install
 npx cdk deploy \
   -c defaultScheduleChannel=C0123456789 \
   -c bedrockModelId=moonshotai.kimi-k2.5 \
+  -c bedrockDocumentModelId=apac.anthropic.claude-sonnet-4-20250514-v1:0 \
   -c publicBaseUrl=https://your-api-id.execute-api.ap-northeast-1.amazonaws.com/prod
 ```
 
@@ -154,7 +155,8 @@ Notes:
 - Lambda runtime code is TypeScript and bundled with `NodejsFunction`.
 - AgentCore runtime code is built as a Node 22 container from `app/SlackAgent/Dockerfile`.
 - `defaultScheduleChannel` lets the scheduled runner create a fallback task automatically if `daily-summary` is missing.
-- `bedrockModelId` selects the Bedrock model used by the AgentCore runtime.
+- `bedrockModelId` selects the default Bedrock model used by the AgentCore runtime.
+- `bedrockDocumentModelId` selects the Bedrock model used when the request includes PDF or other document input.
 - `publicBaseUrl` is used inside Slack replies when a user needs to connect Google Calendar.
 - `googleCalendarSecretName` and `googleCalendarTimeZone` can be overridden with CDK context if needed.
 

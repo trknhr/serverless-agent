@@ -45,6 +45,9 @@ export class SlackAiAssistantStack extends Stack {
       resolveOptionalConfigValue(this, "agentCoreRuntimeQualifier", "AGENTCORE_RUNTIME_QUALIFIER") ?? "";
     const bedrockModelId =
       resolveOptionalConfigValue(this, "bedrockModelId", "BEDROCK_MODEL_ID") ?? "moonshotai.kimi-k2.5";
+    const bedrockDocumentModelId =
+      resolveOptionalConfigValue(this, "bedrockDocumentModelId", "BEDROCK_DOCUMENT_MODEL_ID") ??
+      "apac.anthropic.claude-sonnet-4-20250514-v1:0";
 
     const sessionTable = new dynamodb.Table(this, "SlackThreadSessionsTable", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
@@ -189,6 +192,7 @@ export class SlackAiAssistantStack extends Stack {
     const agentCoreApplication = new AgentCoreApplication(this, "AgentCoreApplication", {
       spec: buildAgentCoreProjectSpec({
         bedrockModelId,
+        bedrockDocumentModelId,
       }),
     });
     const slackAgentRuntime = agentCoreApplication.environments.get("SlackAgent")?.runtime;
@@ -637,7 +641,10 @@ function createNodeFunction(scope: Construct, id: string, props: NodeFunctionPro
   });
 }
 
-function buildAgentCoreProjectSpec(input: { bedrockModelId: string }): AgentCoreProjectSpec {
+function buildAgentCoreProjectSpec(input: {
+  bedrockModelId: string;
+  bedrockDocumentModelId: string;
+}): AgentCoreProjectSpec {
   return {
     name: "SlackAiAssistant",
     version: 1,
@@ -660,6 +667,10 @@ function buildAgentCoreProjectSpec(input: { bedrockModelId: string }): AgentCore
           {
             name: "BEDROCK_MODEL_ID",
             value: input.bedrockModelId,
+          },
+          {
+            name: "BEDROCK_DOCUMENT_MODEL_ID",
+            value: input.bedrockDocumentModelId,
           },
         ],
       },

@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
 import type { SQSEvent } from "aws-lambda";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { AgentCoreRuntimeClient } from "../../agentcore/client";
 import { buildAgentRuntimeResources } from "../../agentcore/contracts";
 import { loadImportWorkerEnv } from "../../config/env";
 import { SourceDocument } from "../../documents/sourceDocument";
-import { buildAgentContentBlocksForDocument } from "../../documents/contentBlocks";
+import {
+  buildAgentContentBlocksForDocument,
+  buildAgentContentBlocksForDocumentUrl,
+} from "../../documents/contentBlocks";
 import { DocumentImportQueueMessage, documentImportQueueMessageSchema } from "../../imports/contracts";
 import { DOCUMENT_IMPORT_MEMORY_INSTRUCTIONS } from "../../memory/instructions";
 import { SourceDocumentRepository } from "../../repo/sourceDocumentRepository";
@@ -124,7 +128,7 @@ async function importDocument(
           type: "text",
           text: buildImportPrompt(source.sourceRef, queueMessage.prompt),
         },
-        ...buildAgentContentBlocksForDocument(source.title, source.mimeType, bytes),
+        ...(await buildAgentContentBlocksForArchivedDocument(source, bytes)),
       ],
       context: {
         source: "local_import",
@@ -180,7 +184,7 @@ async function extractMarkdown(
           type: "text",
           text: buildMarkdownExtractionPrompt(source.sourceRef, queueMessage.prompt),
         },
-        ...buildAgentContentBlocksForDocument(source.title, source.mimeType, bytes),
+        ...(await buildAgentContentBlocksForArchivedDocument(source, bytes)),
       ],
       context: {
         source: "markdown_extraction",
@@ -226,6 +230,29 @@ async function extractMarkdown(
     sessionId: completion.sessionId,
     extractedMarkdownS3Key: s3Key,
   });
+}
+
+async function buildAgentContentBlocksForArchivedDocument(
+  source: SourceDocument,
+  bytes: Buffer,
+) {
+  if (source.s3Bucket && source.s3Key && shouldPassDocumentByUrl(source.mimeType)) {
+    const url = await getSignedUrl(
+      s3,
+      new GetObjectCommand({
+        Bucket: source.s3Bucket,
+        Key: source.s3Key,
+      }),
+      { expiresIn: 15 * 60 },
+    );
+    return buildAgentContentBlocksForDocumentUrl(source.title, source.mimeType, url);
+  }
+
+  return buildAgentContentBlocksForDocument(source.title, source.mimeType, bytes);
+}
+
+function shouldPassDocumentByUrl(mimeType: string | undefined): boolean {
+  return mimeType === "application/pdf" || Boolean(mimeType?.startsWith("image/"));
 }
 
 function buildExtractedMarkdownS3Key(

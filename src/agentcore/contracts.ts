@@ -16,6 +16,7 @@ const imageBlockSchema = z.object({
     z.object({
       type: z.literal("url"),
       url: z.string().min(1),
+      media_type: z.string().min(1).optional(),
     }),
   ]),
 });
