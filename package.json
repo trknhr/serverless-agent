@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "description": "AWS Lambda + Slack Events API + Amazon Bedrock AgentCore assistant",
+  "description": "Serverless AI assistant for chat workspaces on AWS and Amazon Bedrock AgentCore",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",

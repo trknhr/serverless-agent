@@ -1,23 +1,40 @@
 # slack-ai-assistant
 
-AWS Lambda + CDK scaffold for running a Slack-based assistant on Amazon Bedrock AgentCore.
+Serverless AI assistant infrastructure for chat workspaces, built on AWS Lambda,
+API Gateway, SQS, DynamoDB, S3, EventBridge Scheduler, and Amazon Bedrock
+AgentCore.
 
-This repository provides the application glue around AgentCore Runtime:
+The current `v0.1.0` implementation ships a Slack adapter. The longer-term
+direction is a shared serverless assistant core with first-class Slack and LINE
+adapters, plus an optional Discord adapter.
 
-- Slack Events API ingestion
-- asynchronous Slack processing with SQS
-- scheduled runs through EventBridge Scheduler
-- session mapping and event deduplication
-- attachment handling for PDFs, images, and text files
-- raw Slack attachment archival to private S3 storage
-- custom tool execution in AgentCore Runtime backed by DynamoDB for memories, tasks, recurring tasks, and calendar drafts
+The assistant keeps model reasoning, tool execution, and runtime isolation inside
+AgentCore while AWS handles webhooks, queues, state, scheduled jobs, document
+ingestion, and chat-platform delivery.
 
-The goal is to keep reasoning, tool loops, and runtime isolation inside AgentCore while handling webhooks, queues, and app-facing integrations in AWS.
+## Status
+
+`v0.1.0` focuses on a working Slack-based assistant:
+
+- Slack app mentions, DMs, thread replies, and interactive actions
+- AgentCore Runtime container for model calls and custom tool loops
+- durable memory, user preferences, tasks, recurring tasks, and calendar drafts
+- scheduled reminders through EventBridge Scheduler
+- Slack attachment handling for PDFs, images, and text-like files
+- local document and Markdown ingestion through IAM-protected APIs
+- direct terminal chat through an IAM-protected API
+- Google Calendar OAuth and draft-then-apply calendar tools
+
+Planned adapter direction:
+
+- Slack: implemented in `v0.1.0`
+- LINE: intended as a first-class adapter after the assistant core stabilizes
+- Discord: optional adapter after Slack/LINE patterns are clear
 
 ## Architecture
 
 ```text
-Slack mention / DM
+Slack mention / DM / thread reply
   -> API Gateway
   -> Lambda (slack-events-ingress)
   -> SQS
@@ -31,7 +48,7 @@ Scheduled reminder
   -> AgentCore Runtime (SlackAgent)
   -> Slack post
 
-Local bulk import
+Local document import
   -> CLI script
   -> API Gateway
   -> Lambda (document-import-api)
@@ -39,64 +56,66 @@ Local bulk import
   -> SQS
   -> Lambda (document-import-worker)
   -> AgentCore Runtime (SlackAgent)
+  -> DynamoDB memory/task/calendar state
+
+Direct terminal chat
+  -> CLI script
+  -> API Gateway
+  -> Lambda (chat-api)
+  -> AgentCore Runtime (SlackAgent)
 
 State
   -> DynamoDB
 
-Raw attachment archive
+Raw attachment and import archive
   -> private S3
 ```
 
-## What is included
+The adapter boundary is intentionally narrow: platform-specific code should
+handle request verification, event parsing, message formatting, file download,
+and reply delivery. The assistant core should stay centered on AgentCore
+requests, tool resources, memory, tasks, documents, and calendar workflows.
 
-- `slack-events-ingress` Lambda
-- `slack-events-worker` Lambda
-- `document-import-api` Lambda
-- `document-import-worker` Lambda
-- `scheduled-agent-runner` Lambda
-- `chat-api` Lambda
-- `slack-interactions` Lambda
-- `google-oauth` Lambda
-- API Gateway
-- SQS + DLQ
-- 13 DynamoDB tables
-- private S3 bucket for supported Slack attachments
-- EventBridge Scheduler
-- AgentCore Runtime container for model and tool-loop execution
-- custom tool execution for memory, task, recurring task, and calendar draft persistence
-- local bulk import for `pdf`, `jpg/jpeg`, and `png`
-- local Markdown ingestion for notes, task lists, and recurring task definitions
+## Included Components
 
-## DynamoDB tables
+- CDK stack in `lib/slack-ai-assistant-stack.ts`
+- AgentCore Runtime project definition in `agentcore/agentcore.json`
+- Node 22 AgentCore container build context in `app/SlackAgent/`
+- Slack Events API ingress Lambda
+- Slack async worker Lambda
+- Slack interactions Lambda
+- scheduled Agent runner Lambda
+- document import API Lambda
+- document import worker Lambda
+- direct chat API Lambda
+- Google OAuth Lambda
+- API Gateway REST API
+- SQS queues and DLQs
+- DynamoDB tables for sessions, turns, memory, tasks, recurring tasks, calendar
+  drafts, source documents, OAuth connections, and event deduplication
+- private S3 bucket for Slack attachments and local document imports
+- local CLI scripts for import, Markdown ingestion, PDF extraction, direct chat,
+  and scheduled task setup
 
-- `SlackThreadSessionsTable`
-  Stores reusable runtime session IDs for scheduled tasks that opt into session reuse
-- `ConversationSessionsTable`
-  Maps Slack `workspace/channel/conversation` to AgentCore runtime session IDs
-- `ConversationTurnsTable`
-  Stores Slack conversation turns for thread and top-level channel context
-- `ProcessedEventsTable`
-  Stores Slack event IDs for deduplication
-- `ScheduledTasksTable`
-  Stores scheduled Agent run definitions such as `daily-summary`
-- `RecurringTasksTable`
-  Stores recurring task definitions that are materialized into task instances by the scheduled runner
-- `UserMemoriesTable`
-  Legacy table retained to avoid destructive stack changes
-- `MemoryItemsTable`
-  Stores durable semi-structured memories
-- `TasksTable`
-  Stores current task state
-- `TaskEventsTable`
-  Stores task history
-- `CalendarDraftsTable`
-  Stores reviewable Google Calendar event drafts before they are applied
-- `SourceDocumentsTable`
-  Stores archived Slack attachment metadata and archive status
-- `GoogleOAuthConnectionsTable`
-  Stores per-user Google Calendar OAuth connections
+## Data Model
 
-## Repository layout
+The stack creates these DynamoDB tables:
+
+- `SlackThreadSessionsTable`: reusable runtime session IDs for scheduled tasks
+- `ConversationSessionsTable`: Slack conversation to AgentCore session mapping
+- `ConversationTurnsTable`: thread and top-level channel context
+- `ProcessedEventsTable`: Slack event deduplication
+- `ScheduledTasksTable`: scheduled Agent run definitions such as `daily-summary`
+- `RecurringTasksTable`: recurring task rules materialized by the scheduler
+- `UserMemoriesTable`: legacy table retained to avoid destructive stack changes
+- `MemoryItemsTable`: workspace-scoped durable memory
+- `TasksTable`: current task state
+- `TaskEventsTable`: task history
+- `CalendarDraftsTable`: reviewable Google Calendar event drafts
+- `SourceDocumentsTable`: imported or archived source document metadata
+- `GoogleOAuthConnectionsTable`: per-user Google Calendar OAuth connections
+
+## Repository Layout
 
 ```text
 bin/
@@ -107,8 +126,17 @@ app/
 scripts/
 src/
   agentcore/
+  calendar/
+  conversations/
+  documents/
   functions/
+  imports/
+  memory/
+  repo/
+  slack/
+  tasks/
   tools/
+tests/
 ```
 
 ## Prerequisites
@@ -117,7 +145,8 @@ src/
    - `/slack-ai-assistant/slack-signing-secret`
    - `/slack-ai-assistant/slack-bot-token`
    - `/slack-ai-assistant/google-calendar`
-2. Ensure the target account has access to Bedrock AgentCore and the configured Bedrock model.
+2. Ensure the target AWS account has access to Bedrock AgentCore and the
+   configured Bedrock model IDs.
 3. Install Docker for AgentCore container image builds.
 4. Bootstrap CDK in the target AWS account and region.
 
@@ -137,7 +166,9 @@ Each Slack user connects their own Google Calendar through:
 - `GET /oauth/google/start`
 - `GET /oauth/google/callback`
 
-Add the deployed `GoogleOAuthCallbackUrl` output as an authorized redirect URI in the Google Cloud OAuth client. Calendar tools run with the Google account connected to the Slack user who requested the action.
+Add the deployed `GoogleOAuthCallbackUrl` output as an authorized redirect URI
+in the Google Cloud OAuth client. Calendar tools run with the Google account
+connected to the Slack user who requested the action.
 
 ## Deploy
 
@@ -150,230 +181,70 @@ npx cdk deploy \
   -c publicBaseUrl=https://your-api-id.execute-api.ap-northeast-1.amazonaws.com/prod
 ```
 
-Notes:
+Context options:
 
-- Lambda runtime code is TypeScript and bundled with `NodejsFunction`.
-- AgentCore runtime code is built as a Node 22 container from `app/SlackAgent/Dockerfile`.
-- `defaultScheduleChannel` lets the scheduled runner create a fallback task automatically if `daily-summary` is missing.
-- `bedrockModelId` selects the default Bedrock model used by the AgentCore runtime.
-- `bedrockDocumentModelId` selects the Bedrock model used when the request includes PDF or other document input.
-- `publicBaseUrl` is used inside Slack replies when a user needs to connect Google Calendar.
-- `googleCalendarSecretName` and `googleCalendarTimeZone` can be overridden with CDK context if needed.
+- `defaultScheduleChannel`: Slack channel used when the scheduled runner creates
+  the fallback `daily-summary` task
+- `bedrockModelId`: default Bedrock model used by the AgentCore runtime
+- `bedrockDocumentModelId`: Bedrock model used when requests include PDF or
+  other document input
+- `publicBaseUrl`: deployed API base URL used in Slack replies, especially for
+  Google Calendar OAuth links
+- `googleCalendarSecretName`: optional override for the Google Calendar secret
+- `googleCalendarTimeZone`: optional override for calendar defaults
+
+After deploy, configure Slack with these CDK outputs:
+
+- `SlackEventsUrl`: Slack Events API request URL
+- `SlackInteractionsUrl`: Slack interactivity request URL
+- `GoogleOAuthCallbackUrl`: Google OAuth redirect URI
 
 ## AgentCore Runtime
 
-The `SlackAgent` runtime is defined in `agentcore/agentcore.json` and implemented by `src/agentcore/runtime.ts`.
+The `SlackAgent` runtime is defined in `agentcore/agentcore.json` and implemented
+by `src/agentcore/runtime.ts`.
 
-The container build context lives under `app/SlackAgent/`. That directory points back to the root TypeScript source and package metadata so the Lambda code and AgentCore runtime share the same domain logic and tool definitions.
-
-The CDK stack creates the AgentCore runtime, grants the Lambda functions invoke permission, and grants the runtime access to the DynamoDB tables and Google Calendar secret needed by the tools.
+The container build context lives under `app/SlackAgent/`. That directory points
+back to the root TypeScript source and package metadata so the Lambda functions
+and AgentCore runtime share the same domain logic and tool definitions.
 
 Tool groups available inside AgentCore:
 
 - durable memory: `search_memories`, `save_memory`
 - one-off tasks: `list_tasks`, `upsert_task`, `mark_task_done`
-- recurring tasks: `list_recurring_tasks`, `upsert_recurring_task`, `disable_recurring_task`
-- Google Calendar drafts: `list_calendar_events`, `find_free_busy`, `create_calendar_draft`, `list_calendar_drafts`, `apply_calendar_draft`, `discard_calendar_draft`
+- recurring tasks: `list_recurring_tasks`, `upsert_recurring_task`,
+  `disable_recurring_task`
+- Google Calendar drafts: `list_google_calendars`, `list_calendar_events`,
+  `find_free_busy`, `create_calendar_draft`, `list_calendar_drafts`,
+  `apply_calendar_draft`, `discard_calendar_draft`
 
-## Google Calendar Draft Flow
+## Memory And Permissions
 
-The app integrates Google Calendar as custom tools inside the AgentCore runtime.
+Current memory scopes:
 
-Available tools:
+- channel memory: shared context for the current Slack channel
+- user preferences: cross-channel personal preferences for the current user
+- workspace memory: workspace-level memory used by imports, direct chat fallback,
+  and scheduled reminders
 
-- `list_google_calendars`
-- `list_calendar_events`
-- `find_free_busy`
-- `create_calendar_draft`
-- `list_calendar_drafts`
-- `apply_calendar_draft`
-- `discard_calendar_draft`
+Slack conversations currently prevent direct workspace memory writes. Inferred
+channel memory is saved as a candidate, while scheduled reminders run with
+workspace scope.
 
-Recommended flow:
+Future work should add an admin surface for channel-level knowledge sharing
+policies, such as explicit promotion to workspace memory, approval queues,
+provenance, audit logs, and per-channel opt-in controls.
 
-1. Extract event candidates from Slack or imported documents.
-2. Save them with `create_calendar_draft`.
-3. Show the returned draft preview to the user.
-4. Only after explicit approval, call `apply_calendar_draft`.
+## Scheduled Reminders
 
-Notes:
+EventBridge Scheduler invokes `scheduled-agent-runner` with `taskId:
+daily-summary` by default.
 
-- The app uses the Google Calendar REST API from the AgentCore runtime.
-- Slack users authorize their own Google Calendar accounts through OAuth.
-- All-day events use date-only values and are written with Google Calendar's exclusive end-date semantics under the hood.
-- Draft application is idempotent across re-imports by storing app-specific private extended properties on events.
+Scheduled task definitions live in `ScheduledTasksTable`. The runner also
+materializes enabled recurring task definitions for the next 7 days before
+building the reminder prompt.
 
-## Local bulk import
-
-Bulk import uses the existing private S3 archive bucket plus `SourceDocumentsTable`.
-
-Supported formats:
-
-- `.pdf`
-- `.jpg`
-- `.jpeg`
-- `.png`
-
-Recommended local input directory:
-
-- `private-docs/`
-
-It is ignored by git by default.
-
-Example:
-
-```bash
-npm run import-local-docs -- \
-  --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
-  --workspace-id T0123456789 \
-  --user-id U0123456789 \
-  --region ap-northeast-1 \
-  --wait \
-  private-docs
-```
-
-Flow:
-
-1. The script requests a presigned upload URL from `/imports/uploads`.
-2. It uploads the original file to private S3.
-3. It queues processing through `/imports/documents`.
-4. The import worker sends the file to AgentCore Runtime, which persists memories, one-off tasks, recurring tasks, and calendar drafts through custom tools.
-5. The script can poll `/imports/workspaces/{workspaceId}/sources/{sourceId}` until completion.
-
-Security:
-
-- `imports/*` endpoints use `AWS_IAM` authorization.
-- The local script signs requests with SigV4 using your current AWS credentials.
-- Your IAM principal must have `execute-api:Invoke` permission for the import routes.
-
-## PDF to Markdown extraction
-
-For OCR and layout evaluation, you can queue a Markdown extraction pass for uploaded PDFs without ingesting them into memories or tasks.
-
-API routes:
-
-- `POST /imports/extractions/markdown`
-- `GET /imports/workspaces/{workspaceId}/sources/{sourceId}`
-- `GET /imports/workspaces/{workspaceId}/sources/{sourceId}/markdown`
-
-Flow:
-
-1. Upload the original PDF through `/imports/uploads`.
-2. Queue Markdown extraction through `/imports/extractions/markdown`.
-3. Poll `/imports/workspaces/{workspaceId}/sources/{sourceId}` until `extractionStatus` becomes `extracted`.
-4. Download the extracted Markdown through `/imports/workspaces/{workspaceId}/sources/{sourceId}/markdown`.
-
-Example CLI:
-
-```bash
-npm run extract-pdf-markdown -- \
-  --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
-  --workspace-id T0123456789 \
-  --user-id U0123456789 \
-  --region ap-northeast-1 \
-  --wait \
-  private-docs
-```
-
-Security:
-
-- These routes also use `AWS_IAM` authorization.
-- The CLI signs requests with SigV4 using your current AWS credentials.
-- Your IAM principal must have `execute-api:Invoke` permission for the extraction routes.
-
-## Markdown ingestion
-
-Markdown ingestion uses the same `SourceDocumentsTable`, private S3 archive bucket, and import worker. Repeating rules such as weekly or monthly duties should be captured as recurring task definitions, not as one-off task instances.
-
-Supported formats:
-
-- `.md`
-- `.markdown`
-
-Recommended local input directory:
-
-- `private-notes/`
-
-It is ignored by git by default.
-
-Example:
-
-```bash
-npm run ingest-markdown -- \
-  --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
-  --workspace-id T0123456789 \
-  --user-id U0123456789 \
-  --region ap-northeast-1 \
-  --wait \
-  private-notes
-```
-
-Flow:
-
-1. The script reads local markdown files and posts them to `/imports/markdown`.
-2. The API stores the original markdown in private S3 under `raw/private/notes/...`.
-3. It queues processing through the existing document import worker.
-4. The worker sends the note to AgentCore Runtime, which persists memories, one-off tasks, recurring tasks, and calendar drafts through custom tools.
-5. The script can poll `/imports/workspaces/{workspaceId}/sources/{sourceId}` until completion.
-
-Security:
-
-- `/imports/markdown` also uses `AWS_IAM` authorization.
-- The local script signs requests with SigV4 using your current AWS credentials.
-- Your IAM principal must have `execute-api:Invoke` permission for the import routes.
-
-## Direct chat from your terminal
-
-For quick questions outside Slack, you can call the AgentCore-backed assistant through an IAM-protected API route:
-
-- `POST /chat/messages`
-
-The repository also includes a signed local CLI:
-
-```bash
-npm run ask-agent -- \
-  --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
-  --workspace-id T0123456789 \
-  --user-id local-importer-teru \
-  --region ap-northeast-1 \
-  "今日のやることは？"
-```
-
-The response includes:
-
-- `session_id`
-- the assistant text response
-- any saved memory IDs
-- any task IDs touched during the answer
-- any recurring task IDs touched during the answer
-
-To continue the same conversation, pass the returned `session_id` back:
-
-```bash
-npm run ask-agent -- \
-  --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
-  --workspace-id T0123456789 \
-  --user-id local-importer-teru \
-  --region ap-northeast-1 \
-  --session-id sess_... \
-  "今夜中のものだけ教えて"
-```
-
-Notes:
-
-- `/chat/messages` uses `AWS_IAM` authorization.
-- The route is synchronous and best suited to short questions.
-- For long-running workflows, keep using Slack, scheduled jobs, or import workers.
-
-## Current scope
-
-- EventBridge Scheduler triggers `daily-summary`
-- scheduled Agent run definitions live in `ScheduledTasksTable`
-- recurring task definitions live in `RecurringTasksTable`
-- the scheduled runner materializes enabled recurring tasks for the next 7 days before building the daily reminder
-- fallback scheduled tasks can be created from `outputChannelId` in the invoke payload or from `defaultScheduleChannel`
-
-Example scheduled task item:
+Example scheduled task:
 
 ```json
 {
@@ -390,7 +261,18 @@ Example scheduled task item:
 }
 ```
 
-Example recurring task item:
+Create or update a scheduled task locally:
+
+```bash
+npx ts-node scripts/put-scheduled-task.ts \
+  --table-name YOUR_SCHEDULED_TASKS_TABLE \
+  --region ap-northeast-1 \
+  --workspace-id T0123456789 \
+  --output-channel-id C0123456789 \
+  --prompt "Summarize open tasks and upcoming deadlines."
+```
+
+Example recurring task:
 
 ```json
 {
@@ -415,6 +297,25 @@ Example recurring task item:
 }
 ```
 
+## Google Calendar Drafts
+
+The assistant creates reviewable Google Calendar drafts before applying events.
+
+Recommended flow:
+
+1. Extract event candidates from Slack or imported documents.
+2. Save them with `create_calendar_draft`.
+3. Show the returned draft preview to the user.
+4. Apply the event only after explicit approval.
+
+Notes:
+
+- Slack users authorize their own Google Calendar accounts through OAuth.
+- All-day events use date-only values and Google Calendar's exclusive end-date
+  semantics.
+- Draft application is idempotent across re-imports by storing app-specific
+  private extended properties on events.
+
 ## Attachments
 
 Slack file support currently covers:
@@ -425,22 +326,163 @@ Slack file support currently covers:
 
 Requirements and limits:
 
-- your Slack app must include `files:read`
-- the current default max file size is `10MB` per file
-- supported Slack attachments are archived to a private S3 bucket before being sent to AgentCore Runtime
-- unsupported or oversized files are recorded as skipped metadata and degraded into text notes instead of breaking the conversation
+- the Slack app must include `files:read`
+- the default max file size is `10MB` per file
+- supported Slack attachments are archived to private S3 before being sent to
+  AgentCore Runtime
+- unsupported or oversized files are recorded as skipped metadata and degraded
+  into text notes instead of breaking the conversation
 
-## AgentCore notes
+## Local Document Import
 
-- thread conversations are modeled as `Slack thread = AgentCore runtime session`
-- custom tool execution runs inside `src/agentcore/runtime.ts`
-- Lambda functions pass tool resource names to the runtime per request
+Bulk import uses the private S3 archive bucket plus `SourceDocumentsTable`.
+
+Supported formats:
+
+- `.pdf`
+- `.jpg`
+- `.jpeg`
+- `.png`
+
+Recommended local input directory:
+
+- `private-docs/`
+
+Example:
+
+```bash
+npm run import-local-docs -- \
+  --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
+  --workspace-id T0123456789 \
+  --user-id U0123456789 \
+  --region ap-northeast-1 \
+  --wait \
+  private-docs
+```
+
+Flow:
+
+1. The script requests a presigned upload URL from `/imports/uploads`.
+2. It uploads the original file to private S3.
+3. It queues processing through `/imports/documents`.
+4. The import worker sends the file to AgentCore Runtime.
+5. AgentCore persists memories, tasks, recurring tasks, and calendar drafts
+   through custom tools.
+6. The script can poll `/imports/workspaces/{workspaceId}/sources/{sourceId}`
+   until completion.
+
+## PDF To Markdown Extraction
+
+For OCR and layout evaluation, queue a Markdown extraction pass for uploaded
+PDFs without ingesting them into memories or tasks.
+
+Routes:
+
+- `POST /imports/extractions/markdown`
+- `GET /imports/workspaces/{workspaceId}/sources/{sourceId}`
+- `GET /imports/workspaces/{workspaceId}/sources/{sourceId}/markdown`
+
+Example:
+
+```bash
+npm run extract-pdf-markdown -- \
+  --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
+  --workspace-id T0123456789 \
+  --user-id U0123456789 \
+  --region ap-northeast-1 \
+  --wait \
+  private-docs
+```
+
+## Markdown Ingestion
+
+Markdown ingestion uses the same `SourceDocumentsTable`, private S3 archive
+bucket, and import worker. Repeating rules such as weekly or monthly duties
+should be captured as recurring task definitions, not one-off task instances.
+
+Supported formats:
+
+- `.md`
+- `.markdown`
+
+Recommended local input directory:
+
+- `private-notes/`
+
+Example:
+
+```bash
+npm run ingest-markdown -- \
+  --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
+  --workspace-id T0123456789 \
+  --user-id U0123456789 \
+  --region ap-northeast-1 \
+  --wait \
+  private-notes
+```
+
+## Direct Chat From Terminal
+
+For quick questions outside Slack, call the AgentCore-backed assistant through
+the IAM-protected `POST /chat/messages` route.
+
+```bash
+npm run ask-agent -- \
+  --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
+  --workspace-id T0123456789 \
+  --user-id local-importer-teru \
+  --region ap-northeast-1 \
+  "今日のやることは？"
+```
+
+To continue the same conversation, pass the returned `session_id` back:
+
+```bash
+npm run ask-agent -- \
+  --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
+  --workspace-id T0123456789 \
+  --user-id local-importer-teru \
+  --region ap-northeast-1 \
+  --session-id sess_... \
+  "今夜中のものだけ教えて"
+```
+
+## Local Development
+
+```bash
+npm install
+npm run typecheck
+npm test
+npm run test:coverage
+npm run build
+npm run synth
+```
+
+Current coverage thresholds are set to 90% for statements, branches, functions,
+and lines.
 
 ## Security
 
-- Do not commit real tokens, secret values, account IDs, runtime ARNs, or environment IDs.
+- Do not commit real tokens, secret values, account IDs, runtime ARNs, or
+  environment IDs.
 - Do not commit `cdk.out/` artifacts or other generated deployment outputs.
-- Keep Slack signing secrets, bot tokens, and Google OAuth client secrets in Secrets Manager only.
+- Keep Slack signing secrets, bot tokens, and Google OAuth client secrets in
+  Secrets Manager only.
+- `imports/*` and `/chat/messages` routes use `AWS_IAM` authorization.
+- Local scripts sign requests with SigV4 using the current AWS credentials.
+- IAM principals running local scripts need `execute-api:Invoke` permission for
+  the relevant API routes.
+
+## Roadmap
+
+Near-term post-`v0.1.0` work:
+
+- LINE adapter as a first-class messaging integration
+- admin page for channel-level workspace memory promotion policies
+- explicit approval flow for promoting channel memory to workspace memory
+- source provenance and audit logs for workspace-visible knowledge
+- platform adapter interface that can support Slack, LINE, and optional Discord
+- Discord adapter after the Slack/LINE boundaries are stable
 
 ## License
 
