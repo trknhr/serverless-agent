@@ -52,6 +52,15 @@ export const lineQueueMessageSchema = z.object({
   source: z.literal("message"),
   contextScope: z.literal("channel_top_level"),
   receivedAt: z.string().min(1),
+  attachments: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        type: z.enum(["image"]),
+        contentType: z.string().min(1).optional(),
+      }),
+    )
+    .default([]),
 });
 
 export type LineQueueMessage = z.infer<typeof lineQueueMessageSchema>;

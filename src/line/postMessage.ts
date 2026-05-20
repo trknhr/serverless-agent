@@ -25,6 +25,27 @@ export class LineMessagingClient {
     });
   }
 
+  async downloadMessageContent(messageId: string): Promise<{ bytes: Buffer; contentType?: string }> {
+    const response = await fetch(
+      `https://api-data.line.me/v2/bot/message/${encodeURIComponent(messageId)}/content`,
+      {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${await this.getChannelAccessToken()}`,
+        },
+      },
+    );
+
+    if (!response.ok) {
+      throw new LineApiError(`LINE content download failed with status ${response.status}: ${await response.text()}`);
+    }
+
+    return {
+      bytes: Buffer.from(await response.arrayBuffer()),
+      contentType: response.headers.get("content-type") ?? undefined,
+    };
+  }
+
   private async call(url: string, body: Record<string, unknown>): Promise<void> {
     const response = await fetch(url, {
       method: "POST",

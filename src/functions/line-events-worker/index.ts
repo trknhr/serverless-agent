@@ -1,14 +1,18 @@
 import type { SQSEvent } from "aws-lambda";
+import { AgentContentBlock } from "../../agent/types";
 import { AgentCoreRuntimeClient } from "../../agentcore/client";
 import { buildAgentRuntimeResources } from "../../agentcore/contracts";
 import { SecretsProvider } from "../../aws/secretsProvider";
 import { buildLineContextBlocks } from "../../conversations/buildLineContextBlocks";
 import { loadLineWorkerEnv } from "../../config/env";
+import { buildAgentContentBlocksForDocument } from "../../documents/contentBlocks";
 import { LineMessagingClient } from "../../line/postMessage";
 import { ConversationSessionRepository } from "../../repo/conversationSessionRepository";
 import { ConversationTurnRepository } from "../../repo/conversationTurnRepository";
-import { ConversationSessionRecord, lineQueueMessageSchema } from "../../shared/contracts";
+import { ConversationSessionRecord, LineQueueMessage, lineQueueMessageSchema } from "../../shared/contracts";
 import { logger } from "../../shared/logger";
+import { stripModelThinking } from "../../shared/text";
+import { compressSlackImageForModel } from "../../slack/imageCompression";
 
 const env = loadLineWorkerEnv();
 const secretsProvider = new SecretsProvider();
@@ -49,6 +53,7 @@ export async function handler(event: SQSEvent): Promise<void> {
       await conversationSessionRepository.save(sessionRecord);
     }
 
+    const attachmentBlocks = await buildLineAttachmentBlocks(queueMessage, lineClient, log);
     const priorTurns = await conversationTurnRepository.listRecentChannelTopLevelTurns(
       queueMessage.workspaceId,
       queueMessage.channelId,
@@ -76,6 +81,7 @@ export async function handler(event: SQSEvent): Promise<void> {
         content: buildLineContextBlocks({
           priorTurns,
           currentText: queueMessage.text,
+          attachmentBlocks,
         }),
         context: {
           source: "line",
@@ -97,8 +103,9 @@ export async function handler(event: SQSEvent): Promise<void> {
         },
       },
     });
+    const completionText = stripModelThinking(completion.text) || "処理は完了しましたが、返答テキストが空でした。";
 
-    await lineClient.pushText(queueMessage.responseTargetId, completion.text);
+    await lineClient.pushText(queueMessage.responseTargetId, completionText);
 
     const assistantMessageTs = createSyntheticLineTs();
     await conversationTurnRepository.save({
@@ -111,7 +118,7 @@ export async function handler(event: SQSEvent): Promise<void> {
       sourceEvent: "line_assistant_reply",
       messageTs: assistantMessageTs,
       turnTs: assistantMessageTs,
-      text: completion.text,
+      text: completionText,
     });
 
     await conversationSessionRepository.save({
@@ -129,6 +136,51 @@ export async function handler(event: SQSEvent): Promise<void> {
   }
 }
 
+async function buildLineAttachmentBlocks(
+  queueMessage: LineQueueMessage,
+  lineClient: LineMessagingClient,
+  log: ReturnType<typeof logger.child>,
+): Promise<AgentContentBlock[]> {
+  const blocks: AgentContentBlock[] = [];
+
+  for (const attachment of queueMessage.attachments) {
+    if (attachment.type !== "image") {
+      continue;
+    }
+
+    try {
+      const downloaded = await lineClient.downloadMessageContent(attachment.id);
+      const originalMimeType = normalizeContentType(downloaded.contentType ?? attachment.contentType) ?? "image/jpeg";
+      const compressed = await compressSlackImageForModel(downloaded.bytes, originalMimeType);
+      const modelBytes = compressed?.bytes ?? downloaded.bytes;
+      const modelMimeType = compressed?.mimeType ?? originalMimeType;
+
+      if (modelBytes.byteLength > 750_000) {
+        blocks.push({
+          type: "text",
+          text: `Attachment note: LINE image ${attachment.id} was too large for inline analysis after compression.`,
+        });
+        continue;
+      }
+
+      blocks.push(...buildAgentContentBlocksForDocument(`LINE image ${attachment.id}`, modelMimeType, modelBytes));
+    } catch (error) {
+      log.warn("LINE image attachment processing failed", {
+        messageId: attachment.id,
+        error: error instanceof Error ? error.message : "Unknown LINE image error",
+      });
+      blocks.push({
+        type: "text",
+        text: `Attachment note: Could not read LINE image ${attachment.id}. ${
+          error instanceof Error ? error.message : "Unknown image processing error"
+        }`,
+      });
+    }
+  }
+
+  return blocks;
+}
+
 function createConversationSession(
   workspaceId: string,
   channelId: string,
@@ -142,6 +194,10 @@ function createConversationSession(
     createdAt: now,
     lastUsedAt: now,
   };
+}
+
+function normalizeContentType(value: string | undefined): string | undefined {
+  return value?.split(";")[0]?.trim().toLowerCase() || undefined;
 }
 
 function createSyntheticLineTs(): string {

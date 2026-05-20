@@ -4,6 +4,7 @@ import { ConversationTurnRecord } from "../shared/contracts";
 interface BuildLineContextBlocksInput {
   priorTurns: ConversationTurnRecord[];
   currentText: string;
+  attachmentBlocks?: AgentContentBlock[];
 }
 
 export function buildLineContextBlocks(input: BuildLineContextBlocksInput): AgentContentBlock[] {
@@ -12,6 +13,7 @@ export function buildLineContextBlocks(input: BuildLineContextBlocksInput): Agen
       type: "text",
       text: buildPromptText(input.priorTurns, input.currentText),
     },
+    ...(input.attachmentBlocks ?? []),
   ];
 }
 

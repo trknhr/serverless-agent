@@ -60,14 +60,18 @@ function toLineQueueMessage(
   correlationId: string,
   receivedAt: string,
 ): LineQueueMessage | null {
-  if (event.type !== "message" || event.message?.type !== "text") {
+  if (event.type !== "message" || !event.message) {
     return null;
   }
 
-  const text = event.message.text?.trim();
-  if (!text) {
+  const attachments = buildLineAttachments(event.message);
+  const text = event.message.type === "text"
+    ? event.message.text?.trim()
+    : buildDefaultAttachmentPrompt(attachments);
+  if (!text && attachments.length === 0) {
     return null;
   }
+  const normalizedText = text ?? "";
 
   const target = resolveResponseTarget(event.source);
   if (!target) {
@@ -86,14 +90,42 @@ function toLineQueueMessage(
     conversationTs: target.channelId,
     messageTs,
     userId: event.source.userId ? `line:user:${event.source.userId}` : target.channelId,
-    text,
+    text: normalizedText,
     replyToken: event.replyToken,
     responseTargetId: target.responseTargetId,
     responseTargetType: target.responseTargetType,
     source: "message",
     contextScope: "channel_top_level",
     receivedAt,
+    attachments,
   };
+}
+
+function buildLineAttachments(
+  message: NonNullable<ParsedLineWebhook["events"][number]["message"]>,
+): LineQueueMessage["attachments"] {
+  if (message.type !== "image" || !message.id) {
+    return [];
+  }
+  return [
+    {
+      id: message.id,
+      type: "image",
+      contentType: "image/jpeg",
+    },
+  ];
+}
+
+function buildDefaultAttachmentPrompt(attachments: LineQueueMessage["attachments"]): string {
+  if (attachments.length === 0) {
+    return "";
+  }
+  return [
+    "The user sent image attachment(s) without text.",
+    "Analyze the image content directly and summarize the visible information.",
+    "If the image is a document, read the text as best you can.",
+    "Answer in the language of the document or the surrounding conversation.",
+  ].join(" ");
 }
 
 function resolveResponseTarget(

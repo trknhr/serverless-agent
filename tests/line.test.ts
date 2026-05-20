@@ -89,6 +89,45 @@ describe("LINE webhook parsing", () => {
         source: "message",
         contextScope: "channel_top_level",
         receivedAt: "2026-05-18T00:00:00.000Z",
+        attachments: [],
+      },
+    ]);
+  });
+
+  it("extracts image message events for worker-side content download", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-18T00:00:00Z"));
+    const webhook = parseLineWebhook(
+      JSON.stringify({
+        destination: "Ubot",
+        events: [
+          {
+            type: "message",
+            webhookEventId: "event-image",
+            source: { type: "user", userId: "U1" },
+            message: { id: "img-1", type: "image" },
+          },
+        ],
+      }),
+    );
+
+    expect(extractLineQueueMessages(webhook, "corr")).toEqual([
+      {
+        correlationId: "corr:0",
+        eventId: "event-image",
+        workspaceId: "line:user:U1",
+        providerAccountId: "Ubot",
+        channelId: "line:user:U1",
+        conversationTs: "line:user:U1",
+        messageTs: "img-1",
+        userId: "line:user:U1",
+        text: expect.stringContaining("Analyze the image content directly"),
+        responseTargetId: "U1",
+        responseTargetType: "user",
+        source: "message",
+        contextScope: "channel_top_level",
+        receivedAt: "2026-05-18T00:00:00.000Z",
+        attachments: [{ id: "img-1", type: "image", contentType: "image/jpeg" }],
       },
     ]);
   });
@@ -178,8 +217,9 @@ describe("LINE webhook parsing", () => {
 
 describe("LINE conversation prompt blocks", () => {
   it("renders prior chat turns into same-chat context", () => {
-    const [{ text }] = buildLineContextBlocks({
+    const [promptBlock, attachmentBlock] = buildLineContextBlocks({
       currentText: "what changed?",
+      attachmentBlocks: [{ type: "text", text: "Attached image: img-1" }],
       priorTurns: [
         {
           turnId: "turn-1",
@@ -198,10 +238,12 @@ describe("LINE conversation prompt blocks", () => {
         },
       ],
     });
+    const text = promptBlock.text;
 
     expect(text).toContain("LINE conversation context");
     expect(text).toContain("1. user:U1: first");
     expect(text).toContain("Current user message:\nwhat changed?");
+    expect(attachmentBlock).toEqual({ type: "text", text: "Attached image: img-1" });
   });
 });
 
@@ -244,6 +286,26 @@ describe("LINE messaging client", () => {
     });
 
     await expect(client.pushText("U1", "hello")).rejects.toThrow("LINE API call failed with status 500");
+  });
+
+  it("downloads message content with bearer auth", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new LineMessagingClient(async () => "token");
+
+    await expect(client.downloadMessageContent("img-1")).resolves.toEqual({
+      bytes: Buffer.from([1, 2, 3]),
+      contentType: "image/jpeg",
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api-data.line.me/v2/bot/message/img-1/content");
+    expect(fetchMock.mock.calls[0][1].headers).toMatchObject({
+      authorization: "Bearer token",
+    });
   });
 
   it("splits text and caps request messages", () => {
