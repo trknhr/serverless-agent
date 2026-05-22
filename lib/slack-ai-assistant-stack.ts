@@ -18,29 +18,31 @@ import {
 import { Construct } from "constructs";
 import { join } from "node:path";
 
+const DEFAULT_PARAMETER_PREFIX = "/example/slack-ai-assistant";
+
 export class SlackAiAssistantStack extends Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
     const slackSigningParameterName =
       resolveOptionalConfigValue(this, "slackSigningParameterName", "SLACK_SIGNING_PARAMETER_NAME") ??
-      "/slack-ai-assistant/slack-signing-secret";
+      `${DEFAULT_PARAMETER_PREFIX}/slack-signing-secret`;
     const slackBotTokenParameterName =
       resolveOptionalConfigValue(this, "slackBotTokenParameterName", "SLACK_BOT_TOKEN_PARAMETER_NAME") ??
-      "/slack-ai-assistant/slack-bot-token";
+      `${DEFAULT_PARAMETER_PREFIX}/slack-bot-token`;
     const lineChannelSecretParameterName =
       resolveOptionalConfigValue(this, "lineChannelSecretParameterName", "LINE_CHANNEL_SECRET_PARAMETER_NAME") ??
-      "/slack-ai-assistant/line-channel-secret";
+      `${DEFAULT_PARAMETER_PREFIX}/line-channel-secret`;
     const lineChannelAccessTokenParameterName =
       resolveOptionalConfigValue(
         this,
         "lineChannelAccessTokenParameterName",
         "LINE_CHANNEL_ACCESS_TOKEN_PARAMETER_NAME",
       ) ??
-      "/slack-ai-assistant/line-channel-access-token";
+      `${DEFAULT_PARAMETER_PREFIX}/line-channel-access-token`;
     const googleCalendarParameterName =
       resolveOptionalConfigValue(this, "googleCalendarParameterName", "GOOGLE_CALENDAR_PARAMETER_NAME") ??
-      "/slack-ai-assistant/google-calendar";
+      `${DEFAULT_PARAMETER_PREFIX}/google-calendar`;
     const webSearchProvider = resolveOptionalConfigValue(this, "webSearchProvider", "WEB_SEARCH_PROVIDER");
     const webSearchApiKeyParameterName = resolveOptionalConfigValue(
       this,

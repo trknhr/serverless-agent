@@ -178,7 +178,7 @@ describe("runtime contract schemas", () => {
         SCHEDULER_TARGET_ARN: "arn:aws:lambda:target",
         SCHEDULER_TARGET_ROLE_ARN: "arn:aws:iam::123:role/scheduler",
         WEB_SEARCH_PROVIDER: "searxng",
-        WEB_SEARCH_API_KEY_PARAMETER_NAME: "/slack-ai-assistant/web-search-api-key",
+        WEB_SEARCH_API_KEY_PARAMETER_NAME: "/example/slack-ai-assistant/web-search-api-key",
         WEB_SEARCH_BASE_URL: "https://search.example.org",
       }),
     ).toEqual({
@@ -198,7 +198,7 @@ describe("runtime contract schemas", () => {
       schedulerTargetArn: "arn:aws:lambda:target",
       schedulerTargetRoleArn: "arn:aws:iam::123:role/scheduler",
       webSearchProvider: "searxng",
-      webSearchApiKeyParameterName: "/slack-ai-assistant/web-search-api-key",
+      webSearchApiKeyParameterName: "/example/slack-ai-assistant/web-search-api-key",
       webSearchBaseUrl: "https://search.example.org",
     });
   });

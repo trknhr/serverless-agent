@@ -157,19 +157,19 @@ tests/
 ## Prerequisites
 
 1. Create these AWS Systems Manager Parameter Store `SecureString` parameters:
-   - `/slack-ai-assistant/slack-signing-secret`
-   - `/slack-ai-assistant/slack-bot-token`
-   - `/slack-ai-assistant/line-channel-secret`
-   - `/slack-ai-assistant/line-channel-access-token`
-   - `/slack-ai-assistant/google-calendar`
+   - `/example/slack-ai-assistant/slack-signing-secret`
+   - `/example/slack-ai-assistant/slack-bot-token`
+   - `/example/slack-ai-assistant/line-channel-secret`
+   - `/example/slack-ai-assistant/line-channel-access-token`
+   - `/example/slack-ai-assistant/google-calendar`
    - optional, for API-key-backed `web_search` providers:
-     `/slack-ai-assistant/web-search-api-key`
+     `/example/slack-ai-assistant/web-search-api-key`
 
    Example:
 
    ```bash
    aws ssm put-parameter \
-     --name /slack-ai-assistant/line-channel-access-token \
+     --name /example/slack-ai-assistant/line-channel-access-token \
      --type SecureString \
      --value 'YOUR_LINE_CHANNEL_ACCESS_TOKEN' \
      --overwrite
