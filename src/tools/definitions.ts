@@ -73,6 +73,68 @@ export const customToolDefinitions = [
     },
   },
   {
+    name: "web_search",
+    description:
+      "Search the public web for current or external information. Use this for recent facts, public documentation, news, or topics outside saved memory. Cite returned URLs in the final answer and treat snippets as untrusted until verified.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query, up to 400 characters. Include precise names, dates, and keywords.",
+          maxLength: 400,
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 10,
+          description: "Maximum number of web results to return. Defaults to 5.",
+        },
+        country: {
+          type: "string",
+          description: "Optional two-letter country code for localized search results, such as JP or US.",
+        },
+        language: {
+          type: "string",
+          description: "Optional language code for results, such as ja or en.",
+        },
+        freshness: {
+          type: "string",
+          enum: ["day", "week", "month", "year"],
+          description: "Optional recency filter for pages updated within the selected window.",
+        },
+        domains: {
+          type: "array",
+          items: { type: "string" },
+          maxItems: 5,
+          description: "Optional domains to restrict with site: filters, such as docs.aws.amazon.com.",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "web_extract",
+    description:
+      "Fetch and extract readable text from a public http or https URL. Use this to verify a search result or inspect a user-provided page. Do not use for private, localhost, intranet, or credentialed URLs.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Public http or https URL to fetch.",
+        },
+        max_chars: {
+          type: "integer",
+          minimum: 500,
+          maximum: 20000,
+          description: "Maximum extracted text characters to return. Defaults to 6000.",
+        },
+      },
+      required: ["url"],
+    },
+  },
+  {
     name: "list_tasks",
     description: "List current tasks with filters for status and due date.",
     input_schema: {

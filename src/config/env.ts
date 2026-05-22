@@ -43,6 +43,9 @@ const toolResourceEnvSchema = runtimeBaseEnvSchema.extend({
   GOOGLE_OAUTH_CONNECTIONS_TABLE_NAME: requiredString,
   GOOGLE_OAUTH_START_URL: z.string().min(1).optional(),
   GOOGLE_CALENDAR_TIME_ZONE: requiredString.default("Asia/Tokyo"),
+  WEB_SEARCH_PROVIDER: z.string().min(1).optional(),
+  WEB_SEARCH_API_KEY_PARAMETER_NAME: z.string().min(1).optional(),
+  WEB_SEARCH_BASE_URL: z.string().min(1).optional(),
 });
 
 const toolRuntimeEnvSchema = baseEnvSchema.merge(toolResourceEnvSchema);

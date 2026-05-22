@@ -41,6 +41,13 @@ export class SlackAiAssistantStack extends Stack {
     const googleCalendarParameterName =
       resolveOptionalConfigValue(this, "googleCalendarParameterName", "GOOGLE_CALENDAR_PARAMETER_NAME") ??
       "/slack-ai-assistant/google-calendar";
+    const webSearchProvider = resolveOptionalConfigValue(this, "webSearchProvider", "WEB_SEARCH_PROVIDER");
+    const webSearchApiKeyParameterName = resolveOptionalConfigValue(
+      this,
+      "webSearchApiKeyParameterName",
+      "WEB_SEARCH_API_KEY_PARAMETER_NAME",
+    );
+    const webSearchBaseUrl = resolveOptionalConfigValue(this, "webSearchBaseUrl", "WEB_SEARCH_BASE_URL");
     const googleCalendarTimeZone =
       resolveOptionalConfigValue(this, "googleCalendarTimeZone", "GOOGLE_CALENDAR_TIME_ZONE") ?? "Asia/Tokyo";
     const schedulerScheduleGroupName =
@@ -61,8 +68,7 @@ export class SlackAiAssistantStack extends Stack {
       : undefined;
     const agentCoreRuntimeQualifier =
       resolveOptionalConfigValue(this, "agentCoreRuntimeQualifier", "AGENTCORE_RUNTIME_QUALIFIER") ?? "";
-    const bedrockModelId =
-      resolveOptionalConfigValue(this, "bedrockModelId", "BEDROCK_MODEL_ID") ?? "moonshotai.kimi-k2.5";
+    const bedrockModelId = resolveRequiredConfigValue(this, "bedrockModelId", "BEDROCK_MODEL_ID");
     const bedrockDocumentModelId =
       resolveOptionalConfigValue(this, "bedrockDocumentModelId", "BEDROCK_DOCUMENT_MODEL_ID") ??
       bedrockModelId;
@@ -280,6 +286,9 @@ export class SlackAiAssistantStack extends Stack {
       GOOGLE_CALENDAR_SECRET_ID: googleCalendarParameterName,
       GOOGLE_OAUTH_CONNECTIONS_TABLE_NAME: googleOAuthConnectionsTable.tableName,
       GOOGLE_CALENDAR_TIME_ZONE: googleCalendarTimeZone,
+      ...(webSearchProvider ? { WEB_SEARCH_PROVIDER: webSearchProvider } : {}),
+      ...(webSearchApiKeyParameterName ? { WEB_SEARCH_API_KEY_PARAMETER_NAME: webSearchApiKeyParameterName } : {}),
+      ...(webSearchBaseUrl ? { WEB_SEARCH_BASE_URL: webSearchBaseUrl } : {}),
     };
 
     const ingress = createNodeFunction(this, "SlackEventsIngressFunction", {
@@ -480,6 +489,9 @@ export class SlackAiAssistantStack extends Stack {
       googleOAuth,
       slackAgentRuntime.role,
     ]);
+    if (webSearchApiKeyParameterName) {
+      grantSecureParameterRead(this, webSearchApiKeyParameterName, [slackAgentRuntime.role]);
+    }
 
     memoryItemsTable.grantReadWriteData(slackAgentRuntime.role);
     scheduledTasksTable.grantReadWriteData(slackAgentRuntime.role);

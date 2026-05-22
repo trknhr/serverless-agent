@@ -25,6 +25,8 @@ ingestion, and chat-platform delivery.
 - local document and Markdown ingestion through IAM-protected APIs
 - direct terminal chat through an IAM-protected API
 - Google Calendar OAuth and draft-then-apply calendar tools
+- optional public web search and URL extraction tools with pluggable search
+  providers and Readability-based page extraction
 
 Planned adapter direction:
 
@@ -160,6 +162,8 @@ tests/
    - `/slack-ai-assistant/line-channel-secret`
    - `/slack-ai-assistant/line-channel-access-token`
    - `/slack-ai-assistant/google-calendar`
+   - optional, for API-key-backed `web_search` providers:
+     `/slack-ai-assistant/web-search-api-key`
 
    Example:
 
@@ -202,8 +206,8 @@ connected to the Slack user who requested the action.
 npm install
 npx cdk deploy \
   -c defaultScheduleChannel=C0123456789 \
-  -c bedrockModelId=moonshotai.kimi-k2.5 \
-  -c bedrockDocumentModelId=moonshotai.kimi-k2.5 \
+  -c bedrockModelId=<bedrock-model-id> \
+  -c bedrockDocumentModelId=<bedrock-document-model-id> \
   -c publicBaseUrl=https://your-api-id.execute-api.ap-northeast-1.amazonaws.com/prod
 ```
 
@@ -211,14 +215,22 @@ Context options:
 
 - `defaultScheduleChannel`: Slack channel used when the scheduled runner creates
   the fallback `daily-summary` task
-- `bedrockModelId`: default Bedrock model used by the AgentCore runtime
-- `bedrockDocumentModelId`: Bedrock model used when requests include image,
-  PDF, or other binary document input
+- `bedrockModelId`: required Bedrock model used by the AgentCore runtime
+- `bedrockDocumentModelId`: optional Bedrock model used when requests include
+  image, PDF, or other binary document input. Defaults to `bedrockModelId` when
+  omitted.
 - `publicBaseUrl`: deployed API base URL used in Slack replies, especially for
   Google Calendar OAuth links
 - `googleCalendarParameterName`: optional override for the Google Calendar
   `SecureString` parameter
 - `googleCalendarTimeZone`: optional override for calendar defaults
+- `webSearchProvider`: optional search provider. Supported values are `brave`
+  and `searxng`.
+- `webSearchApiKeyParameterName`: optional `SecureString` parameter containing
+  the provider API key. Required for `brave`; not required for `searxng`.
+- `webSearchBaseUrl`: optional search provider base URL. Required for `searxng`.
+  When no search provider is configured, `web_extract` still works for public
+  URLs but `web_search` returns a configuration error.
 
 After deploy, configure Slack with these CDK outputs:
 
@@ -553,6 +565,9 @@ and lines.
 - Do not commit `cdk.out/` artifacts or other generated deployment outputs.
 - Keep Slack signing secrets, bot tokens, LINE tokens, and Google OAuth client
   secrets in SSM Parameter Store `SecureString` parameters only.
+- Keep optional web search provider API keys in SSM Parameter Store as
+  `SecureString` values; `web_extract` blocks localhost, private IPs, and
+  credentialed URLs before fetching.
 - `imports/*` and `/chat/messages` routes use `AWS_IAM` authorization.
 - Local scripts sign requests with SigV4 using the current AWS credentials.
 - IAM principals running local scripts need `execute-api:Invoke` permission for

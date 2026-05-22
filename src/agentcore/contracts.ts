@@ -69,6 +69,9 @@ export const agentRuntimeResourcesSchema = z.object({
   schedulerDefaultTimeZone: z.string().min(1).optional(),
   schedulerTargetArn: z.string().min(1).optional(),
   schedulerTargetRoleArn: z.string().min(1).optional(),
+  webSearchProvider: z.string().min(1).optional(),
+  webSearchApiKeyParameterName: z.string().min(1).optional(),
+  webSearchBaseUrl: z.string().min(1).optional(),
 });
 
 export const agentToolContextSchema = z.object({
@@ -131,6 +134,9 @@ export interface ToolRuntimeEnvironment {
   SCHEDULER_DEFAULT_TIME_ZONE?: string;
   SCHEDULER_TARGET_ARN?: string;
   SCHEDULER_TARGET_ROLE_ARN?: string;
+  WEB_SEARCH_PROVIDER?: string;
+  WEB_SEARCH_API_KEY_PARAMETER_NAME?: string;
+  WEB_SEARCH_BASE_URL?: string;
 }
 
 export function buildAgentRuntimeResources(env: ToolRuntimeEnvironment): AgentRuntimeResources {
@@ -150,5 +156,8 @@ export function buildAgentRuntimeResources(env: ToolRuntimeEnvironment): AgentRu
     schedulerDefaultTimeZone: env.SCHEDULER_DEFAULT_TIME_ZONE,
     schedulerTargetArn: env.SCHEDULER_TARGET_ARN,
     schedulerTargetRoleArn: env.SCHEDULER_TARGET_ROLE_ARN,
+    webSearchProvider: env.WEB_SEARCH_PROVIDER,
+    webSearchApiKeyParameterName: env.WEB_SEARCH_API_KEY_PARAMETER_NAME,
+    webSearchBaseUrl: env.WEB_SEARCH_BASE_URL,
   };
 }

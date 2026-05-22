@@ -177,6 +177,9 @@ describe("runtime contract schemas", () => {
         SCHEDULER_DEFAULT_TIME_ZONE: "Asia/Tokyo",
         SCHEDULER_TARGET_ARN: "arn:aws:lambda:target",
         SCHEDULER_TARGET_ROLE_ARN: "arn:aws:iam::123:role/scheduler",
+        WEB_SEARCH_PROVIDER: "searxng",
+        WEB_SEARCH_API_KEY_PARAMETER_NAME: "/slack-ai-assistant/web-search-api-key",
+        WEB_SEARCH_BASE_URL: "https://search.example.org",
       }),
     ).toEqual({
       memoryItemsTableName: "memory",
@@ -194,6 +197,9 @@ describe("runtime contract schemas", () => {
       schedulerDefaultTimeZone: "Asia/Tokyo",
       schedulerTargetArn: "arn:aws:lambda:target",
       schedulerTargetRoleArn: "arn:aws:iam::123:role/scheduler",
+      webSearchProvider: "searxng",
+      webSearchApiKeyParameterName: "/slack-ai-assistant/web-search-api-key",
+      webSearchBaseUrl: "https://search.example.org",
     });
   });
 });

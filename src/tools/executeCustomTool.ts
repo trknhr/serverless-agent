@@ -25,6 +25,7 @@ import { RecurringTaskRecurrence, recurringTaskWeekdaySchema } from "../tasks/re
 import { ScheduledTask } from "../tasks/taskDefinition";
 import { TaskStatus } from "../tasks/taskState";
 import { WeatherForecastProvider } from "../weather/openMeteo";
+import { WebToolProvider } from "../web/webTools";
 
 const searchMemoriesSchema = z.object({
   query: z.string().min(1),
@@ -42,6 +43,20 @@ const saveMemorySchema = z.object({
   tags: z.array(z.string().min(1)).optional(),
   importance: z.number().min(0).max(1).optional(),
   preference_key: z.string().min(1).optional(),
+});
+
+const webSearchSchema = z.object({
+  query: z.string().min(1).max(400),
+  limit: z.number().int().min(1).max(10).optional(),
+  country: z.string().regex(/^[A-Za-z]{2}$/).optional(),
+  language: z.string().regex(/^[A-Za-z]{2,3}$/).optional(),
+  freshness: z.enum(["day", "week", "month", "year"]).optional(),
+  domains: z.array(z.string().min(1)).max(5).optional(),
+});
+
+const webExtractSchema = z.object({
+  url: z.string().url(),
+  max_chars: z.number().int().min(500).max(20_000).optional(),
 });
 
 const listTasksSchema = z.object({
@@ -336,6 +351,7 @@ interface ToolIntegrations {
   defaultCalendarTimeZone?: string;
   scheduledReminderScheduler?: ScheduledReminderScheduler;
   weatherProvider?: WeatherForecastProvider;
+  webProvider?: WebToolProvider;
 }
 
 export interface ToolExecutionSummary {
@@ -375,6 +391,10 @@ export class CustomToolExecutor {
           return await this.searchMemories(input);
         case "save_memory":
           return await this.saveMemory(input);
+        case "web_search":
+          return await this.webSearch(input);
+        case "web_extract":
+          return await this.webExtract(input);
         case "list_tasks":
           return await this.listTasks(input);
         case "upsert_task":
@@ -625,6 +645,49 @@ export class CustomToolExecutor {
       text: memory.text,
       tags: memory.tags ?? [],
       updated_at: memory.updatedAt,
+    });
+  }
+
+  private async webSearch(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = webSearchSchema.parse(input);
+    const result = await this.requireWebProvider().search({
+      query: parsed.query,
+      limit: parsed.limit,
+      country: parsed.country,
+      language: parsed.language,
+      freshness: parsed.freshness,
+      domains: parsed.domains,
+    });
+
+    return jsonResult({
+      provider: result.provider,
+      query: result.query,
+      count: result.count,
+      results: result.results.map((entry) => ({
+        title: entry.title,
+        url: entry.url,
+        description: entry.description,
+        published_at: entry.publishedAt,
+        source_name: entry.sourceName,
+        language: entry.language,
+      })),
+    });
+  }
+
+  private async webExtract(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = webExtractSchema.parse(input);
+    const result = await this.requireWebProvider().extract({
+      url: parsed.url,
+      maxChars: parsed.max_chars,
+    });
+
+    return jsonResult({
+      url: result.url,
+      final_url: result.finalUrl,
+      title: result.title,
+      content_type: result.contentType,
+      text: result.text,
+      truncated: result.truncated,
     });
   }
 
@@ -1345,6 +1408,13 @@ export class CustomToolExecutor {
       throw new Error("Weather forecast integration is not configured");
     }
     return this.integrations.weatherProvider;
+  }
+
+  private requireWebProvider(): WebToolProvider {
+    if (!this.integrations.webProvider) {
+      throw new Error("Web tools integration is not configured");
+    }
+    return this.integrations.webProvider;
   }
 
   private getDefaultCalendarTimeZone(): string {
