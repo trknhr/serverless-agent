@@ -118,8 +118,8 @@ function printUsage(): void {
     "  ts-node scripts/ask-agent.ts --api-base-url https://.../prod --workspace-id T... --user-id U... [--region ap-northeast-1] [--session-id sess_...] [--json] <message>",
     "",
     "Examples:",
-    "  ts-node scripts/ask-agent.ts --api-base-url https://.../prod --workspace-id T... --user-id local-user \"今日のやることは？\"",
-    "  ts-node scripts/ask-agent.ts --api-base-url https://.../prod --workspace-id T... --user-id local-user --session-id sess_... \"そのうち今夜のものだけ教えて\"",
+    "  ts-node scripts/ask-agent.ts --api-base-url https://.../prod --workspace-id T... --user-id local-user \"What should I do today?\"",
+    "  ts-node scripts/ask-agent.ts --api-base-url https://.../prod --workspace-id T... --user-id local-user --session-id sess_... \"Show only the items due tonight.\"",
     "",
     "AWS credentials with execute-api:Invoke are required.",
   ].join("\n"));

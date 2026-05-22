@@ -358,10 +358,10 @@ Example scheduled task:
 Example Slack requests:
 
 ```text
-@AI 毎朝8時に今日のタスクリマインダーを投稿して
-@AI 朝のタスクリマインダーを9時に変更して
-@AI 定期通知の一覧を見せて
-@AI 朝のタスクリマインダーを削除して
+@AI Post a task reminder every morning at 8.
+@AI Move the morning task reminder to 9.
+@AI List scheduled reminders.
+@AI Delete the morning task reminder.
 ```
 
 Create or update a scheduled task definition locally:
@@ -535,7 +535,7 @@ npm run ask-agent -- \
   --workspace-id T0123456789 \
   --user-id local-user \
   --region ap-northeast-1 \
-  "今日のやることは？"
+  "What should I do today?"
 ```
 
 To continue the same conversation, pass the returned `session_id` back:
@@ -547,7 +547,7 @@ npm run ask-agent -- \
   --user-id local-user \
   --region ap-northeast-1 \
   --session-id sess_... \
-  "今夜中のものだけ教えて"
+  "Show only the items due tonight."
 ```
 
 ## Local Development
