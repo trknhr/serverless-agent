@@ -202,6 +202,12 @@ connected to the Slack user who requested the action.
 
 ## Deploy
 
+For public forks or reusable deployments, keep this repository free of
+environment-specific configuration. Put real account IDs, channel IDs, API base
+URLs, SSM parameter names, and GitHub Actions deployment workflows in a separate
+private deployment repository. Keep raw secret values in AWS SSM Parameter Store
+or AWS Secrets Manager rather than in GitHub.
+
 ```bash
 npm install
 npx cdk deploy \
@@ -527,7 +533,7 @@ the IAM-protected `POST /chat/messages` route.
 npm run ask-agent -- \
   --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
   --workspace-id T0123456789 \
-  --user-id local-importer-teru \
+  --user-id local-user \
   --region ap-northeast-1 \
   "今日のやることは？"
 ```
@@ -538,7 +544,7 @@ To continue the same conversation, pass the returned `session_id` back:
 npm run ask-agent -- \
   --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
   --workspace-id T0123456789 \
-  --user-id local-importer-teru \
+  --user-id local-user \
   --region ap-northeast-1 \
   --session-id sess_... \
   "今夜中のものだけ教えて"
