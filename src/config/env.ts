@@ -46,6 +46,7 @@ const toolResourceEnvSchema = runtimeBaseEnvSchema.extend({
   WEB_SEARCH_PROVIDER: z.string().min(1).optional(),
   WEB_SEARCH_API_KEY_PARAMETER_NAME: z.string().min(1).optional(),
   WEB_SEARCH_BASE_URL: z.string().min(1).optional(),
+  SKILLS_TABLE_NAME: z.string().min(1).optional(),
 });
 
 const toolRuntimeEnvSchema = baseEnvSchema.merge(toolResourceEnvSchema);

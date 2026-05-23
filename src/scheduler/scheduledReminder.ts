@@ -221,7 +221,7 @@ export function extractDailyCronTime(scheduleExpression: string | undefined): st
 }
 
 export function buildScheduleName(prefix: string, workspaceId: string, taskId: string): string {
-  const normalizedPrefix = normalizeScheduleNamePart(prefix) || "slack-ai-assistant";
+  const normalizedPrefix = normalizeScheduleNamePart(prefix) || "serverless-agent";
   const normalizedTaskId = normalizeScheduleNamePart(taskId) || "scheduled-reminder";
   const hash = createHash("sha256").update(`${workspaceId}:${taskId}`).digest("hex").slice(0, 10);
   const suffixBudget = 64 - normalizedPrefix.length - hash.length - 2;

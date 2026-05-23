@@ -72,6 +72,7 @@ export const agentRuntimeResourcesSchema = z.object({
   webSearchProvider: z.string().min(1).optional(),
   webSearchApiKeyParameterName: z.string().min(1).optional(),
   webSearchBaseUrl: z.string().min(1).optional(),
+  skillsTableName: z.string().min(1).optional(),
 });
 
 export const agentToolContextSchema = z.object({
@@ -137,6 +138,7 @@ export interface ToolRuntimeEnvironment {
   WEB_SEARCH_PROVIDER?: string;
   WEB_SEARCH_API_KEY_PARAMETER_NAME?: string;
   WEB_SEARCH_BASE_URL?: string;
+  SKILLS_TABLE_NAME?: string;
 }
 
 export function buildAgentRuntimeResources(env: ToolRuntimeEnvironment): AgentRuntimeResources {
@@ -159,5 +161,6 @@ export function buildAgentRuntimeResources(env: ToolRuntimeEnvironment): AgentRu
     webSearchProvider: env.WEB_SEARCH_PROVIDER,
     webSearchApiKeyParameterName: env.WEB_SEARCH_API_KEY_PARAMETER_NAME,
     webSearchBaseUrl: env.WEB_SEARCH_BASE_URL,
+    skillsTableName: env.SKILLS_TABLE_NAME,
   };
 }

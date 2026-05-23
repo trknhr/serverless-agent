@@ -26,6 +26,11 @@ import { ScheduledTask } from "../tasks/taskDefinition";
 import { TaskStatus } from "../tasks/taskState";
 import { WeatherForecastProvider } from "../weather/openMeteo";
 import { WebToolProvider } from "../web/webTools";
+import type { SkillRegistry } from "../skills/registry";
+
+const loadSkillSchema = z.object({
+  skill_id: z.string().min(1).max(128),
+});
 
 const searchMemoriesSchema = z.object({
   query: z.string().min(1),
@@ -352,6 +357,7 @@ interface ToolIntegrations {
   scheduledReminderScheduler?: ScheduledReminderScheduler;
   weatherProvider?: WeatherForecastProvider;
   webProvider?: WebToolProvider;
+  skillRegistry?: SkillRegistry;
 }
 
 export interface ToolExecutionSummary {
@@ -387,6 +393,8 @@ export class CustomToolExecutor {
 
     try {
       switch (toolName) {
+        case "load_skill":
+          return await this.loadSkill(input);
         case "search_memories":
           return await this.searchMemories(input);
         case "save_memory":
@@ -457,6 +465,26 @@ export class CustomToolExecutor {
       recurringTaskIds: [...this.recurringTaskIds],
       calendarDraftIds: [...this.calendarDraftIds],
     };
+  }
+
+  private async loadSkill(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = loadSkillSchema.parse(input);
+    const registry = this.requireSkillRegistry();
+    const skill = await registry.loadSkill(this.context.workspaceId, parsed.skill_id);
+    if (!skill) {
+      return errorResult(`Skill is not available or not enabled for this workspace: ${parsed.skill_id}`);
+    }
+
+    return jsonResult({
+      skill_id: skill.skillId,
+      source: skill.source,
+      version: skill.version,
+      title: skill.title,
+      description: skill.description,
+      tool_allowlist: skill.toolAllowlist,
+      constraints: skill.constraints,
+      instructions: skill.body,
+    });
   }
 
   private async searchMemories(input: Record<string, unknown>): Promise<ToolExecutionResult> {
@@ -1415,6 +1443,13 @@ export class CustomToolExecutor {
       throw new Error("Web tools integration is not configured");
     }
     return this.integrations.webProvider;
+  }
+
+  private requireSkillRegistry(): SkillRegistry {
+    if (!this.integrations.skillRegistry) {
+      throw new Error("Skill registry is not configured");
+    }
+    return this.integrations.skillRegistry;
   }
 
   private getDefaultCalendarTimeZone(): string {

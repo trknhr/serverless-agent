@@ -1,0 +1,22 @@
+{
+  "skillId": "memory-curator",
+  "version": "0.1.0",
+  "title": "Memory Curator",
+  "description": "Find, save, and maintain durable memories and preferences.",
+  "defaultEnabled": true,
+  "triggerHints": [
+    "remember",
+    "preference",
+    "always",
+    "project context",
+    "what do you know"
+  ],
+  "toolAllowlist": [
+    "search_memories",
+    "save_memory"
+  ],
+  "constraints": {
+    "maxToolCalls": 5,
+    "requiresConfirmation": false
+  }
+}

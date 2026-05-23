@@ -106,7 +106,7 @@ const DEFAULT_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_EXTRACT_BYTES = 1_000_000;
 const DEFAULT_EXTRACT_CHARS = 6000;
 const MAX_REDIRECTS = 3;
-const USER_AGENT = "slack-ai-assistant/0.1";
+const USER_AGENT = "serverless-agent/0.1";
 const FRESHNESS_VALUES: Record<NonNullable<WebSearchInput["freshness"]>, string> = {
   day: "pd",
   week: "pw",

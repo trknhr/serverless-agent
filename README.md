@@ -1,6 +1,6 @@
-# slack-ai-assistant
+# serverless-agent
 
-Serverless AI assistant infrastructure for chat workspaces, built on AWS Lambda,
+Serverless AI agent runtime for chat workspaces, built on AWS Lambda,
 API Gateway, SQS, DynamoDB, S3, EventBridge Scheduler, and Amazon Bedrock
 AgentCore.
 
@@ -12,6 +12,13 @@ an optional Discord adapter.
 The assistant keeps model reasoning, tool execution, and runtime isolation inside
 AgentCore while AWS handles webhooks, queues, state, scheduled jobs, document
 ingestion, and chat-platform delivery.
+
+## Naming
+
+This repository was renamed from `slack-ai-assistant` to `serverless-agent`.
+Some CDK identifiers, file names, and AgentCore runtime names still use the old
+Slack-specific name to avoid unnecessary CloudFormation replacement. Public
+defaults and examples use `serverless-agent`.
 
 ## Status
 
@@ -127,6 +134,7 @@ The stack creates these DynamoDB tables:
 - `TasksTable`: current task state
 - `TaskEventsTable`: task history
 - `CalendarDraftsTable`: reviewable Google Calendar event drafts
+- `SkillsTable`: workspace-scoped generated skills and built-in skill overrides
 - `SourceDocumentsTable`: imported or archived source document metadata
 - `GoogleOAuthConnectionsTable`: per-user Google Calendar OAuth connections
 
@@ -138,6 +146,7 @@ lib/
 agentcore/
 app/
   SlackAgent/
+skills/
 scripts/
 src/
   agentcore/
@@ -149,6 +158,7 @@ src/
   memory/
   repo/
   slack/
+  skills/
   tasks/
   tools/
 tests/
@@ -157,19 +167,19 @@ tests/
 ## Prerequisites
 
 1. Create these AWS Systems Manager Parameter Store `SecureString` parameters:
-   - `/example/slack-ai-assistant/slack-signing-secret`
-   - `/example/slack-ai-assistant/slack-bot-token`
-   - `/example/slack-ai-assistant/line-channel-secret`
-   - `/example/slack-ai-assistant/line-channel-access-token`
-   - `/example/slack-ai-assistant/google-calendar`
+   - `/example/serverless-agent/slack-signing-secret`
+   - `/example/serverless-agent/slack-bot-token`
+   - `/example/serverless-agent/line-channel-secret`
+   - `/example/serverless-agent/line-channel-access-token`
+   - `/example/serverless-agent/google-calendar`
    - optional, for API-key-backed `web_search` providers:
-     `/example/slack-ai-assistant/web-search-api-key`
+     `/example/serverless-agent/web-search-api-key`
 
    Example:
 
    ```bash
    aws ssm put-parameter \
-     --name /example/slack-ai-assistant/line-channel-access-token \
+     --name /example/serverless-agent/line-channel-access-token \
      --type SecureString \
      --value 'YOUR_LINE_CHANNEL_ACCESS_TOKEN' \
      --overwrite
@@ -227,9 +237,21 @@ Context options:
   omitted.
 - `publicBaseUrl`: deployed API base URL used in Slack replies, especially for
   Google Calendar OAuth links
+- `slackSigningParameterName`: optional override for the Slack signing secret
+  `SecureString` parameter
+- `slackBotTokenParameterName`: optional override for the Slack bot token
+  `SecureString` parameter
+- `lineChannelSecretParameterName`: optional override for the LINE channel
+  secret `SecureString` parameter
+- `lineChannelAccessTokenParameterName`: optional override for the LINE channel
+  access token `SecureString` parameter
 - `googleCalendarParameterName`: optional override for the Google Calendar
   `SecureString` parameter
 - `googleCalendarTimeZone`: optional override for calendar defaults
+- `schedulerScheduleNamePrefix`: optional override for EventBridge Scheduler
+  schedule names. Defaults to `serverless-agent`.
+- `schedulerScheduleGroupName`: optional EventBridge Scheduler group override.
+  Defaults to `default`.
 - `webSearchProvider`: optional search provider. Supported values are `brave`
   and `searxng`.
 - `webSearchApiKeyParameterName`: optional `SecureString` parameter containing
@@ -259,13 +281,30 @@ and AgentCore runtime share the same domain logic and tool definitions.
 
 Tool groups available inside AgentCore:
 
+- skills: `load_skill`
 - durable memory: `search_memories`, `save_memory`
+- web research: `web_search`, `web_extract`
 - one-off tasks: `list_tasks`, `upsert_task`, `mark_task_done`
 - recurring tasks: `list_recurring_tasks`, `upsert_recurring_task`,
   `disable_recurring_task`
 - Google Calendar drafts: `list_google_calendars`, `list_calendar_events`,
   `find_free_busy`, `create_calendar_draft`, `list_calendar_drafts`,
   `apply_calendar_draft`, `discard_calendar_draft`
+
+## Skills
+
+Skills use Progressive Disclosure. The runtime injects only enabled skill
+summaries into the system prompt. When a skill is relevant, the model calls
+`load_skill` to load the full `SKILL.md` instructions.
+
+Built-in skills live under `skills/builtin/*` with a `manifest.json` and
+`SKILL.md`. `npm run generate-skills` compiles them into
+`src/skills/builtinCatalog.generated.ts`, which is included in the AgentCore
+container.
+
+Generated skills are stored in `SkillsTable` under the current `workspaceId`,
+which is the current tenant boundary. Built-in skill enablement can also be
+overridden per `workspaceId`.
 
 ## Memory And Permissions
 
@@ -345,7 +384,7 @@ Example scheduled task:
   "workspaceId": "T0123456789",
   "outputChannelId": "C0123456789",
   "enabled": true,
-  "scheduleName": "slack-ai-assistant-daily-summary-dc0570d6ff",
+  "scheduleName": "serverless-agent-daily-summary-dc0570d6ff",
   "scheduleGroupName": "default",
   "scheduleExpression": "cron(0 8 * * ? *)",
   "scheduleExpressionTimezone": "Asia/Tokyo",

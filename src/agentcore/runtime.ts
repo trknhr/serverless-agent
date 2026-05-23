@@ -23,6 +23,8 @@ import { CustomToolExecutor } from "../tools/executeCustomTool";
 import { customToolDefinitions } from "../tools/definitions";
 import { OpenMeteoWeatherProvider } from "../weather/openMeteo";
 import { WebToolsProvider } from "../web/webTools";
+import { DynamoDbSkillRepository } from "../skills/dynamoDbSkillRepository";
+import { SkillRegistry, formatSkillSummariesForPrompt } from "../skills/registry";
 
 type DynamicImport = <T = Record<string, unknown>>(specifier: string) => Promise<T>;
 type SessionHistoryMessage = {
@@ -80,12 +82,18 @@ async function main(): Promise<void> {
           runtimeSessionId: context.sessionId,
           source: request.context.source,
         });
-        const executor = request.disableTools ? null : createToolExecutor(request, log);
+        const skillRegistry =
+          request.disableTools || !request.toolContext ? null : createSkillRegistry(request);
+        const executor = request.disableTools ? null : createToolExecutor(request, log, skillRegistry ?? undefined);
         const tools = executor ? createTools(ai, executor) : {};
+        const skillPrompt =
+          executor && skillRegistry
+            ? await buildEnabledSkillPrompt(skillRegistry, request.toolContext!.workspaceId, log)
+            : "";
         const selectedModelId = selectModelId(request);
         const agent = new ai.ToolLoopAgent({
           model: bedrock(selectedModelId),
-          instructions: defaultSystemPrompt,
+          instructions: buildSystemPrompt(skillPrompt),
           tools,
         });
 
@@ -143,6 +151,7 @@ async function main(): Promise<void> {
 function createToolExecutor(
   request: AgentRuntimeRequest,
   log: ReturnType<typeof logger.child>,
+  skillRegistry?: SkillRegistry,
 ): CustomToolExecutor | null {
   if (!request.resources || !request.toolContext) {
     return null;
@@ -183,7 +192,7 @@ function createToolExecutor(
         resources.schedulerTargetArn && resources.schedulerTargetRoleArn
           ? new EventBridgeScheduledReminderScheduler({
             scheduleGroupName: resources.schedulerScheduleGroupName ?? "default",
-            scheduleNamePrefix: resources.schedulerScheduleNamePrefix ?? "slack-ai-assistant",
+            scheduleNamePrefix: resources.schedulerScheduleNamePrefix ?? "serverless-agent",
             defaultTimeZone: resources.schedulerDefaultTimeZone ?? resources.googleCalendarTimeZone,
             targetArn: resources.schedulerTargetArn,
             targetRoleArn: resources.schedulerTargetRoleArn,
@@ -197,8 +206,35 @@ function createToolExecutor(
           : undefined,
         searchBaseUrl: resources.webSearchBaseUrl,
       }),
+      skillRegistry,
     },
   );
+}
+
+function createSkillRegistry(request: AgentRuntimeRequest): SkillRegistry {
+  const repository = request.resources?.skillsTableName
+    ? new DynamoDbSkillRepository(request.resources.skillsTableName)
+    : undefined;
+  return new SkillRegistry(repository);
+}
+
+async function buildEnabledSkillPrompt(
+  skillRegistry: SkillRegistry,
+  workspaceId: string,
+  log: ReturnType<typeof logger.child>,
+): Promise<string> {
+  try {
+    return formatSkillSummariesForPrompt(await skillRegistry.listEnabledSummaries(workspaceId));
+  } catch (error) {
+    log.warn("Failed to load skill summaries", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "";
+  }
+}
+
+function buildSystemPrompt(skillPrompt: string): string {
+  return [defaultSystemPrompt, skillPrompt].filter(Boolean).join("\n\n");
 }
 
 function getSessionHistory(

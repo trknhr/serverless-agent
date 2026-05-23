@@ -173,13 +173,14 @@ describe("runtime contract schemas", () => {
         GOOGLE_OAUTH_START_URL: "https://oauth/start",
         GOOGLE_CALENDAR_TIME_ZONE: "Asia/Tokyo",
         SCHEDULER_SCHEDULE_GROUP_NAME: "default",
-        SCHEDULER_SCHEDULE_NAME_PREFIX: "slack-ai-assistant",
+        SCHEDULER_SCHEDULE_NAME_PREFIX: "serverless-agent",
         SCHEDULER_DEFAULT_TIME_ZONE: "Asia/Tokyo",
         SCHEDULER_TARGET_ARN: "arn:aws:lambda:target",
         SCHEDULER_TARGET_ROLE_ARN: "arn:aws:iam::123:role/scheduler",
         WEB_SEARCH_PROVIDER: "searxng",
-        WEB_SEARCH_API_KEY_PARAMETER_NAME: "/example/slack-ai-assistant/web-search-api-key",
+        WEB_SEARCH_API_KEY_PARAMETER_NAME: "/example/serverless-agent/web-search-api-key",
         WEB_SEARCH_BASE_URL: "https://search.example.org",
+        SKILLS_TABLE_NAME: "skills",
       }),
     ).toEqual({
       memoryItemsTableName: "memory",
@@ -193,13 +194,14 @@ describe("runtime contract schemas", () => {
       googleOAuthStartUrl: "https://oauth/start",
       googleCalendarTimeZone: "Asia/Tokyo",
       schedulerScheduleGroupName: "default",
-      schedulerScheduleNamePrefix: "slack-ai-assistant",
+      schedulerScheduleNamePrefix: "serverless-agent",
       schedulerDefaultTimeZone: "Asia/Tokyo",
       schedulerTargetArn: "arn:aws:lambda:target",
       schedulerTargetRoleArn: "arn:aws:iam::123:role/scheduler",
       webSearchProvider: "searxng",
-      webSearchApiKeyParameterName: "/example/slack-ai-assistant/web-search-api-key",
+      webSearchApiKeyParameterName: "/example/serverless-agent/web-search-api-key",
       webSearchBaseUrl: "https://search.example.org",
+      skillsTableName: "skills",
     });
   });
 });
@@ -387,7 +389,7 @@ describe("task schemas", () => {
         workspaceId: "T1",
         outputChannelId: "C1",
         enabled: true,
-        scheduleName: "slack-ai-assistant-task-1",
+        scheduleName: "serverless-agent-task-1",
         scheduleExpression: "cron(0 8 * * ? *)",
         scheduleExpressionTimezone: "Asia/Tokyo",
         createdAt: "2026-05-14T00:00:00Z",
@@ -395,7 +397,7 @@ describe("task schemas", () => {
       }),
     ).toMatchObject({
       reuseSession: false,
-      scheduleName: "slack-ai-assistant-task-1",
+      scheduleName: "serverless-agent-task-1",
       scheduleExpressionTimezone: "Asia/Tokyo",
     });
   });

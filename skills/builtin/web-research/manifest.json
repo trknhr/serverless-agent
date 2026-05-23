@@ -1,0 +1,23 @@
+{
+  "skillId": "web-research",
+  "version": "0.1.0",
+  "title": "Web Research",
+  "description": "Search and extract public web pages to answer questions that depend on current or external information.",
+  "defaultEnabled": true,
+  "triggerHints": [
+    "current facts",
+    "public documentation",
+    "news or recent changes",
+    "web page verification"
+  ],
+  "toolAllowlist": [
+    "web_search",
+    "web_extract",
+    "search_memories",
+    "save_memory"
+  ],
+  "constraints": {
+    "maxToolCalls": 8,
+    "requiresConfirmation": false
+  }
+}

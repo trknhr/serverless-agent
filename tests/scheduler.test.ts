@@ -40,14 +40,14 @@ describe("scheduled reminder scheduler helpers", () => {
   });
 
   it("builds stable EventBridge-safe schedule names", () => {
-    const name = buildScheduleName("slack-ai-assistant", "T1", "Morning Reminder For #general");
-    expect(name).toMatch(/^slack-ai-assistant-morning-reminder-for-general-[a-f0-9]+$/);
+    const name = buildScheduleName("serverless-agent", "T1", "Morning Reminder For #general");
+    expect(name).toMatch(/^serverless-agent-morning-reminder-for-general-[a-f0-9]+$/);
     expect(name.length).toBeLessThanOrEqual(64);
-    expect(buildScheduleName("slack-ai-assistant", "T1", "task1")).toBe(
-      buildScheduleName("slack-ai-assistant", "T1", "task1"),
+    expect(buildScheduleName("serverless-agent", "T1", "task1")).toBe(
+      buildScheduleName("serverless-agent", "T1", "task1"),
     );
-    expect(buildScheduleName("slack-ai-assistant", "T1", "task1")).not.toBe(
-      buildScheduleName("slack-ai-assistant", "T2", "task1"),
+    expect(buildScheduleName("serverless-agent", "T1", "task1")).not.toBe(
+      buildScheduleName("serverless-agent", "T2", "task1"),
     );
   });
 });

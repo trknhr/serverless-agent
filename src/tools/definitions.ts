@@ -1,5 +1,21 @@
 export const customToolDefinitions = [
   {
+    name: "load_skill",
+    description:
+      "Load the full instructions for one enabled skill listed in the system prompt. Use this before following a skill workflow. Do not invent skill IDs.",
+    input_schema: {
+      type: "object",
+      properties: {
+        skill_id: {
+          type: "string",
+          description: "The exact skill ID from the available skills list.",
+          maxLength: 128,
+        },
+      },
+      required: ["skill_id"],
+    },
+  },
+  {
     name: "search_memories",
     description:
       "Search saved memories relevant to a person, topic, or past event. Prefer current channel memory for shared channel context and user_preference for cross-channel personal preferences. If the first search is weak, retry with alternate phrasings, synonyms, or entity-focused queries before concluding the memory is missing.",

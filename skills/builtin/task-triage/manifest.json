@@ -1,0 +1,24 @@
+{
+  "skillId": "task-triage",
+  "version": "0.1.0",
+  "title": "Task Triage",
+  "description": "Extract, update, and summarize actionable tasks from conversation.",
+  "defaultEnabled": true,
+  "triggerHints": [
+    "todo",
+    "follow up",
+    "what should I do",
+    "task status",
+    "done"
+  ],
+  "toolAllowlist": [
+    "list_tasks",
+    "upsert_task",
+    "mark_task_done",
+    "search_memories"
+  ],
+  "constraints": {
+    "maxToolCalls": 6,
+    "requiresConfirmation": false
+  }
+}

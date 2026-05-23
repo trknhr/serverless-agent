@@ -18,7 +18,7 @@ import {
 import { Construct } from "constructs";
 import { join } from "node:path";
 
-const DEFAULT_PARAMETER_PREFIX = "/example/slack-ai-assistant";
+const DEFAULT_PARAMETER_PREFIX = "/example/serverless-agent";
 
 export class SlackAiAssistantStack extends Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -57,7 +57,7 @@ export class SlackAiAssistantStack extends Stack {
       "default";
     const schedulerScheduleNamePrefix =
       resolveOptionalConfigValue(this, "schedulerScheduleNamePrefix", "SCHEDULER_SCHEDULE_NAME_PREFIX") ??
-      "slack-ai-assistant";
+      "serverless-agent";
     const schedulerDefaultTimeZone =
       resolveOptionalConfigValue(this, "schedulerDefaultTimeZone", "SCHEDULER_DEFAULT_TIME_ZONE") ??
       googleCalendarTimeZone;
@@ -184,6 +184,13 @@ export class SlackAiAssistantStack extends Stack {
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
     });
 
+    const skillsTable = new dynamodb.Table(this, "SkillsTable", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+    });
+
     const sourceDocumentsTable = new dynamodb.Table(this, "SourceDocumentsTable", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
@@ -288,6 +295,7 @@ export class SlackAiAssistantStack extends Stack {
       GOOGLE_CALENDAR_SECRET_ID: googleCalendarParameterName,
       GOOGLE_OAUTH_CONNECTIONS_TABLE_NAME: googleOAuthConnectionsTable.tableName,
       GOOGLE_CALENDAR_TIME_ZONE: googleCalendarTimeZone,
+      SKILLS_TABLE_NAME: skillsTable.tableName,
       ...(webSearchProvider ? { WEB_SEARCH_PROVIDER: webSearchProvider } : {}),
       ...(webSearchApiKeyParameterName ? { WEB_SEARCH_API_KEY_PARAMETER_NAME: webSearchApiKeyParameterName } : {}),
       ...(webSearchBaseUrl ? { WEB_SEARCH_BASE_URL: webSearchBaseUrl } : {}),
@@ -502,6 +510,7 @@ export class SlackAiAssistantStack extends Stack {
     recurringTasksTable.grantReadWriteData(slackAgentRuntime.role);
     calendarDraftsTable.grantReadWriteData(slackAgentRuntime.role);
     googleOAuthConnectionsTable.grantReadWriteData(slackAgentRuntime.role);
+    skillsTable.grantReadWriteData(slackAgentRuntime.role);
     slackAgentRuntime.addToPolicy(
       new iam.PolicyStatement({
         actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
@@ -529,7 +538,7 @@ export class SlackAiAssistantStack extends Stack {
     }
 
     const api = new apigateway.RestApi(this, "SlackEventsApi", {
-      restApiName: "slack-ai-assistant-events",
+      restApiName: "serverless-agent-events",
       deployOptions: {
         stageName: "prod",
       },
@@ -723,6 +732,9 @@ export class SlackAiAssistantStack extends Stack {
     });
     new cdk.CfnOutput(this, "GoogleOAuthConnectionsTableName", {
       value: googleOAuthConnectionsTable.tableName,
+    });
+    new cdk.CfnOutput(this, "SkillsTableName", {
+      value: skillsTable.tableName,
     });
     new cdk.CfnOutput(this, "SlackAttachmentArchiveBucketName", {
       value: attachmentArchiveBucket.bucketName,
