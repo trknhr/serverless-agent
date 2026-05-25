@@ -84,7 +84,15 @@ export async function handler(event: SQSEvent): Promise<void> {
       await conversationSessionRepository.save(sessionRecord);
 
       if (queueMessage.contextScope === "thread") {
-        await backfillThreadHistory(queueMessage, log);
+        try {
+          await backfillThreadHistory(queueMessage, log);
+        } catch (error) {
+          log.warn("Slack thread history backfill failed; continuing without prior thread context", {
+            error: error instanceof Error ? error.message : "Unknown Slack backfill error",
+            channelId: queueMessage.channelId,
+            conversationTs: queueMessage.conversationTs,
+          });
+        }
       }
     }
 

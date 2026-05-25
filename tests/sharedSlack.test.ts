@@ -390,6 +390,24 @@ describe("Slack event parsing", () => {
       replyThreadTs: "170.000",
       text: "Please analyze the attached file(s).",
     });
+
+    expect(
+      extractSlackQueueMessage(
+        {
+          ...base,
+          event: {
+            type: "message",
+            channel_type: "channel",
+            channel: "C1",
+            user: "U1",
+            text: "<@BOT> delete this reminder",
+            event_ts: "174.000",
+            thread_ts: "170.000",
+          },
+        },
+        "corr",
+      ),
+    ).toBeNull();
   });
 
   it("ignores unsupported Slack events and malformed empty messages", () => {

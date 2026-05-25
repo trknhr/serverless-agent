@@ -61,6 +61,10 @@ export function extractSlackQueueMessage(
     event.thread_ts.length > 0 &&
     channelType !== "im"
   ) {
+    const text = typeof event.text === "string" ? event.text : "";
+    if (startsWithBotMention(text)) {
+      return null;
+    }
     return buildQueueMessage(event, envelope.event_id, workspaceId, correlationId, "thread_reply");
   }
 
@@ -114,6 +118,10 @@ function buildQueueMessage(
 
 function stripBotMention(text: string): string {
   return text.replace(/^<@[^>]+>\s*/, "").trim();
+}
+
+function startsWithBotMention(text: string): boolean {
+  return /^<@[^>]+>\s*/.test(text.trimStart());
 }
 
 function extractFiles(value: unknown): SlackFileReference[] {
