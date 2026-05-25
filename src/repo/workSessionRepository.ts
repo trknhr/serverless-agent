@@ -149,6 +149,24 @@ export class WorkSessionRepository {
     await this.markStatus(input, "expired");
   }
 
+  async touch(input: WorkSessionLifecycleInput & { workSessionId: string }): Promise<void> {
+    const now = input.now ?? new Date();
+    await documentClient.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: {
+          pk: buildOwnerPk(input.workspaceId, input.ownerUserId),
+          sk: buildWorkSessionSk(input.kind, input.workSessionId),
+        },
+        UpdateExpression: "SET lastUsedAt = :lastUsedAt",
+        ConditionExpression: "attribute_exists(pk) AND attribute_exists(sk)",
+        ExpressionAttributeValues: {
+          ":lastUsedAt": now.toISOString(),
+        },
+      }),
+    );
+  }
+
   async expireIdleSessions(input: WorkSessionLifecycleInput & { idleTimeoutSeconds: number }): Promise<WorkSessionRecord[]> {
     const now = input.now ?? new Date();
     const activeSessions = await this.listActiveByOwner({

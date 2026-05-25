@@ -223,6 +223,121 @@ export const customToolDefinitions = [
     },
   },
   {
+    name: "browser_start",
+    description:
+      "Start a short-lived browser session for public interactive web pages. Use only when fetch-based web_extract is insufficient for JavaScript-rendered or interactive content.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          maxLength: 120,
+          description: "Optional human-readable session name.",
+        },
+        width: {
+          type: "integer",
+          minimum: 800,
+          maximum: 1920,
+          description: "Viewport width in pixels. Defaults to 1280.",
+        },
+        height: {
+          type: "integer",
+          minimum: 600,
+          maximum: 1080,
+          description: "Viewport height in pixels. Defaults to 720.",
+        },
+      },
+    },
+  },
+  {
+    name: "browser_open_url",
+    description:
+      "Open a public http or https URL in an active browser session. Do not use for private, localhost, intranet, credentialed, or user-authenticated URLs.",
+    input_schema: {
+      type: "object",
+      properties: {
+        browser_session_id: {
+          type: "string",
+          description: "Browser session ID returned by browser_start. Defaults to the latest active session.",
+        },
+        url: {
+          type: "string",
+          description: "Public http or https URL to open.",
+        },
+        wait_until: {
+          type: "string",
+          enum: ["load", "domcontentloaded", "networkidle"],
+          description: "Navigation readiness signal. Defaults to domcontentloaded.",
+        },
+        timeout_ms: {
+          type: "integer",
+          minimum: 1000,
+          maximum: 60000,
+          description: "Navigation timeout in milliseconds. Defaults to 30000.",
+        },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "browser_snapshot",
+    description:
+      "Return the current page URL, title, and visible text from an active browser session. Screenshots are not returned as raw image data.",
+    input_schema: {
+      type: "object",
+      properties: {
+        browser_session_id: {
+          type: "string",
+          description: "Browser session ID returned by browser_start. Defaults to the latest active session.",
+        },
+        max_chars: {
+          type: "integer",
+          minimum: 500,
+          maximum: 12000,
+          description: "Maximum visible text characters to return. Defaults to 4000.",
+        },
+      },
+    },
+  },
+  {
+    name: "browser_extract",
+    description:
+      "Extract visible text from the current browser page, optionally scoped to a CSS selector. Use for public JavaScript-rendered pages after browser_open_url.",
+    input_schema: {
+      type: "object",
+      properties: {
+        browser_session_id: {
+          type: "string",
+          description: "Browser session ID returned by browser_start. Defaults to the latest active session.",
+        },
+        selector: {
+          type: "string",
+          maxLength: 500,
+          description: "Optional CSS selector to scope extraction.",
+        },
+        max_chars: {
+          type: "integer",
+          minimum: 500,
+          maximum: 20000,
+          description: "Maximum extracted text characters to return. Defaults to 6000.",
+        },
+      },
+    },
+  },
+  {
+    name: "browser_close",
+    description: "Close an active browser session when browser work is complete.",
+    input_schema: {
+      type: "object",
+      properties: {
+        browser_session_id: {
+          type: "string",
+          description: "Browser session ID returned by browser_start. Defaults to the latest active session.",
+        },
+      },
+    },
+  },
+  {
     name: "list_tasks",
     description: "List current tasks with filters for status and due date.",
     input_schema: {
