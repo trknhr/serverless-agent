@@ -5,6 +5,7 @@ const requiredString = z.string().min(1);
 const runtimeBaseEnvSchema = z.object({
   SESSION_TABLE_NAME: requiredString,
   CONVERSATION_SESSIONS_TABLE_NAME: requiredString,
+  WORK_SESSIONS_TABLE_NAME: requiredString,
   CONVERSATION_TURNS_TABLE_NAME: requiredString,
   USER_MEMORY_TABLE_NAME: requiredString,
   MEMORY_ITEMS_TABLE_NAME: requiredString,
@@ -27,6 +28,9 @@ const runtimeBaseEnvSchema = z.object({
   SCHEDULER_DEFAULT_TIME_ZONE: z.string().min(1).optional(),
   SCHEDULER_TARGET_ARN: z.string().min(1).optional(),
   SCHEDULER_TARGET_ROLE_ARN: z.string().min(1).optional(),
+  WORK_SESSION_IDLE_TIMEOUT_SECONDS: z.coerce.number().int().min(60).max(28_800).default(900),
+  WORK_SESSION_MAX_LIFETIME_SECONDS: z.coerce.number().int().min(60).max(28_800).default(28_800),
+  WORK_SESSION_MAX_ACTIVE_PER_OWNER: z.coerce.number().int().positive().default(2),
 });
 
 const baseEnvSchema = runtimeBaseEnvSchema.extend({

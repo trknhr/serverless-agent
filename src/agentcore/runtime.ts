@@ -15,6 +15,7 @@ import { RecurringTaskRepository } from "../repo/recurringTaskRepository";
 import { TaskRepository } from "../repo/taskRepository";
 import { TaskEventRepository } from "../repo/taskEventRepository";
 import { TaskStateRepository } from "../repo/taskStateRepository";
+import { WorkSessionRepository } from "../repo/workSessionRepository";
 import { EventBridgeScheduledReminderScheduler } from "../scheduler/scheduledReminder";
 import { UserPreferenceRepository } from "../repo/userPreferenceRepository";
 import { SecretsProvider } from "../aws/secretsProvider";
@@ -185,6 +186,7 @@ function createToolExecutor(
       taskEvents: new TaskEventRepository(resources.taskEventsTableName),
       recurringTasks: new RecurringTaskRepository(resources.recurringTasksTableName),
       calendarDrafts: new CalendarDraftRepository(resources.calendarDraftsTableName),
+      workSessions: new WorkSessionRepository(resources.workSessionsTableName),
     },
     {
       workspaceId: request.toolContext.workspaceId,

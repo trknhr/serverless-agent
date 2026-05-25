@@ -15,6 +15,7 @@ import { TaskRepository } from "../src/repo/taskRepository";
 import { TaskStateRepository } from "../src/repo/taskStateRepository";
 import { UserMemoryRepository } from "../src/repo/userMemoryRepository";
 import { UserPreferenceRepository } from "../src/repo/userPreferenceRepository";
+import { WorkSessionRepository } from "../src/repo/workSessionRepository";
 
 const { sendMock } = vi.hoisted(() => ({
   sendMock: vi.fn(),
@@ -301,7 +302,157 @@ describe("basic DynamoDB repositories", () => {
     sendMock.mockResolvedValueOnce({});
     await expect(repo.find("T1", "U2")).resolves.toBeNull();
   });
+
+  it("creates, lists, and expires owner-scoped work sessions", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-25T00:00:00.000Z"));
+    const repo = new WorkSessionRepository("work-sessions");
+
+    sendMock.mockResolvedValueOnce({});
+    await expect(
+      repo.create({
+        workspaceId: "T1",
+        ownerUserId: "U1",
+        kind: "browser",
+        workSessionId: "ws1",
+        runtimeSessionId: "runtime1",
+        maxLifetimeSeconds: 28_800,
+      }),
+    ).resolves.toMatchObject({
+      workspaceId: "T1",
+      ownerUserId: "U1",
+      workSessionId: "ws1",
+      runtimeSessionId: "runtime1",
+      kind: "browser",
+      status: "active",
+      createdAt: "2026-05-25T00:00:00.000Z",
+      lastUsedAt: "2026-05-25T00:00:00.000Z",
+      expiresAt: "2026-05-25T08:00:00.000Z",
+    });
+    expect(commandInput()).toMatchObject({
+      TableName: "work-sessions",
+      Item: {
+        pk: "WORKSPACE#T1#OWNER#U1",
+        sk: "KIND#browser#WORK_SESSION#ws1",
+        ttl: 1779696000,
+      },
+    });
+
+    sendMock.mockResolvedValueOnce({
+      Item: workSessionItem("ws1", "runtime1", "browser", "active", "2026-05-25T00:00:00.000Z"),
+    });
+    await expect(
+      repo.get({
+        workspaceId: "T1",
+        ownerUserId: "U1",
+        kind: "browser",
+        workSessionId: "ws1",
+      }),
+    ).resolves.toMatchObject({
+      workSessionId: "ws1",
+      runtimeSessionId: "runtime1",
+    });
+    expect(commandInput(1)).toMatchObject({
+      Key: {
+        pk: "WORKSPACE#T1#OWNER#U1",
+        sk: "KIND#browser#WORK_SESSION#ws1",
+      },
+    });
+
+    sendMock.mockResolvedValueOnce({
+      Items: [
+        workSessionItem("older", "runtime-old", "browser", "active", "2026-05-25T00:05:00.000Z"),
+        workSessionItem("newer", "runtime-new", "browser", "active", "2026-05-25T00:10:00.000Z"),
+      ],
+    });
+    await expect(
+      repo.listActiveByOwner({
+        workspaceId: "T1",
+        ownerUserId: "U1",
+        kind: "browser",
+        now: new Date("2026-05-25T00:12:00.000Z"),
+      }),
+    ).resolves.toMatchObject([{ workSessionId: "newer" }, { workSessionId: "older" }]);
+    expect(commandInput(2)).toMatchObject({
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :skPrefix)",
+      FilterExpression: "#status = :active AND expiresAt > :now",
+      ExpressionAttributeValues: {
+        ":pk": "WORKSPACE#T1#OWNER#U1",
+        ":skPrefix": "KIND#browser#",
+        ":active": "active",
+        ":now": "2026-05-25T00:12:00.000Z",
+      },
+    });
+
+    sendMock.mockResolvedValueOnce({
+      Items: [
+        workSessionItem("idle", "runtime-idle", "browser", "active", "2026-05-25T00:00:00.000Z"),
+        workSessionItem("fresh", "runtime-fresh", "browser", "active", "2026-05-25T00:10:00.000Z"),
+      ],
+    });
+    sendMock.mockResolvedValueOnce({});
+    await expect(
+      repo.expireIdleSessions({
+        workspaceId: "T1",
+        ownerUserId: "U1",
+        kind: "browser",
+        idleTimeoutSeconds: 900,
+        now: new Date("2026-05-25T00:20:00.000Z"),
+      }),
+    ).resolves.toMatchObject([{ workSessionId: "idle" }]);
+    expect(commandInput(4)).toMatchObject({
+      Key: {
+        pk: "WORKSPACE#T1#OWNER#U1",
+        sk: "KIND#browser#WORK_SESSION#idle",
+      },
+      UpdateExpression: "SET #status = :status, lastUsedAt = :lastUsedAt",
+      ExpressionAttributeValues: {
+        ":status": "expired",
+        ":lastUsedAt": "2026-05-25T00:20:00.000Z",
+      },
+    });
+
+    sendMock.mockResolvedValueOnce({
+      Items: [
+        workSessionItem("newest", "runtime-newest", "browser", "active", "2026-05-25T00:30:00.000Z"),
+        workSessionItem("middle", "runtime-middle", "browser", "active", "2026-05-25T00:20:00.000Z"),
+        workSessionItem("oldest", "runtime-oldest", "browser", "active", "2026-05-25T00:10:00.000Z"),
+      ],
+    });
+    sendMock.mockResolvedValueOnce({});
+    sendMock.mockResolvedValueOnce({});
+    await expect(
+      repo.enforceActiveLimit({
+        workspaceId: "T1",
+        ownerUserId: "U1",
+        kind: "browser",
+        maxActiveSessions: 1,
+        now: new Date("2026-05-25T00:31:00.000Z"),
+      }),
+    ).resolves.toMatchObject([{ workSessionId: "middle" }, { workSessionId: "oldest" }]);
+  });
 });
+
+function workSessionItem(
+  workSessionId: string,
+  runtimeSessionId: string,
+  kind: "browser" | "sandbox",
+  status: "active" | "completed" | "expired",
+  lastUsedAt: string,
+) {
+  return {
+    workspaceId: "T1",
+    ownerUserId: "U1",
+    workSessionId,
+    runtimeSessionId,
+    kind,
+    status,
+    createdAt: "2026-05-25T00:00:00.000Z",
+    lastUsedAt,
+    expiresAt: "2026-05-25T08:00:00.000Z",
+    ttl: 1779696000,
+  };
+}
 
 describe("task repositories", () => {
   it("gets and saves scheduled tasks with schema defaults", async () => {

@@ -68,6 +68,7 @@ function baseEnv(overrides: Record<string, string> = {}): Record<string, string>
   return {
     SESSION_TABLE_NAME: "sessions",
     CONVERSATION_SESSIONS_TABLE_NAME: "conversation-sessions",
+    WORK_SESSIONS_TABLE_NAME: "work-sessions",
     CONVERSATION_TURNS_TABLE_NAME: "conversation-turns",
     USER_MEMORY_TABLE_NAME: "user-memory",
     MEMORY_ITEMS_TABLE_NAME: "memory-items",
@@ -163,6 +164,7 @@ describe("runtime contract schemas", () => {
     expect(
       buildAgentRuntimeResources({
         MEMORY_ITEMS_TABLE_NAME: "memory",
+        WORK_SESSIONS_TABLE_NAME: "work-sessions",
         TASK_TABLE_NAME: "scheduled",
         TASKS_TABLE_NAME: "tasks",
         TASK_EVENTS_TABLE_NAME: "events",
@@ -182,9 +184,13 @@ describe("runtime contract schemas", () => {
         WEB_SEARCH_API_KEY_PARAMETER_NAME: "/example/serverless-agent/web-search-api-key",
         WEB_SEARCH_BASE_URL: "https://search.example.org",
         SKILLS_TABLE_NAME: "skills",
+        WORK_SESSION_IDLE_TIMEOUT_SECONDS: 900,
+        WORK_SESSION_MAX_LIFETIME_SECONDS: 28_800,
+        WORK_SESSION_MAX_ACTIVE_PER_OWNER: 2,
       }),
     ).toEqual({
       memoryItemsTableName: "memory",
+      workSessionsTableName: "work-sessions",
       scheduledTasksTableName: "scheduled",
       tasksTableName: "tasks",
       taskEventsTableName: "events",
@@ -204,6 +210,9 @@ describe("runtime contract schemas", () => {
       webSearchApiKeyParameterName: "/example/serverless-agent/web-search-api-key",
       webSearchBaseUrl: "https://search.example.org",
       skillsTableName: "skills",
+      workSessionIdleTimeoutSeconds: 900,
+      workSessionMaxLifetimeSeconds: 28_800,
+      workSessionMaxActivePerOwner: 2,
     });
   });
 });
@@ -438,6 +447,9 @@ describe("environment loaders", () => {
       AGENT_RESPONSE_TIMEOUT_MS: 120000,
       TOP_LEVEL_CONTEXT_TURN_LIMIT: 10,
       MAX_SLACK_FILE_BYTES: 10_000_000,
+      WORK_SESSION_IDLE_TIMEOUT_SECONDS: 900,
+      WORK_SESSION_MAX_LIFETIME_SECONDS: 28_800,
+      WORK_SESSION_MAX_ACTIVE_PER_OWNER: 2,
       AGENTCORE_RUNTIME_QUALIFIER: "",
       SLACK_QUEUE_URL: "https://sqs.local/slack",
     });

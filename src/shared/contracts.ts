@@ -75,6 +75,23 @@ export interface ConversationSessionRecord {
   lastUsedAt: string;
 }
 
+export type WorkSessionKind = "browser" | "sandbox";
+
+export type WorkSessionStatus = "active" | "completed" | "expired";
+
+export interface WorkSessionRecord {
+  workspaceId: string;
+  ownerUserId: string;
+  workSessionId: string;
+  runtimeSessionId: string;
+  kind: WorkSessionKind;
+  status: WorkSessionStatus;
+  createdAt: string;
+  lastUsedAt: string;
+  expiresAt: string;
+  ttl: number;
+}
+
 export interface ConversationTurnRecord {
   turnId: string;
   workspaceId: string;

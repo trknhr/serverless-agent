@@ -15,6 +15,7 @@ import { TaskRepository } from "../repo/taskRepository";
 import { TaskEventRepository } from "../repo/taskEventRepository";
 import { TaskStateRepository } from "../repo/taskStateRepository";
 import { UserPreferenceRepository } from "../repo/userPreferenceRepository";
+import { WorkSessionRepository } from "../repo/workSessionRepository";
 import {
   ScheduledReminderScheduler,
   buildScheduleExpressionFromRecurrence,
@@ -371,6 +372,7 @@ interface ToolRepositories {
   taskEvents: TaskEventRepository;
   recurringTasks?: RecurringTaskRepository;
   calendarDrafts?: CalendarDraftRepository;
+  workSessions?: WorkSessionRepository;
 }
 
 interface ToolIntegrations {

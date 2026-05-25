@@ -61,6 +61,15 @@ export class SlackAiAssistantStack extends Stack {
     const schedulerDefaultTimeZone =
       resolveOptionalConfigValue(this, "schedulerDefaultTimeZone", "SCHEDULER_DEFAULT_TIME_ZONE") ??
       googleCalendarTimeZone;
+    const workSessionIdleTimeoutSeconds =
+      resolveOptionalConfigValue(this, "workSessionIdleTimeoutSeconds", "WORK_SESSION_IDLE_TIMEOUT_SECONDS") ??
+      "900";
+    const workSessionMaxLifetimeSeconds =
+      resolveOptionalConfigValue(this, "workSessionMaxLifetimeSeconds", "WORK_SESSION_MAX_LIFETIME_SECONDS") ??
+      "28800";
+    const workSessionMaxActivePerOwner =
+      resolveOptionalConfigValue(this, "workSessionMaxActivePerOwner", "WORK_SESSION_MAX_ACTIVE_PER_OWNER") ??
+      "2";
     const defaultResponseLanguage = resolveOptionalConfigValue(
       this,
       "defaultResponseLanguage",
@@ -93,6 +102,14 @@ export class SlackAiAssistantStack extends Stack {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+    });
+
+    const workSessionsTable = new dynamodb.Table(this, "WorkSessionsTable", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: "ttl",
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
     });
 
@@ -270,6 +287,7 @@ export class SlackAiAssistantStack extends Stack {
     const commonRuntimeEnvironment = {
       SESSION_TABLE_NAME: sessionTable.tableName,
       CONVERSATION_SESSIONS_TABLE_NAME: conversationSessionsTable.tableName,
+      WORK_SESSIONS_TABLE_NAME: workSessionsTable.tableName,
       CONVERSATION_TURNS_TABLE_NAME: conversationTurnsTable.tableName,
       USER_MEMORY_TABLE_NAME: userMemoryTable.tableName,
       MEMORY_ITEMS_TABLE_NAME: memoryItemsTable.tableName,
@@ -287,6 +305,9 @@ export class SlackAiAssistantStack extends Stack {
       SCHEDULER_SCHEDULE_GROUP_NAME: schedulerScheduleGroupName,
       SCHEDULER_SCHEDULE_NAME_PREFIX: schedulerScheduleNamePrefix,
       SCHEDULER_DEFAULT_TIME_ZONE: schedulerDefaultTimeZone,
+      WORK_SESSION_IDLE_TIMEOUT_SECONDS: workSessionIdleTimeoutSeconds,
+      WORK_SESSION_MAX_LIFETIME_SECONDS: workSessionMaxLifetimeSeconds,
+      WORK_SESSION_MAX_ACTIVE_PER_OWNER: workSessionMaxActivePerOwner,
       EVENT_DEDUP_TTL_SECONDS: "86400",
       AGENT_RESPONSE_TIMEOUT_MS: "120000",
       ...(defaultResponseLanguage ? { DEFAULT_RESPONSE_LANGUAGE: defaultResponseLanguage } : {}),
@@ -486,6 +507,7 @@ export class SlackAiAssistantStack extends Stack {
     providerBindingsTable.grantReadData(lineIngress);
     userMemoryTable.grantReadWriteData(chatApi);
     memoryItemsTable.grantReadWriteData(slackInteractions);
+    workSessionsTable.grantReadWriteData(slackAgentRuntime.role);
     attachmentArchiveBucket.grantPut(worker, "raw/private/slack/*");
     attachmentArchiveBucket.grantRead(worker, "raw/private/slack/*");
     attachmentArchiveBucket.grantPut(documentImportApi, "raw/private/imports/*");
@@ -724,6 +746,9 @@ export class SlackAiAssistantStack extends Stack {
     });
     new cdk.CfnOutput(this, "ConversationSessionsTableName", {
       value: conversationSessionsTable.tableName,
+    });
+    new cdk.CfnOutput(this, "WorkSessionsTableName", {
+      value: workSessionsTable.tableName,
     });
     new cdk.CfnOutput(this, "ConversationTurnsTableName", {
       value: conversationTurnsTable.tableName,

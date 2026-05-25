@@ -55,6 +55,7 @@ export const agentContentBlockSchema = z.union([
 
 export const agentRuntimeResourcesSchema = z.object({
   memoryItemsTableName: z.string().min(1),
+  workSessionsTableName: z.string().min(1),
   scheduledTasksTableName: z.string().min(1),
   tasksTableName: z.string().min(1),
   taskEventsTableName: z.string().min(1),
@@ -74,6 +75,9 @@ export const agentRuntimeResourcesSchema = z.object({
   webSearchApiKeyParameterName: z.string().min(1).optional(),
   webSearchBaseUrl: z.string().min(1).optional(),
   skillsTableName: z.string().min(1).optional(),
+  workSessionIdleTimeoutSeconds: z.number().int().min(60).max(28_800).default(900),
+  workSessionMaxLifetimeSeconds: z.number().int().min(60).max(28_800).default(28_800),
+  workSessionMaxActivePerOwner: z.number().int().positive().default(2),
 });
 
 export const agentToolContextSchema = z.object({
@@ -122,6 +126,7 @@ export type AgentRuntimeResponse = z.infer<typeof agentRuntimeResponseSchema>;
 
 export interface ToolRuntimeEnvironment {
   MEMORY_ITEMS_TABLE_NAME: string;
+  WORK_SESSIONS_TABLE_NAME: string;
   TASK_TABLE_NAME: string;
   TASKS_TABLE_NAME: string;
   TASK_EVENTS_TABLE_NAME: string;
@@ -141,11 +146,15 @@ export interface ToolRuntimeEnvironment {
   WEB_SEARCH_API_KEY_PARAMETER_NAME?: string;
   WEB_SEARCH_BASE_URL?: string;
   SKILLS_TABLE_NAME?: string;
+  WORK_SESSION_IDLE_TIMEOUT_SECONDS: number;
+  WORK_SESSION_MAX_LIFETIME_SECONDS: number;
+  WORK_SESSION_MAX_ACTIVE_PER_OWNER: number;
 }
 
 export function buildAgentRuntimeResources(env: ToolRuntimeEnvironment): AgentRuntimeResources {
   return {
     memoryItemsTableName: env.MEMORY_ITEMS_TABLE_NAME,
+    workSessionsTableName: env.WORK_SESSIONS_TABLE_NAME,
     scheduledTasksTableName: env.TASK_TABLE_NAME,
     tasksTableName: env.TASKS_TABLE_NAME,
     taskEventsTableName: env.TASK_EVENTS_TABLE_NAME,
@@ -165,5 +174,8 @@ export function buildAgentRuntimeResources(env: ToolRuntimeEnvironment): AgentRu
     webSearchApiKeyParameterName: env.WEB_SEARCH_API_KEY_PARAMETER_NAME,
     webSearchBaseUrl: env.WEB_SEARCH_BASE_URL,
     skillsTableName: env.SKILLS_TABLE_NAME,
+    workSessionIdleTimeoutSeconds: env.WORK_SESSION_IDLE_TIMEOUT_SECONDS,
+    workSessionMaxLifetimeSeconds: env.WORK_SESSION_MAX_LIFETIME_SECONDS,
+    workSessionMaxActivePerOwner: env.WORK_SESSION_MAX_ACTIVE_PER_OWNER,
   };
 }
