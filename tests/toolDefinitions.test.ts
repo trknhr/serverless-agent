@@ -19,4 +19,11 @@ describe("tool definitions", () => {
     expect(toolDescription("list_scheduled_reminders")).toContain("included in the daily reminder instead");
     expect(toolDescription("delete_scheduled_reminder")).toContain("accidental individual reminder");
   });
+
+  it("keeps generated skill creation draft-first", () => {
+    expect(toolDescription("propose_skill")).toContain("draft generated skill");
+    expect(toolDescription("propose_skill")).toContain("does not enable");
+    expect(toolDescription("approve_skill")).toContain("explicitly approves");
+    expect(toolDescription("disable_skill")).toContain("generated skill");
+  });
 });

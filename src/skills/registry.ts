@@ -2,10 +2,29 @@ import { builtinSkillDefinitions } from "./builtinCatalog.generated";
 import {
   BuiltinSkillDefinition,
   GeneratedSkillRecord,
+  SkillAdminSummary,
+  SkillConstraints,
   SkillDocument,
   SkillRepository,
   SkillSummary,
+  SkillStatus,
 } from "./types";
+import { parseSkillMarkdown } from "./skillMarkdown";
+
+export interface ProposeSkillInput {
+  skillMarkdown: string;
+  triggerHints?: string[];
+  toolAllowlist?: string[];
+  constraints?: SkillConstraints;
+  version?: string;
+  createdFromConversationId?: string;
+  createdByUserId?: string;
+}
+
+export interface ListSkillsInput {
+  source?: "builtin" | "generated" | "all";
+  statuses?: SkillStatus[];
+}
 
 export class SkillRegistry {
   private readonly builtinsById: Map<string, BuiltinSkillDefinition>;
@@ -46,6 +65,83 @@ export class SkillRegistry {
     return toGeneratedDocument(generated);
   }
 
+  async listSkills(workspaceId: string, input: ListSkillsInput = {}): Promise<SkillAdminSummary[]> {
+    const source = input.source ?? "all";
+    const statusFilter = input.statuses ? new Set(input.statuses) : undefined;
+    const skills: SkillAdminSummary[] = [];
+
+    if (source === "all" || source === "builtin") {
+      const overrides = await this.listBuiltinOverrides(workspaceId);
+      for (const builtin of this.builtinsById.values()) {
+        const enabled = overrides.get(builtin.skillId)?.enabled ?? builtin.defaultEnabled;
+        const status = enabled ? "enabled" : "disabled";
+        if (!statusFilter || statusFilter.has(status)) {
+          skills.push({
+            ...toBuiltinSummary(builtin),
+            status,
+            enabled,
+          });
+        }
+      }
+    }
+
+    if (source === "all" || source === "generated") {
+      const generated = await this.listGeneratedSkills(workspaceId);
+      for (const skill of generated) {
+        if (!statusFilter || statusFilter.has(skill.status)) {
+          skills.push({
+            ...toGeneratedSummary(skill),
+            status: skill.status,
+            enabled: skill.status === "enabled",
+          });
+        }
+      }
+    }
+
+    return skills.sort((a, b) => a.skillId.localeCompare(b.skillId));
+  }
+
+  async proposeSkill(workspaceId: string, input: ProposeSkillInput): Promise<GeneratedSkillRecord> {
+    const putGeneratedSkill = this.repository?.putGeneratedSkill;
+    if (!putGeneratedSkill) {
+      throw new Error("Generated skill storage is not configured.");
+    }
+
+    const parsed = parseSkillMarkdown(input.skillMarkdown);
+    if (this.builtinsById.has(parsed.skillId)) {
+      throw new Error(`Skill ${parsed.skillId} is a built-in skill and cannot be replaced by a generated skill.`);
+    }
+
+    const existing = await this.repository?.getGeneratedSkill(workspaceId, parsed.skillId);
+    if (existing?.status === "enabled") {
+      throw new Error(`Generated skill ${parsed.skillId} is already enabled. Disable it before replacing the draft.`);
+    }
+    return await putGeneratedSkill.call(this.repository, {
+      workspaceId,
+      skillId: parsed.skillId,
+      status: "draft",
+      version: input.version ?? existing?.version ?? "0.1.0",
+      title: parsed.title,
+      description: parsed.description,
+      triggerHints: input.triggerHints ?? existing?.triggerHints ?? [],
+      toolAllowlist: input.toolAllowlist ?? existing?.toolAllowlist ?? [],
+      constraints: input.constraints ?? existing?.constraints ?? {},
+      body: parsed.body,
+      createdFromConversationId: input.createdFromConversationId ?? existing?.createdFromConversationId,
+      createdByUserId: input.createdByUserId ?? existing?.createdByUserId,
+      approvedByUserId: undefined,
+      createdAt: existing?.createdAt,
+    });
+  }
+
+  async approveSkill(workspaceId: string, skillId: string, approvedByUserId?: string): Promise<GeneratedSkillRecord> {
+    return await this.updateGeneratedSkillStatus(workspaceId, skillId, "enabled", approvedByUserId);
+  }
+
+  async disableSkill(workspaceId: string, skillId: string): Promise<GeneratedSkillRecord> {
+    return await this.updateGeneratedSkillStatus(workspaceId, skillId, "disabled");
+  }
+
   private async listBuiltinOverrides(workspaceId: string): Promise<Map<string, { enabled: boolean }>> {
     const records = await this.repository?.listBuiltinSkillOverrides(workspaceId);
     return new Map((records ?? []).map((record) => [record.skillId, { enabled: record.enabled }]));
@@ -53,6 +149,32 @@ export class SkillRegistry {
 
   private async listGeneratedSkills(workspaceId: string): Promise<GeneratedSkillRecord[]> {
     return this.repository?.listGeneratedSkills(workspaceId) ?? [];
+  }
+
+  private async updateGeneratedSkillStatus(
+    workspaceId: string,
+    skillId: string,
+    status: SkillStatus,
+    approvedByUserId?: string,
+  ): Promise<GeneratedSkillRecord> {
+    const putGeneratedSkill = this.repository?.putGeneratedSkill;
+    if (!putGeneratedSkill) {
+      throw new Error("Generated skill storage is not configured.");
+    }
+    if (this.builtinsById.has(skillId)) {
+      throw new Error(`Skill ${skillId} is a built-in skill. Generated skill status tools cannot change it.`);
+    }
+
+    const existing = await this.repository?.getGeneratedSkill(workspaceId, skillId);
+    if (!existing) {
+      throw new Error(`Generated skill was not found: ${skillId}`);
+    }
+
+    return await putGeneratedSkill.call(this.repository, {
+      ...existing,
+      status,
+      approvedByUserId: approvedByUserId ?? existing.approvedByUserId,
+    });
   }
 }
 

@@ -16,6 +16,78 @@ export const customToolDefinitions = [
     },
   },
   {
+    name: "propose_skill",
+    description:
+      "Create or update a draft generated skill from a complete SKILL.md document after the user agrees that a repeated workflow should become a reusable skill. This does not enable the skill; ask for approval before calling approve_skill.",
+    input_schema: {
+      type: "object",
+      properties: {
+        skill_markdown: {
+          type: "string",
+          description:
+            "Complete SKILL.md text with YAML frontmatter containing name and description, followed by concise Markdown workflow instructions.",
+        },
+        trigger_hints: {
+          type: "array",
+          items: { type: "string" },
+          maxItems: 12,
+          description: "Short phrases that should trigger this skill.",
+        },
+        tool_allowlist: {
+          type: "array",
+          items: { type: "string" },
+          maxItems: 20,
+          description: "Tool names the skill is expected to use.",
+        },
+        constraints: {
+          type: "object",
+          description: "Optional execution constraints such as maxToolCalls or requiresConfirmation.",
+        },
+        version: { type: "string", description: "Skill version. Defaults to 0.1.0." },
+      },
+      required: ["skill_markdown"],
+    },
+  },
+  {
+    name: "approve_skill",
+    description:
+      "Enable a generated skill after the user explicitly approves the draft. Do not approve a skill based only on inferred intent.",
+    input_schema: {
+      type: "object",
+      properties: {
+        skill_id: { type: "string" },
+      },
+      required: ["skill_id"],
+    },
+  },
+  {
+    name: "list_skills",
+    description:
+      "List built-in and generated skills for this workspace, including generated drafts and disabled skills.",
+    input_schema: {
+      type: "object",
+      properties: {
+        source: { type: "string", enum: ["builtin", "generated", "all"] },
+        statuses: {
+          type: "array",
+          items: { type: "string", enum: ["draft", "approved", "enabled", "disabled"] },
+        },
+      },
+    },
+  },
+  {
+    name: "disable_skill",
+    description:
+      "Disable a generated skill so it no longer appears in the available skill summaries. This does not delete the skill.",
+    input_schema: {
+      type: "object",
+      properties: {
+        skill_id: { type: "string" },
+      },
+      required: ["skill_id"],
+    },
+  },
+  {
     name: "search_memories",
     description:
       "Search saved memories relevant to a person, topic, or past event. Prefer current channel memory for shared channel context and user_preference for cross-channel personal preferences. If the first search is weak, retry with alternate phrasings, synonyms, or entity-focused queries before concluding the memory is missing.",

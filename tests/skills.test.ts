@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CustomToolExecutor } from "../src/tools/executeCustomTool";
 import { DynamoDbSkillRepository } from "../src/skills/dynamoDbSkillRepository";
 import { SkillRegistry, formatSkillSummariesForPrompt } from "../src/skills/registry";
+import { parseSkillMarkdown } from "../src/skills/skillMarkdown";
 import { BuiltinSkillDefinition, SkillRepository } from "../src/skills/types";
 import { logger } from "../src/shared/logger";
 
@@ -48,6 +49,36 @@ const builtinSkills: BuiltinSkillDefinition[] = [
     body: "# Builtin Disabled",
   },
 ];
+
+const sampleSkillMarkdown = [
+  "---",
+  "name: hn-article-summarizer",
+  "description: Summarize Hacker News articles for Slack.",
+  "---",
+  "# Hacker News Article Summarizer",
+  "",
+  "## Workflow",
+  "",
+  "1. Use web_extract on news.ycombinator.com.",
+].join("\n");
+
+describe("skill markdown", () => {
+  it("parses required SKILL.md frontmatter", () => {
+    expect(parseSkillMarkdown(sampleSkillMarkdown)).toMatchObject({
+      skillId: "hn-article-summarizer",
+      description: "Summarize Hacker News articles for Slack.",
+      title: "Hacker News Article Summarizer",
+      body: sampleSkillMarkdown,
+    });
+  });
+
+  it("rejects missing or invalid frontmatter", () => {
+    expect(() => parseSkillMarkdown("# Missing")).toThrow("frontmatter");
+    expect(() =>
+      parseSkillMarkdown(["---", "name: Bad_Name", "description: No", "---", "# Bad"].join("\n")),
+    ).toThrow("lowercase slug");
+  });
+});
 
 describe("skill registry", () => {
   it("merges tenant-scoped generated skills and builtin overrides", async () => {
@@ -161,6 +192,100 @@ describe("skill registry", () => {
         },
       ]),
     ).toContain("call load_skill");
+  });
+
+  it("proposes, approves, lists, and disables generated skills", async () => {
+    const records = new Map<string, Awaited<ReturnType<NonNullable<SkillRepository["putGeneratedSkill"]>>>>();
+    const repository: SkillRepository = {
+      listBuiltinSkillOverrides: vi.fn().mockResolvedValue([]),
+      getBuiltinSkillOverride: vi.fn().mockResolvedValue(null),
+      listGeneratedSkills: vi.fn().mockImplementation(async () => [...records.values()]),
+      getGeneratedSkill: vi.fn().mockImplementation(async (_workspaceId, skillId) => records.get(skillId) ?? null),
+      putGeneratedSkill: vi.fn().mockImplementation(async (record) => {
+        const saved = {
+          ...record,
+          createdAt: record.createdAt ?? "created",
+          updatedAt: "updated",
+        };
+        records.set(record.skillId, saved);
+        return saved;
+      }),
+    };
+    const registry = new SkillRegistry(repository, builtinSkills);
+
+    const draft = await registry.proposeSkill("T1", {
+      skillMarkdown: sampleSkillMarkdown,
+      triggerHints: ["Hacker News"],
+      toolAllowlist: ["web_extract"],
+      createdByUserId: "U1",
+      createdFromConversationId: "C1",
+    });
+
+    expect(draft).toMatchObject({
+      skillId: "hn-article-summarizer",
+      status: "draft",
+      title: "Hacker News Article Summarizer",
+      body: sampleSkillMarkdown,
+      createdByUserId: "U1",
+      createdFromConversationId: "C1",
+    });
+    await expect(registry.loadSkill("T1", "hn-article-summarizer")).resolves.toBeNull();
+
+    const approved = await registry.approveSkill("T1", "hn-article-summarizer", "U1");
+    expect(approved).toMatchObject({
+      status: "enabled",
+      approvedByUserId: "U1",
+    });
+    await expect(registry.listEnabledSummaries("T1")).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          skillId: "hn-article-summarizer",
+          source: "generated",
+        }),
+      ]),
+    );
+
+    await expect(registry.listSkills("T1", { source: "generated" })).resolves.toMatchObject([
+      {
+        skillId: "hn-article-summarizer",
+        status: "enabled",
+        enabled: true,
+      },
+    ]);
+
+    const disabled = await registry.disableSkill("T1", "hn-article-summarizer");
+    expect(disabled.status).toBe("disabled");
+  });
+
+  it("does not replace an enabled generated skill with a draft", async () => {
+    const repository: SkillRepository = {
+      listBuiltinSkillOverrides: vi.fn().mockResolvedValue([]),
+      getBuiltinSkillOverride: vi.fn().mockResolvedValue(null),
+      listGeneratedSkills: vi.fn().mockResolvedValue([]),
+      getGeneratedSkill: vi.fn().mockResolvedValue({
+        workspaceId: "T1",
+        skillId: "hn-article-summarizer",
+        status: "enabled",
+        version: "0.1.0",
+        title: "Hacker News Article Summarizer",
+        description: "Existing skill.",
+        triggerHints: [],
+        toolAllowlist: [],
+        constraints: {},
+        body: sampleSkillMarkdown,
+        createdAt: "created",
+        updatedAt: "updated",
+      }),
+      putGeneratedSkill: vi.fn(),
+    };
+    const registry = new SkillRegistry(repository, builtinSkills);
+
+    await expect(
+      registry.proposeSkill("T1", {
+        skillMarkdown: sampleSkillMarkdown,
+      }),
+    ).rejects.toThrow("already enabled");
+    expect(repository.putGeneratedSkill).not.toHaveBeenCalled();
   });
 });
 
@@ -315,6 +440,68 @@ describe("load_skill tool", () => {
     expect(JSON.parse((result.content?.[0] as { text: string }).text)).toMatchObject({
       skill_id: "web-research",
       instructions: "# Web Research\n\nUse web tools.",
+    });
+  });
+
+  it("proposes a generated skill draft through the custom tool executor", async () => {
+    const registry = {
+      proposeSkill: vi.fn().mockResolvedValue({
+        workspaceId: "T1",
+        skillId: "hn-article-summarizer",
+        status: "draft",
+        version: "0.1.0",
+        title: "Hacker News Article Summarizer",
+        description: "Summarize Hacker News articles for Slack.",
+        triggerHints: ["Hacker News"],
+        toolAllowlist: ["web_extract"],
+        constraints: {},
+        body: sampleSkillMarkdown,
+        createdFromConversationId: "C1",
+        createdByUserId: "U1",
+        createdAt: "created",
+        updatedAt: "updated",
+      }),
+    };
+    const executor = new CustomToolExecutor(
+      {} as never,
+      {
+        workspaceId: "T1",
+        userId: "U1",
+        conversationId: "C1",
+        logger,
+      },
+      {
+        skillRegistry: registry as never,
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-1",
+      type: "agent.tool_use",
+      name: "propose_skill",
+      input: {
+        skill_markdown: sampleSkillMarkdown,
+        trigger_hints: ["Hacker News"],
+        tool_allowlist: ["web_extract"],
+      },
+    });
+
+    expect(registry.proposeSkill).toHaveBeenCalledWith("T1", {
+      skillMarkdown: sampleSkillMarkdown,
+      triggerHints: ["Hacker News"],
+      toolAllowlist: ["web_extract"],
+      constraints: undefined,
+      version: undefined,
+      createdFromConversationId: "C1",
+      createdByUserId: "U1",
+    });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse((result.content?.[0] as { text: string }).text)).toMatchObject({
+      proposed: true,
+      skill: {
+        skill_id: "hn-article-summarizer",
+        status: "draft",
+      },
     });
   });
 });

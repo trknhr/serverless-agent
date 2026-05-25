@@ -283,7 +283,8 @@ and AgentCore runtime share the same domain logic and tool definitions.
 
 Tool groups available inside AgentCore:
 
-- skills: `load_skill`
+- skills: `load_skill`, `propose_skill`, `approve_skill`, `list_skills`,
+  `disable_skill`
 - durable memory: `search_memories`, `save_memory`
 - web research: `web_search`, `web_extract`
 - one-off tasks: `list_tasks`, `upsert_task`, `mark_task_done`
@@ -305,7 +306,9 @@ Built-in skills live under `skills/builtin/*` with a `manifest.json` and
 container.
 
 Generated skills are stored in `SkillsTable` under the current `workspaceId`,
-which is the current tenant boundary. Built-in skill enablement can also be
+which is the current tenant boundary. Generated skills are drafted from a
+complete `SKILL.md` document with `name` and `description` frontmatter, then
+enabled only after explicit approval. Built-in skill enablement can also be
 overridden per `workspaceId`.
 
 ## Memory And Permissions

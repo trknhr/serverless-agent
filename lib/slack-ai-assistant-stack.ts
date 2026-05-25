@@ -76,6 +76,8 @@ export class SlackAiAssistantStack extends Stack {
     const agentCoreRuntimeQualifier =
       resolveOptionalConfigValue(this, "agentCoreRuntimeQualifier", "AGENTCORE_RUNTIME_QUALIFIER") ?? "";
     const bedrockModelId = resolveRequiredConfigValue(this, "bedrockModelId", "BEDROCK_MODEL_ID");
+    const bedrockRegion = resolveOptionalConfigValue(this, "bedrockRegion", "BEDROCK_REGION");
+    const bedrockServiceTier = resolveOptionalConfigValue(this, "bedrockServiceTier", "BEDROCK_SERVICE_TIER");
     const bedrockDocumentModelId =
       resolveOptionalConfigValue(this, "bedrockDocumentModelId", "BEDROCK_DOCUMENT_MODEL_ID") ??
       bedrockModelId;
@@ -255,6 +257,8 @@ export class SlackAiAssistantStack extends Stack {
     const agentCoreApplication = new AgentCoreApplication(this, "AgentCoreApplication", {
       spec: buildAgentCoreProjectSpec({
         bedrockModelId,
+        bedrockRegion,
+        bedrockServiceTier,
         bedrockDocumentModelId,
       }),
     });
@@ -796,6 +800,8 @@ function createNodeFunction(scope: Construct, id: string, props: NodeFunctionPro
 
 function buildAgentCoreProjectSpec(input: {
   bedrockModelId: string;
+  bedrockRegion?: string;
+  bedrockServiceTier?: string;
   bedrockDocumentModelId: string;
 }): AgentCoreProjectSpec {
   return {
@@ -821,6 +827,22 @@ function buildAgentCoreProjectSpec(input: {
             name: "BEDROCK_MODEL_ID",
             value: input.bedrockModelId,
           },
+          ...(input.bedrockRegion
+            ? [
+                {
+                  name: "BEDROCK_REGION",
+                  value: input.bedrockRegion,
+                },
+              ]
+            : []),
+          ...(input.bedrockServiceTier
+            ? [
+                {
+                  name: "BEDROCK_SERVICE_TIER",
+                  value: input.bedrockServiceTier,
+                },
+              ]
+            : []),
           {
             name: "BEDROCK_DOCUMENT_MODEL_ID",
             value: input.bedrockDocumentModelId,

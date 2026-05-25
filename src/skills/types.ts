@@ -25,6 +25,11 @@ export interface SkillSummary {
   constraints: SkillConstraints;
 }
 
+export interface SkillAdminSummary extends SkillSummary {
+  status: SkillStatus | "enabled" | "disabled";
+  enabled: boolean;
+}
+
 export interface SkillDocument extends SkillSummary {
   body: string;
 }
@@ -71,6 +76,15 @@ export interface BuiltinSkillOverride {
 export interface SkillRepository {
   listGeneratedSkills(workspaceId: string): Promise<GeneratedSkillRecord[]>;
   getGeneratedSkill(workspaceId: string, skillId: string): Promise<GeneratedSkillRecord | null>;
+  putGeneratedSkill?(
+    record: Omit<GeneratedSkillRecord, "createdAt" | "updatedAt"> & {
+      createdAt?: string;
+      updatedAt?: string;
+    },
+  ): Promise<GeneratedSkillRecord>;
   listBuiltinSkillOverrides(workspaceId: string): Promise<BuiltinSkillOverride[]>;
   getBuiltinSkillOverride(workspaceId: string, skillId: string): Promise<BuiltinSkillOverride | null>;
+  putBuiltinSkillOverride?(
+    record: Omit<BuiltinSkillOverride, "updatedAt"> & { updatedAt?: string },
+  ): Promise<BuiltinSkillOverride>;
 }

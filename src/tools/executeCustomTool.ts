@@ -27,8 +27,30 @@ import { TaskStatus } from "../tasks/taskState";
 import { WeatherForecastProvider } from "../weather/openMeteo";
 import { WebToolProvider } from "../web/webTools";
 import type { SkillRegistry } from "../skills/registry";
+import { skillConstraintsSchema, skillStatusSchema, type GeneratedSkillRecord } from "../skills/types";
 
 const loadSkillSchema = z.object({
+  skill_id: z.string().min(1).max(128),
+});
+
+const proposeSkillSchema = z.object({
+  skill_markdown: z.string().min(1).max(50_000),
+  trigger_hints: z.array(z.string().min(1)).max(12).optional(),
+  tool_allowlist: z.array(z.string().min(1)).max(20).optional(),
+  constraints: skillConstraintsSchema.optional(),
+  version: z.string().min(1).optional(),
+});
+
+const approveSkillSchema = z.object({
+  skill_id: z.string().min(1).max(128),
+});
+
+const listSkillsSchema = z.object({
+  source: z.enum(["builtin", "generated", "all"]).optional(),
+  statuses: z.array(skillStatusSchema).optional(),
+});
+
+const disableSkillSchema = z.object({
   skill_id: z.string().min(1).max(128),
 });
 
@@ -331,6 +353,7 @@ export interface ToolExecutionContext {
   workspaceId: string;
   userId?: string;
   channelId?: string;
+  conversationId?: string;
   logger: Logger;
   memoryWritePolicy?: {
     allowWorkspaceMemory?: boolean;
@@ -395,6 +418,14 @@ export class CustomToolExecutor {
       switch (toolName) {
         case "load_skill":
           return await this.loadSkill(input);
+        case "propose_skill":
+          return await this.proposeSkill(input);
+        case "approve_skill":
+          return await this.approveSkill(input);
+        case "list_skills":
+          return await this.listSkills(input);
+        case "disable_skill":
+          return await this.disableSkill(input);
         case "search_memories":
           return await this.searchMemories(input);
         case "save_memory":
@@ -484,6 +515,62 @@ export class CustomToolExecutor {
       tool_allowlist: skill.toolAllowlist,
       constraints: skill.constraints,
       instructions: skill.body,
+    });
+  }
+
+  private async proposeSkill(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = proposeSkillSchema.parse(input);
+    const registry = this.requireSkillRegistry();
+    const skill = await registry.proposeSkill(this.context.workspaceId, {
+      skillMarkdown: parsed.skill_markdown,
+      triggerHints: parsed.trigger_hints,
+      toolAllowlist: parsed.tool_allowlist,
+      constraints: parsed.constraints,
+      version: parsed.version,
+      createdFromConversationId: this.context.conversationId,
+      createdByUserId: this.context.userId,
+    });
+
+    return jsonResult({
+      proposed: true,
+      skill: serializeGeneratedSkill(skill),
+      next_step: "Ask the user to review this draft. Call approve_skill only after explicit approval.",
+    });
+  }
+
+  private async approveSkill(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = approveSkillSchema.parse(input);
+    const registry = this.requireSkillRegistry();
+    const skill = await registry.approveSkill(this.context.workspaceId, parsed.skill_id, this.context.userId);
+
+    return jsonResult({
+      approved: true,
+      skill: serializeGeneratedSkill(skill),
+    });
+  }
+
+  private async listSkills(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = listSkillsSchema.parse(input);
+    const registry = this.requireSkillRegistry();
+    const skills = await registry.listSkills(this.context.workspaceId, {
+      source: parsed.source,
+      statuses: parsed.statuses,
+    });
+
+    return jsonResult({
+      count: skills.length,
+      skills,
+    });
+  }
+
+  private async disableSkill(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = disableSkillSchema.parse(input);
+    const registry = this.requireSkillRegistry();
+    const skill = await registry.disableSkill(this.context.workspaceId, parsed.skill_id);
+
+    return jsonResult({
+      disabled: true,
+      skill: serializeGeneratedSkill(skill),
     });
   }
 
@@ -1842,6 +1929,24 @@ function serializeScheduledReminder(task: ScheduledTask): Record<string, unknown
     updated_by_user_id: task.updatedByUserId,
     created_at: task.createdAt,
     updated_at: task.updatedAt,
+  };
+}
+
+function serializeGeneratedSkill(skill: GeneratedSkillRecord): Record<string, unknown> {
+  return {
+    skill_id: skill.skillId,
+    status: skill.status,
+    version: skill.version,
+    title: skill.title,
+    description: skill.description,
+    trigger_hints: skill.triggerHints,
+    tool_allowlist: skill.toolAllowlist,
+    constraints: skill.constraints,
+    created_from_conversation_id: skill.createdFromConversationId,
+    created_by_user_id: skill.createdByUserId,
+    approved_by_user_id: skill.approvedByUserId,
+    created_at: skill.createdAt,
+    updated_at: skill.updatedAt,
   };
 }
 
