@@ -499,7 +499,12 @@ function buildScheduledPrompt(
     `- Current scheduled run time: ${parts.date} ${parts.time} (${parts.weekday})`,
     `- Time zone: ${SCHEDULE_TIMEZONE}`,
     "- Interpret relative dates such as today, yesterday, and tomorrow using this time zone, not UTC.",
+    "- Format the final answer for Slack mrkdwn: use bold labels and bullets, but do not use Markdown headings, horizontal rules, or tables.",
+    "- Do not narrate tool calls, failed attempts, or intermediate reasoning; post only the final useful reminder content.",
   ];
+  if (env.DEFAULT_RESPONSE_LANGUAGE) {
+    promptParts.push(`- Reply language: ${env.DEFAULT_RESPONSE_LANGUAGE}.`);
+  }
 
   if (autoClosedTasks.length > 0) {
     promptParts.push(

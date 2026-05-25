@@ -50,6 +50,8 @@ describe("Slack text formatting", () => {
   it("normalizes markdown outside code spans and fenced blocks", () => {
     const normalized = normalizeTextForSlack(
       [
+        "## Heading",
+        "---",
         "**bold** __em__ ~~gone~~ [site](https://example.com/a)",
         "`**literal** [x](https://example.com)`",
         "```",
@@ -58,6 +60,8 @@ describe("Slack text formatting", () => {
       ].join("\n"),
     );
 
+    expect(normalized).toContain("*Heading*");
+    expect(normalized).not.toContain("---");
     expect(normalized).toContain("*bold* _em_ ~gone~ <https://example.com/a|site>");
     expect(normalized).toContain("`**literal** [x](https://example.com)`");
     expect(normalized).toContain("```\n__literal__\n```");

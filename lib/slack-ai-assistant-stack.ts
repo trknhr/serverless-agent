@@ -61,6 +61,11 @@ export class SlackAiAssistantStack extends Stack {
     const schedulerDefaultTimeZone =
       resolveOptionalConfigValue(this, "schedulerDefaultTimeZone", "SCHEDULER_DEFAULT_TIME_ZONE") ??
       googleCalendarTimeZone;
+    const defaultResponseLanguage = resolveOptionalConfigValue(
+      this,
+      "defaultResponseLanguage",
+      "DEFAULT_RESPONSE_LANGUAGE",
+    );
     const defaultScheduleChannel =
       resolveOptionalConfigValue(this, "defaultScheduleChannel", "DEFAULT_SCHEDULE_CHANNEL") ??
       "C_PLACEHOLDER";
@@ -280,6 +285,7 @@ export class SlackAiAssistantStack extends Stack {
       SCHEDULER_DEFAULT_TIME_ZONE: schedulerDefaultTimeZone,
       EVENT_DEDUP_TTL_SECONDS: "86400",
       AGENT_RESPONSE_TIMEOUT_MS: "120000",
+      ...(defaultResponseLanguage ? { DEFAULT_RESPONSE_LANGUAGE: defaultResponseLanguage } : {}),
       TOP_LEVEL_CONTEXT_TURN_LIMIT: "10",
       MAX_SLACK_FILE_BYTES: "10000000",
     };

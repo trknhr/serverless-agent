@@ -248,6 +248,8 @@ Context options:
 - `googleCalendarParameterName`: optional override for the Google Calendar
   `SecureString` parameter
 - `googleCalendarTimeZone`: optional override for calendar defaults
+- `defaultResponseLanguage`: optional default language for scheduled reminders
+  and other non-user-triggered runs, such as `ja` or `en`
 - `schedulerScheduleNamePrefix`: optional override for EventBridge Scheduler
   schedule names. Defaults to `serverless-agent`.
 - `schedulerScheduleGroupName`: optional EventBridge Scheduler group override.

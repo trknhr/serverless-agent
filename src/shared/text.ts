@@ -22,6 +22,8 @@ export function splitTextForSlack(text: string, maxLength = 3000): string[] {
 export function normalizeTextForSlack(text: string): string {
   return transformOutsideCode(stripModelThinking(text), (segment) =>
     segment
+      .replace(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/gm, "*$1*")
+      .replace(/^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/gm, "")
       .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, "<$2|$1>")
       .replace(/\*\*(.+?)\*\*/gs, "*$1*")
       .replace(/__(.+?)__/gs, "_$1_")

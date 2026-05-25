@@ -18,6 +18,7 @@ const runtimeBaseEnvSchema = z.object({
   AGENTCORE_RUNTIME_QUALIFIER: z.string().optional().default(""),
   EVENT_DEDUP_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
   AGENT_RESPONSE_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
+  DEFAULT_RESPONSE_LANGUAGE: z.string().min(1).optional(),
   TOP_LEVEL_CONTEXT_TURN_LIMIT: z.coerce.number().int().positive().default(10),
   MAX_SLACK_FILE_BYTES: z.coerce.number().int().positive().default(10_000_000),
   DEFAULT_SCHEDULE_CHANNEL: requiredString,
