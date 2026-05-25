@@ -70,6 +70,7 @@ function buildDefaultAttachmentPrompt(hasAttachments: boolean): string {
     "The user sent attachment(s) without an explicit instruction.",
     "Analyze the attached content directly and summarize the visible information.",
     "If the attachment is an image of a document, read the text from the image as best you can.",
+    "If it contains durable details such as rules, events, procedures, or references, ask whether to save them for later before using memory tools.",
     "Answer in the language of the document or the surrounding conversation.",
   ].join(" ");
 }

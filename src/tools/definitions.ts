@@ -117,7 +117,7 @@ export const customToolDefinitions = [
   {
     name: "save_memory",
     description:
-      "Save a durable memory. Use scope=user_preference for personal preferences like preferred name, language, or style. Use scope=channel for stable channel-shared rules, decisions, and references. In Slack conversations, do not use scope=workspace. Save one memory per fact and do not save transient chatter or daily summaries.",
+      "Save a durable memory. Use scope=user_preference for personal preferences like preferred name, language, or style. Use scope=channel for stable channel-shared rules, decisions, and references. In Slack conversations, do not use scope=workspace. Save one memory per fact and do not save transient chatter or daily summaries. When durable facts come from a user-supplied image, PDF, document, or attachment, call this only after the user asks to remember them or approves saving.",
     input_schema: {
       type: "object",
       properties: {

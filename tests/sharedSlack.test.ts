@@ -573,6 +573,13 @@ describe("Slack context prompt blocks", () => {
         },
       },
     ]);
+    const [{ text }] = buildSlackContextBlocks({
+      contextScope: "channel_top_level",
+      priorTurns: [],
+      currentText: "",
+      attachmentBlocks: [{ type: "text", text: "Attached image: IMG_0762.jpg" }],
+    });
+    expect(text).toContain("ask whether to save them");
   });
 
   it("renders thread and channel context headings with truncated turns", () => {
