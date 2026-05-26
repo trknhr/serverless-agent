@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ChannelMemoryItem } from "../memory/channelMemoryItem";
 import { documentClient } from "./documentClient";
 
@@ -54,6 +54,24 @@ export class ChannelMemoryRepository {
     return record;
   }
 
+  async get(workspaceId: string, channelId: string, memoryId: string): Promise<ChannelMemoryItem | null> {
+    const response = await documentClient.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: {
+          pk: buildChannelPk(workspaceId, channelId),
+          sk: buildMemorySk(memoryId),
+        },
+      }),
+    );
+
+    if (!response.Item) {
+      return null;
+    }
+
+    return mapChannelMemoryItem(response.Item);
+  }
+
   async search(input: {
     workspaceId: string;
     channelId: string;
@@ -81,24 +99,7 @@ export class ChannelMemoryRepository {
     const statuses = input.statuses ?? ["active"];
 
     return (response.Items ?? [])
-      .map((item) => ({
-        workspaceId: item.workspaceId,
-        channelId: item.channelId,
-        memoryId: item.memoryId,
-        text: item.text,
-        entityKey: item.entityKey,
-        attributes: item.attributes,
-        tags: item.tags,
-        importance: item.importance,
-        status: item.status,
-        origin: item.origin,
-        sourceType: item.sourceType,
-        sourceRef: item.sourceRef,
-        createdByUserId: item.createdByUserId,
-        createdAt: item.createdAt,
-        updatedAt: item.updatedAt,
-        searchText: item.searchText as string | undefined,
-      }))
+      .map(mapChannelMemoryItem)
       .filter((item) => statuses.includes(item.status))
       .filter((item) => !input.entityKey || item.entityKey === input.entityKey)
       .filter((item) => matchesSearch(item.searchText ?? "", terms))
@@ -112,6 +113,27 @@ export class ChannelMemoryRepository {
       .slice(0, limit)
       .map(({ searchText: _searchText, ...item }) => item);
   }
+}
+
+function mapChannelMemoryItem(item: Record<string, unknown>): ChannelMemoryItem & { searchText?: string } {
+  return {
+    workspaceId: item.workspaceId as string,
+    channelId: item.channelId as string,
+    memoryId: item.memoryId as string,
+    text: item.text as string,
+    entityKey: item.entityKey as string | undefined,
+    attributes: item.attributes as Record<string, unknown> | undefined,
+    tags: item.tags as string[] | undefined,
+    importance: item.importance as number | undefined,
+    status: item.status as ChannelMemoryItem["status"],
+    origin: item.origin as ChannelMemoryItem["origin"],
+    sourceType: item.sourceType as string | undefined,
+    sourceRef: item.sourceRef as string | undefined,
+    createdByUserId: item.createdByUserId as string | undefined,
+    createdAt: item.createdAt as string,
+    updatedAt: item.updatedAt as string,
+    searchText: item.searchText as string | undefined,
+  };
 }
 
 function normalize(value: string): string {

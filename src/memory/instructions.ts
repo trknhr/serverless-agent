@@ -9,7 +9,7 @@ export const MEMORY_RESOURCE_PROMPT = [
   "Save one memory per fact.",
   "Use save_memory scope=channel for current-channel durable context.",
   "Use save_memory scope=user_preference for cross-channel personal preferences.",
-  "In Slack conversations, do not use scope=workspace. Use channel or user_preference instead.",
+  "In Slack conversations, do not use save_memory scope=workspace. Use promote_memory_to_workspace after explicit approval to share a channel memory beyond the current channel.",
   "Set save_memory origin=explicit only when the user directly asks you to remember or always apply something; otherwise set origin=inferred.",
   "Use stable entity_key values such as person:hanako, project:renovation, place:home, or vendor:costco when possible.",
   "Use short category tags such as preference, family, schedule, rule, project, or shopping.",

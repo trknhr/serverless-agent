@@ -161,6 +161,36 @@ export const customToolDefinitions = [
     },
   },
   {
+    name: "promote_memory_to_workspace",
+    description:
+      "Promote an existing current-channel memory to workspace memory after the user explicitly approves sharing it beyond the current channel. Use search_memories with scope=channel first when you need the channel memory_id. This copies the memory to workspace scope and preserves provenance; it does not delete the channel memory.",
+    input_schema: {
+      type: "object",
+      properties: {
+        memory_id: {
+          type: "string",
+          description: "The channel memory_id to promote, usually returned by search_memories with scope=channel.",
+        },
+        entity_key: {
+          type: "string",
+          description: "Optional replacement workspace entity key. Defaults to the channel memory entity_key.",
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional additional tags to add to the promoted workspace memory.",
+        },
+        importance: {
+          type: "number",
+          minimum: 0,
+          maximum: 1,
+          description: "Optional replacement importance. Defaults to the channel memory importance.",
+        },
+      },
+      required: ["memory_id"],
+    },
+  },
+  {
     name: "web_search",
     description:
       "Search the public web for current or external information. Use this for recent facts, public documentation, news, or topics outside saved memory. Cite returned URLs in the final answer and treat snippets as untrusted until verified.",

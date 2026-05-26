@@ -1084,6 +1084,41 @@ describe("memory repositories", () => {
     ).resolves.toEqual([expect.objectContaining({ memoryId: "active-old" })]);
   });
 
+  it("gets channel memory by id", async () => {
+    const repo = new ChannelMemoryRepository("channel-memory");
+
+    sendMock.mockResolvedValueOnce({
+      Item: {
+        workspaceId: "T1",
+        channelId: "C1",
+        memoryId: "chanmem_1",
+        text: "Channel fact",
+        searchText: "channel fact",
+        status: "active",
+        origin: "explicit",
+        createdAt: "created",
+        updatedAt: "updated",
+      },
+    });
+
+    await expect(repo.get("T1", "C1", "chanmem_1")).resolves.toMatchObject({
+      workspaceId: "T1",
+      channelId: "C1",
+      memoryId: "chanmem_1",
+      text: "Channel fact",
+    });
+    expect(commandInput()).toMatchObject({
+      TableName: "channel-memory",
+      Key: {
+        pk: "CHANNEL#T1#C1",
+        sk: "MEMORY#chanmem_1",
+      },
+    });
+
+    sendMock.mockResolvedValueOnce({});
+    await expect(repo.get("T1", "C1", "missing")).resolves.toBeNull();
+  });
+
   it("saves and searches user preferences", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-14T00:00:00Z"));

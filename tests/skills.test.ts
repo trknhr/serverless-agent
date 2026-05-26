@@ -504,4 +504,91 @@ describe("load_skill tool", () => {
       },
     });
   });
+
+  it("promotes an approved channel memory to workspace memory", async () => {
+    const channelMemories = {
+      get: vi.fn().mockResolvedValue({
+        workspaceId: "T1",
+        channelId: "C1",
+        memoryId: "chanmem_1",
+        text: "長男のわいわい広場は11:00までにアプリ申請する",
+        entityKey: "place:waiwai",
+        attributes: { source: "image" },
+        tags: ["school"],
+        importance: 0.8,
+        status: "candidate",
+        origin: "inferred",
+        createdAt: "created",
+        updatedAt: "updated",
+      }),
+    };
+    const memoryItems = {
+      save: vi.fn().mockResolvedValue({
+        workspaceId: "T1",
+        memoryId: "mem_1",
+        text: "長男のわいわい広場は11:00までにアプリ申請する",
+        entityKey: "place:nagao-waiwai",
+        tags: ["school", "promoted"],
+        attributes: {},
+        importance: 0.8,
+        sourceType: "channel_memory_promotion",
+        sourceRef: "channel:C1/memory:chanmem_1",
+        createdByUserId: "U1",
+        createdAt: "created",
+        updatedAt: "updated",
+      }),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        channelMemories,
+        memoryItems,
+      } as never,
+      {
+        workspaceId: "T1",
+        channelId: "C1",
+        userId: "U1",
+        logger,
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-1",
+      type: "agent.tool_use",
+      name: "promote_memory_to_workspace",
+      input: {
+        memory_id: "chanmem_1",
+        entity_key: "place:nagao-waiwai",
+      },
+    });
+
+    expect(channelMemories.get).toHaveBeenCalledWith("T1", "C1", "chanmem_1");
+    expect(memoryItems.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "T1",
+        entityKey: "place:nagao-waiwai",
+        text: "長男のわいわい広場は11:00までにアプリ申請する",
+        tags: ["school", "promoted"],
+        sourceType: "channel_memory_promotion",
+        sourceRef: "channel:C1/memory:chanmem_1",
+        createdByUserId: "U1",
+        attributes: expect.objectContaining({
+          source: "image",
+          promotedFrom: expect.objectContaining({
+            scope: "channel",
+            channelId: "C1",
+            memoryId: "chanmem_1",
+            promotedByUserId: "U1",
+          }),
+        }),
+      }),
+    );
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse((result.content?.[0] as { text: string }).text)).toMatchObject({
+      promoted: true,
+      workspace_memory: {
+        memory_id: "mem_1",
+      },
+    });
+    expect(executor.getSummary().savedMemoryIds).toEqual(["mem_1"]);
+  });
 });

@@ -26,4 +26,10 @@ describe("tool definitions", () => {
     expect(toolDescription("approve_skill")).toContain("explicitly approves");
     expect(toolDescription("disable_skill")).toContain("generated skill");
   });
+
+  it("requires explicit approval before promoting channel memory", () => {
+    expect(toolDescription("promote_memory_to_workspace")).toContain("explicitly approves");
+    expect(toolDescription("promote_memory_to_workspace")).toContain("current-channel memory");
+    expect(toolDescription("promote_memory_to_workspace")).toContain("does not delete");
+  });
 });

@@ -9,7 +9,8 @@ Use this skill when the user asks the assistant to remember something, relies on
 3. Use user preference scope for personal preferences such as language, name, writing style, or formatting.
 4. Use channel scope for shared channel rules, decisions, and durable references.
 5. When durable facts come from a user-supplied image, PDF, document, or attachment and the user did not ask to remember them, ask whether to save them before calling `save_memory`.
-6. Keep memory text concise and avoid mixing unrelated facts.
+6. When the user explicitly approves sharing current-channel memory beyond the current channel, call `promote_memory_to_workspace`.
+7. Keep memory text concise and avoid mixing unrelated facts.
 
 ## Boundaries
 
