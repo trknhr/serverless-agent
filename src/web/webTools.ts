@@ -116,6 +116,9 @@ const FRESHNESS_VALUES: Record<NonNullable<WebSearchInput["freshness"]>, string>
   month: "pm",
   year: "py",
 };
+const BRAVE_SEARCH_LANGUAGE_ALIASES: Record<string, string> = {
+  ja: "jp",
+};
 
 export class WebToolsProvider implements WebToolProvider {
   private readonly fetchImpl: typeof fetch;
@@ -190,8 +193,9 @@ export class WebToolsProvider implements WebToolProvider {
     if (input.country) {
       url.searchParams.set("country", input.country.toUpperCase());
     }
-    if (input.language) {
-      url.searchParams.set("search_lang", input.language.toLowerCase());
+    const searchLanguage = normalizeBraveSearchLanguage(input.language);
+    if (searchLanguage) {
+      url.searchParams.set("search_lang", searchLanguage);
     }
     if (input.freshness) {
       url.searchParams.set("freshness", FRESHNESS_VALUES[input.freshness]);
@@ -378,6 +382,14 @@ function normalizeSearchDomain(value: string): string | undefined {
 function normalizeSearchProvider(value: string | undefined): string | undefined {
   const normalized = value?.trim().toLowerCase();
   return normalized || undefined;
+}
+
+function normalizeBraveSearchLanguage(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  return BRAVE_SEARCH_LANGUAGE_ALIASES[normalized] ?? normalized;
 }
 
 function isRedirectStatus(status: number): boolean {

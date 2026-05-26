@@ -69,7 +69,7 @@ describe("WebToolsProvider", () => {
     expect(url.searchParams.get("q")).toBe("agent tools site:docs.aws.amazon.com");
     expect(url.searchParams.get("count")).toBe("3");
     expect(url.searchParams.get("country")).toBe("JP");
-    expect(url.searchParams.get("search_lang")).toBe("ja");
+    expect(url.searchParams.get("search_lang")).toBe("jp");
     expect(url.searchParams.get("freshness")).toBe("pw");
     expect(url.searchParams.get("result_filter")).toBe("web");
     expect(requestInit).toMatchObject({
