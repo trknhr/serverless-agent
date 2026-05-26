@@ -285,7 +285,8 @@ Tool groups available inside AgentCore:
 
 - skills: `load_skill`, `propose_skill`, `approve_skill`, `list_skills`,
   `disable_skill`
-- durable memory: `search_memories`, `save_memory`
+- durable memory: `search_memories`, `save_memory`,
+  `promote_memory_to_workspace`
 - web research: `web_search`, `web_extract`
 - one-off tasks: `list_tasks`, `upsert_task`, `mark_task_done`
 - recurring tasks: `list_recurring_tasks`, `upsert_recurring_task`,
@@ -356,13 +357,14 @@ Provider conversation key examples:
 - LINE user: `user:{userId}`
 - Slack channel: `channel:{channelId}`
 
-Slack conversations currently prevent direct workspace memory writes. Inferred
-channel memory is saved as a candidate, while scheduled reminders run with
-workspace scope.
+Slack conversations prevent direct `save_memory` writes to workspace scope.
+Inferred channel memory is saved as a candidate, while scheduled reminders run
+with workspace scope. After explicit user approval, the assistant can copy a
+current-channel memory into workspace memory with `promote_memory_to_workspace`;
+the promoted item keeps provenance for the original channel and memory ID.
 
 Future work should add an admin surface for channel-level knowledge sharing
-policies, such as explicit promotion to workspace memory, approval queues,
-provenance, audit logs, and per-channel opt-in controls.
+policies, approval queues, audit logs, and per-channel opt-in controls.
 
 ## Scheduled Reminders
 

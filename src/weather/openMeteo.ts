@@ -31,10 +31,12 @@ interface OpenMeteoGeocodingResponse {
   results?: Array<{
     name: string;
     country?: string;
+    country_code?: string;
     admin1?: string;
     latitude: number;
     longitude: number;
     timezone?: string;
+    population?: number;
   }>;
 }
 
@@ -51,6 +53,8 @@ interface OpenMeteoForecastResponse {
 }
 
 const DEFAULT_TIMEZONE = "Asia/Tokyo";
+const FETCH_TIMEOUT_MS = 8_000;
+const FETCH_RETRY_ATTEMPTS = 3;
 
 export class OpenMeteoWeatherProvider implements WeatherForecastProvider {
   async getForecast(input: WeatherForecastInput): Promise<WeatherForecast> {
@@ -164,18 +168,94 @@ function buildWeatherSummary(input: {
 }
 
 async function geocodeLocation(location: string): Promise<NonNullable<OpenMeteoGeocodingResponse["results"]>[number]> {
-  const url = new URL("https://geocoding-api.open-meteo.com/v1/search");
-  url.searchParams.set("name", location);
-  url.searchParams.set("count", "1");
-  url.searchParams.set("language", "ja");
-  url.searchParams.set("format", "json");
+  const queries = buildWeatherLocationQueries(location);
+  const matches: Array<{
+    query: string;
+    result: NonNullable<OpenMeteoGeocodingResponse["results"]>[number];
+    score: number;
+  }> = [];
+  const failures: string[] = [];
 
-  const payload = await fetchJson<OpenMeteoGeocodingResponse>(url);
-  const first = payload.results?.[0];
-  if (!first) {
-    throw new Error(`Weather location '${location}' was not found.`);
+  for (const query of queries) {
+    const url = new URL("https://geocoding-api.open-meteo.com/v1/search");
+    url.searchParams.set("name", query);
+    url.searchParams.set("count", "5");
+    url.searchParams.set("language", "ja");
+    url.searchParams.set("format", "json");
+
+    try {
+      const payload = await fetchJson<OpenMeteoGeocodingResponse>(url);
+      for (const result of payload.results ?? []) {
+        matches.push({
+          query,
+          result,
+          score: scoreGeocodingResult(result, query, location),
+        });
+      }
+    } catch (error) {
+      failures.push(`${query}: ${formatErrorMessage(error)}`);
+    }
   }
-  return first;
+
+  const best = matches.sort((a, b) => b.score - a.score)[0];
+  if (best) {
+    return best.result;
+  }
+  if (failures.length === queries.length && failures.length > 0) {
+    throw new Error(`Weather location lookup failed for '${location}'. ${failures.join("; ")}`);
+  }
+  throw new Error(`Weather location '${location}' was not found. Tried: ${queries.join(", ")}`);
+}
+
+export function buildWeatherLocationQueries(location: string): string[] {
+  const original = normalizeOptionalString(location);
+  if (!original) {
+    return [];
+  }
+
+  const queries = [original];
+  const withoutPrefecture = original.match(/^[^都道府県]+[都道府県](.+)$/u)?.[1]?.trim();
+  if (withoutPrefecture) {
+    queries.push(withoutPrefecture);
+    const municipality = withoutPrefecture.match(/^(.+?[市区町村])/u)?.[1]?.trim();
+    if (municipality) {
+      queries.push(municipality);
+    }
+  }
+  const japaneseOnly = /[一-龯ぁ-んァ-ン]/u.test(original);
+  if (japaneseOnly && !/[市区町村]$/u.test(original)) {
+    queries.push(`${original}市`);
+  }
+
+  return [...new Set(queries)];
+}
+
+function scoreGeocodingResult(
+  result: NonNullable<OpenMeteoGeocodingResponse["results"]>[number],
+  query: string,
+  original: string,
+): number {
+  let score = 0;
+  if (result.country_code === "JP" || result.country === "日本" || result.country === "Japan") {
+    score += 10;
+  }
+  if (result.name === query) {
+    score += 20;
+  }
+  if (result.name === original) {
+    score += 10;
+  }
+  if (query.endsWith("市") && result.name === query) {
+    score += 40;
+  }
+  if (result.admin1 && original.includes(result.admin1)) {
+    score += 30;
+  }
+  if (original.includes(result.name)) {
+    score += 25;
+  }
+  score += Math.min((result.population ?? 0) / 100_000, 20);
+  return score;
 }
 
 async function fetchForecast(input: {
@@ -206,11 +286,47 @@ async function fetchForecast(input: {
 }
 
 async function fetchJson<T>(url: URL): Promise<T> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Weather API request failed with status ${response.status}`);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= FETCH_RETRY_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(url, { signal: controller.signal });
+    } catch (error) {
+      lastError = error;
+      if (attempt === FETCH_RETRY_ATTEMPTS) {
+        break;
+      }
+      await delay(150 * attempt);
+      continue;
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (response.ok) {
+      return response.json() as Promise<T>;
+    }
+    const statusError = new Error(`Weather API request failed with status ${response.status}`);
+    if (!isRetryableStatus(response.status) || attempt === FETCH_RETRY_ATTEMPTS) {
+      throw statusError;
+    }
+    lastError = statusError;
+    await delay(150 * attempt);
   }
-  return response.json() as Promise<T>;
+  throw new Error(`Weather API request failed: ${formatErrorMessage(lastError)}`);
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function resolveForecastDays(date: string, timezone: string): number {

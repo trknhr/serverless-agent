@@ -41,4 +41,10 @@ describe("tool definitions", () => {
     expect(toolDescription("browser_open_url")).toContain("public http or https URL");
     expect(toolDescription("browser_snapshot")).toContain("Screenshots are not returned as raw image data");
   });
+
+  it("requires explicit approval before promoting channel memory", () => {
+    expect(toolDescription("promote_memory_to_workspace")).toContain("explicitly approves");
+    expect(toolDescription("promote_memory_to_workspace")).toContain("current-channel memory");
+    expect(toolDescription("promote_memory_to_workspace")).toContain("does not delete");
+  });
 });

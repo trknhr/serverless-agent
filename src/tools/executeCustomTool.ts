@@ -75,6 +75,13 @@ const saveMemorySchema = z.object({
   preference_key: z.string().min(1).optional(),
 });
 
+const promoteMemoryToWorkspaceSchema = z.object({
+  memory_id: z.string().min(1).max(128),
+  entity_key: z.string().min(1).optional(),
+  tags: z.array(z.string().min(1)).optional(),
+  importance: z.number().min(0).max(1).optional(),
+});
+
 const webSearchSchema = z.object({
   query: z.string().min(1).max(400),
   limit: z.number().int().min(1).max(10).optional(),
@@ -468,6 +475,8 @@ export class CustomToolExecutor {
           return await this.searchMemories(input);
         case "save_memory":
           return await this.saveMemory(input);
+        case "promote_memory_to_workspace":
+          return await this.promoteMemoryToWorkspace(input);
         case "web_search":
           return await this.webSearch(input);
         case "web_extract":
@@ -808,6 +817,69 @@ export class CustomToolExecutor {
       text: memory.text,
       tags: memory.tags ?? [],
       updated_at: memory.updatedAt,
+    });
+  }
+
+  private async promoteMemoryToWorkspace(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = promoteMemoryToWorkspaceSchema.parse(input);
+    if (!this.context.channelId || !this.repositories.channelMemories) {
+      return errorResult("Channel memory promotion is unavailable outside a channel context.");
+    }
+
+    const source = await this.repositories.channelMemories.get(
+      this.context.workspaceId,
+      this.context.channelId,
+      parsed.memory_id,
+    );
+    if (!source) {
+      return errorResult(`Channel memory was not found: ${parsed.memory_id}`);
+    }
+    if (source.status === "rejected" || source.status === "archived") {
+      return errorResult(`Channel memory ${parsed.memory_id} is ${source.status} and cannot be promoted.`);
+    }
+
+    const tags = normalizeTags([...(source.tags ?? []), ...(parsed.tags ?? []), "promoted"]);
+    const memory = await this.repositories.memoryItems.save({
+      workspaceId: this.context.workspaceId,
+      entityKey: normalizeEntityKey(parsed.entity_key ?? source.entityKey),
+      text: source.text,
+      attributes: {
+        ...(source.attributes ?? {}),
+        promotedFrom: {
+          scope: "channel",
+          workspaceId: source.workspaceId,
+          channelId: source.channelId,
+          memoryId: source.memoryId,
+          status: source.status,
+          origin: source.origin,
+          promotedByUserId: this.context.userId,
+          promotedAt: new Date().toISOString(),
+        },
+      },
+      tags,
+      importance: parsed.importance ?? source.importance,
+      sourceType: "channel_memory_promotion",
+      sourceRef: `channel:${source.channelId}/memory:${source.memoryId}`,
+      createdByUserId: this.context.userId,
+    });
+    this.savedMemoryIds.add(memory.memoryId);
+
+    return jsonResult({
+      promoted: true,
+      source: {
+        scope: "channel",
+        memory_id: source.memoryId,
+        channel_id: source.channelId,
+        status: source.status,
+      },
+      workspace_memory: {
+        scope: "workspace",
+        memory_id: memory.memoryId,
+        entity_key: memory.entityKey,
+        text: memory.text,
+        tags: memory.tags ?? [],
+        updated_at: memory.updatedAt,
+      },
     });
   }
 
