@@ -46,6 +46,7 @@
     "dotenv": "^17.4.2",
     "jimp": "^1.6.1",
     "jsdom": "^29.1.1",
+    "playwright-core": "^1.60.0",
     "zod": "4.3.6"
   },
   "devDependencies": {

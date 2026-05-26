@@ -74,6 +74,8 @@ export const agentRuntimeResourcesSchema = z.object({
   webSearchProvider: z.string().min(1).optional(),
   webSearchApiKeyParameterName: z.string().min(1).optional(),
   webSearchBaseUrl: z.string().min(1).optional(),
+  browserProvider: z.string().min(1).optional(),
+  browserIdentifier: z.string().min(1).optional(),
   skillsTableName: z.string().min(1).optional(),
   workSessionIdleTimeoutSeconds: z.number().int().min(60).max(28_800).default(900),
   workSessionMaxLifetimeSeconds: z.number().int().min(60).max(28_800).default(28_800),
@@ -145,6 +147,8 @@ export interface ToolRuntimeEnvironment {
   WEB_SEARCH_PROVIDER?: string;
   WEB_SEARCH_API_KEY_PARAMETER_NAME?: string;
   WEB_SEARCH_BASE_URL?: string;
+  BROWSER_PROVIDER?: string;
+  BROWSER_IDENTIFIER?: string;
   SKILLS_TABLE_NAME?: string;
   WORK_SESSION_IDLE_TIMEOUT_SECONDS: number;
   WORK_SESSION_MAX_LIFETIME_SECONDS: number;
@@ -173,6 +177,8 @@ export function buildAgentRuntimeResources(env: ToolRuntimeEnvironment): AgentRu
     webSearchProvider: env.WEB_SEARCH_PROVIDER,
     webSearchApiKeyParameterName: env.WEB_SEARCH_API_KEY_PARAMETER_NAME,
     webSearchBaseUrl: env.WEB_SEARCH_BASE_URL,
+    browserProvider: env.BROWSER_PROVIDER,
+    browserIdentifier: env.BROWSER_IDENTIFIER,
     skillsTableName: env.SKILLS_TABLE_NAME,
     workSessionIdleTimeoutSeconds: env.WORK_SESSION_IDLE_TIMEOUT_SECONDS,
     workSessionMaxLifetimeSeconds: env.WORK_SESSION_MAX_LIFETIME_SECONDS,

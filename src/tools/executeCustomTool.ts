@@ -27,8 +27,10 @@ import { ScheduledTask } from "../tasks/taskDefinition";
 import { TaskStatus } from "../tasks/taskState";
 import { WeatherForecastProvider } from "../weather/openMeteo";
 import { WebToolProvider } from "../web/webTools";
+import { BrowserProvider, BrowserViewport } from "../browser/provider";
 import type { SkillRegistry } from "../skills/registry";
 import { skillConstraintsSchema, skillStatusSchema, type GeneratedSkillRecord } from "../skills/types";
+import type { WorkSessionRecord } from "../shared/contracts";
 
 const loadSkillSchema = z.object({
   skill_id: z.string().min(1).max(128),
@@ -92,6 +94,34 @@ const webSearchSchema = z.object({
 const webExtractSchema = z.object({
   url: z.string().url(),
   max_chars: z.number().int().min(500).max(20_000).optional(),
+});
+
+const browserStartSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  width: z.number().int().min(800).max(1920).optional(),
+  height: z.number().int().min(600).max(1080).optional(),
+});
+
+const browserOpenUrlSchema = z.object({
+  browser_session_id: z.string().min(1).optional(),
+  url: z.string().url(),
+  wait_until: z.enum(["load", "domcontentloaded", "networkidle"]).optional(),
+  timeout_ms: z.number().int().min(1000).max(60_000).optional(),
+});
+
+const browserSnapshotSchema = z.object({
+  browser_session_id: z.string().min(1).optional(),
+  max_chars: z.number().int().min(500).max(12_000).optional(),
+});
+
+const browserExtractSchema = z.object({
+  browser_session_id: z.string().min(1).optional(),
+  selector: z.string().min(1).max(500).optional(),
+  max_chars: z.number().int().min(500).max(20_000).optional(),
+});
+
+const browserCloseSchema = z.object({
+  browser_session_id: z.string().min(1).optional(),
 });
 
 const listTasksSchema = z.object({
@@ -368,6 +398,11 @@ export interface ToolExecutionContext {
     channelInferredStatus?: "active" | "candidate";
     defaultOrigin?: "explicit" | "inferred" | "imported";
   };
+  workSessionPolicy?: {
+    idleTimeoutSeconds: number;
+    maxLifetimeSeconds: number;
+    maxActivePerOwner: number;
+  };
 }
 
 interface ToolRepositories {
@@ -389,6 +424,7 @@ interface ToolIntegrations {
   scheduledReminderScheduler?: ScheduledReminderScheduler;
   weatherProvider?: WeatherForecastProvider;
   webProvider?: WebToolProvider;
+  browserProvider?: BrowserProvider;
   skillRegistry?: SkillRegistry;
 }
 
@@ -445,6 +481,16 @@ export class CustomToolExecutor {
           return await this.webSearch(input);
         case "web_extract":
           return await this.webExtract(input);
+        case "browser_start":
+          return await this.browserStart(input);
+        case "browser_open_url":
+          return await this.browserOpenUrl(input);
+        case "browser_snapshot":
+          return await this.browserSnapshot(input);
+        case "browser_extract":
+          return await this.browserExtract(input);
+        case "browser_close":
+          return await this.browserClose(input);
         case "list_tasks":
           return await this.listTasks(input);
         case "upsert_task":
@@ -877,6 +923,116 @@ export class CustomToolExecutor {
       content_type: result.contentType,
       text: result.text,
       truncated: result.truncated,
+    });
+  }
+
+  private async browserStart(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = browserStartSchema.parse(input);
+    const workSessions = this.requireWorkSessionRepository();
+    const browser = this.requireBrowserProvider();
+    const ownerUserId = this.requireOwnerUserId();
+    const policy = this.getWorkSessionPolicy();
+    await this.cleanupBrowserSessions(Math.max(policy.maxActivePerOwner - 1, 0));
+
+    const viewport = buildBrowserViewport(parsed.width, parsed.height);
+    const providerSession = await browser.start({
+      name: parsed.name,
+      timeoutSeconds: policy.maxLifetimeSeconds,
+      viewport,
+    });
+    const workSession = await workSessions.create({
+      workspaceId: this.context.workspaceId,
+      ownerUserId,
+      kind: "browser",
+      maxLifetimeSeconds: policy.maxLifetimeSeconds,
+      runtimeSessionId: providerSession.providerSessionId,
+    });
+
+    return jsonResult({
+      browser_session_id: workSession.workSessionId,
+      status: workSession.status,
+      created_at: workSession.createdAt,
+      expires_at: workSession.expiresAt,
+      viewport: viewport ?? { width: 1280, height: 720 },
+    });
+  }
+
+  private async browserOpenUrl(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = browserOpenUrlSchema.parse(input);
+    const session = await this.resolveBrowserSession(parsed.browser_session_id);
+    const result = await this.requireBrowserProvider().openUrl({
+      providerSessionId: session.runtimeSessionId,
+      url: parsed.url,
+      waitUntil: parsed.wait_until,
+      timeoutMs: parsed.timeout_ms,
+    });
+    await this.touchBrowserSession(session);
+
+    return jsonResult({
+      browser_session_id: session.workSessionId,
+      url: result.url,
+      title: result.title,
+    });
+  }
+
+  private async browserSnapshot(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = browserSnapshotSchema.parse(input);
+    const session = await this.resolveBrowserSession(parsed.browser_session_id);
+    const result = await this.requireBrowserProvider().snapshot({
+      providerSessionId: session.runtimeSessionId,
+      maxChars: parsed.max_chars,
+    });
+    await this.touchBrowserSession(session);
+
+    return jsonResult({
+      browser_session_id: session.workSessionId,
+      url: result.url,
+      title: result.title,
+      text: result.text,
+      truncated: result.truncated,
+      original_length: result.originalLength,
+      max_chars: result.maxChars,
+      screenshot_included: result.screenshotIncluded,
+    });
+  }
+
+  private async browserExtract(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = browserExtractSchema.parse(input);
+    const session = await this.resolveBrowserSession(parsed.browser_session_id);
+    const result = await this.requireBrowserProvider().extract({
+      providerSessionId: session.runtimeSessionId,
+      selector: parsed.selector,
+      maxChars: parsed.max_chars,
+    });
+    await this.touchBrowserSession(session);
+
+    return jsonResult({
+      browser_session_id: session.workSessionId,
+      url: result.url,
+      title: result.title,
+      text: result.text,
+      truncated: result.truncated,
+      original_length: result.originalLength,
+      max_chars: result.maxChars,
+    });
+  }
+
+  private async browserClose(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = browserCloseSchema.parse(input);
+    const session = await this.resolveBrowserSession(parsed.browser_session_id);
+    await this.requireBrowserProvider().close({
+      providerSessionId: session.runtimeSessionId,
+    });
+    await this.requireWorkSessionRepository().markCompleted({
+      workspaceId: session.workspaceId,
+      ownerUserId: session.ownerUserId,
+      kind: "browser",
+      workSessionId: session.workSessionId,
+    });
+
+    return jsonResult({
+      browser_session_id: session.workSessionId,
+      closed: true,
     });
   }
 
@@ -1606,6 +1762,110 @@ export class CustomToolExecutor {
     return this.integrations.webProvider;
   }
 
+  private requireBrowserProvider(): BrowserProvider {
+    if (!this.integrations.browserProvider) {
+      throw new Error("Browser tools are not configured. Set BROWSER_PROVIDER to enable browser sessions.");
+    }
+    return this.integrations.browserProvider;
+  }
+
+  private requireWorkSessionRepository(): WorkSessionRepository {
+    if (!this.repositories.workSessions) {
+      throw new Error("Work session storage is not configured");
+    }
+    return this.repositories.workSessions;
+  }
+
+  private requireOwnerUserId(): string {
+    if (!this.context.userId) {
+      throw new Error("Browser sessions require an owner user id.");
+    }
+    return this.context.userId;
+  }
+
+  private getWorkSessionPolicy(): NonNullable<ToolExecutionContext["workSessionPolicy"]> {
+    return {
+      idleTimeoutSeconds: this.context.workSessionPolicy?.idleTimeoutSeconds ?? 900,
+      maxLifetimeSeconds: this.context.workSessionPolicy?.maxLifetimeSeconds ?? 28_800,
+      maxActivePerOwner: this.context.workSessionPolicy?.maxActivePerOwner ?? 2,
+    };
+  }
+
+  private async cleanupBrowserSessions(maxActiveSessions = this.getWorkSessionPolicy().maxActivePerOwner): Promise<void> {
+    const workSessions = this.requireWorkSessionRepository();
+    const ownerUserId = this.requireOwnerUserId();
+    const policy = this.getWorkSessionPolicy();
+    const idleSessions = await workSessions.expireIdleSessions({
+      workspaceId: this.context.workspaceId,
+      ownerUserId,
+      kind: "browser",
+      idleTimeoutSeconds: policy.idleTimeoutSeconds,
+    });
+    const overLimitSessions = await workSessions.enforceActiveLimit({
+      workspaceId: this.context.workspaceId,
+      ownerUserId,
+      kind: "browser",
+      maxActiveSessions,
+    });
+
+    await this.closeProviderSessions([...idleSessions, ...overLimitSessions]);
+  }
+
+  private async resolveBrowserSession(browserSessionId?: string): Promise<WorkSessionRecord> {
+    const workSessions = this.requireWorkSessionRepository();
+    const ownerUserId = this.requireOwnerUserId();
+    await this.cleanupBrowserSessions();
+
+    const session = browserSessionId
+      ? await workSessions.get({
+          workspaceId: this.context.workspaceId,
+          ownerUserId,
+          kind: "browser",
+          workSessionId: browserSessionId,
+        })
+      : (
+          await workSessions.listActiveByOwner({
+            workspaceId: this.context.workspaceId,
+            ownerUserId,
+            kind: "browser",
+            limit: 1,
+          })
+        )[0];
+
+    if (!session || session.status !== "active" || hasWorkSessionExpired(session)) {
+      throw new Error(browserSessionId ? `Browser session ${browserSessionId} is not active.` : "No active browser session.");
+    }
+
+    return session;
+  }
+
+  private async touchBrowserSession(session: WorkSessionRecord): Promise<void> {
+    await this.requireWorkSessionRepository().touch({
+      workspaceId: session.workspaceId,
+      ownerUserId: session.ownerUserId,
+      kind: "browser",
+      workSessionId: session.workSessionId,
+    });
+  }
+
+  private async closeProviderSessions(sessions: WorkSessionRecord[]): Promise<void> {
+    const uniqueSessions = new Map(sessions.map((session) => [session.runtimeSessionId, session]));
+    await Promise.all(
+      [...uniqueSessions.values()].map(async (session) => {
+        try {
+          await this.requireBrowserProvider().close({
+            providerSessionId: session.runtimeSessionId,
+          });
+        } catch (error) {
+          this.context.logger.warn("Failed to close expired browser provider session", {
+            browserSessionId: session.workSessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }),
+    );
+  }
+
   private requireSkillRegistry(): SkillRegistry {
     if (!this.integrations.skillRegistry) {
       throw new Error("Skill registry is not configured");
@@ -1966,6 +2226,20 @@ function serializeGoogleEventTime(
 function normalizeOptionalString(value?: string): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
+}
+
+function buildBrowserViewport(width?: number, height?: number): BrowserViewport | undefined {
+  if (!width && !height) {
+    return undefined;
+  }
+  return {
+    width: width ?? 1280,
+    height: height ?? 720,
+  };
+}
+
+function hasWorkSessionExpired(session: WorkSessionRecord, now = new Date()): boolean {
+  return Date.parse(session.expiresAt) <= now.getTime();
 }
 
 function resolveScheduledReminderExpression(input: {

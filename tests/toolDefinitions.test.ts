@@ -27,6 +27,21 @@ describe("tool definitions", () => {
     expect(toolDescription("disable_skill")).toContain("generated skill");
   });
 
+  it("exposes browser tools without provider-specific implementation details", () => {
+    for (const name of [
+      "browser_start",
+      "browser_open_url",
+      "browser_snapshot",
+      "browser_extract",
+      "browser_close",
+    ]) {
+      const description = toolDescription(name);
+      expect(description).not.toMatch(/AWS|AgentCore|Bedrock/i);
+    }
+    expect(toolDescription("browser_open_url")).toContain("public http or https URL");
+    expect(toolDescription("browser_snapshot")).toContain("Screenshots are not returned as raw image data");
+  });
+
   it("requires explicit approval before promoting channel memory", () => {
     expect(toolDescription("promote_memory_to_workspace")).toContain("explicitly approves");
     expect(toolDescription("promote_memory_to_workspace")).toContain("current-channel memory");

@@ -1,7 +1,11 @@
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
 import { Readability } from "@mozilla/readability";
 import { JSDOM } from "jsdom";
+import {
+  assertPublicHttpUrl,
+  normalizeHttpUrl,
+  type PublicUrlLookup,
+  type PublicUrlSafetyContext,
+} from "./publicUrlSafety";
 
 export interface WebSearchInput {
   query: string;
@@ -54,7 +58,7 @@ interface WebToolsProviderOptions {
   searchApiKeyProvider?: () => Promise<string | undefined>;
   searchBaseUrl?: string;
   fetchImpl?: typeof fetch;
-  lookupImpl?: LookupImpl;
+  lookupImpl?: PublicUrlLookup;
   timeoutMs?: number;
   maxExtractBytes?: number;
 }
@@ -90,11 +94,6 @@ interface SearxngSearchResultPayload {
   engine?: string;
 }
 
-type LookupImpl = (
-  hostname: string,
-  options: { all: true; verbatim: true },
-) => Promise<Array<{ address: string; family: number }>>;
-
 const BRAVE_WEB_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search";
 const SEARXNG_FRESHNESS_VALUES: Record<NonNullable<WebSearchInput["freshness"]>, string> = {
   day: "day",
@@ -107,22 +106,29 @@ const DEFAULT_MAX_EXTRACT_BYTES = 1_000_000;
 const DEFAULT_EXTRACT_CHARS = 6000;
 const MAX_REDIRECTS = 3;
 const USER_AGENT = "serverless-agent/0.1";
+const WEB_EXTRACT_URL_CONTEXT: PublicUrlSafetyContext = {
+  actionLabel: "Web extract",
+  urlLabel: "Web extract URL",
+};
 const FRESHNESS_VALUES: Record<NonNullable<WebSearchInput["freshness"]>, string> = {
   day: "pd",
   week: "pw",
   month: "pm",
   year: "py",
 };
+const BRAVE_SEARCH_LANGUAGE_ALIASES: Record<string, string> = {
+  ja: "jp",
+};
 
 export class WebToolsProvider implements WebToolProvider {
   private readonly fetchImpl: typeof fetch;
-  private readonly lookupImpl: LookupImpl;
+  private readonly lookupImpl?: PublicUrlLookup;
   private readonly timeoutMs: number;
   private readonly maxExtractBytes: number;
 
   constructor(private readonly options: WebToolsProviderOptions = {}) {
     this.fetchImpl = options.fetchImpl ?? fetch;
-    this.lookupImpl = options.lookupImpl ?? lookup;
+    this.lookupImpl = options.lookupImpl;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.maxExtractBytes = options.maxExtractBytes ?? DEFAULT_MAX_EXTRACT_BYTES;
   }
@@ -187,8 +193,9 @@ export class WebToolsProvider implements WebToolProvider {
     if (input.country) {
       url.searchParams.set("country", input.country.toUpperCase());
     }
-    if (input.language) {
-      url.searchParams.set("search_lang", input.language.toLowerCase());
+    const searchLanguage = normalizeBraveSearchLanguage(input.language);
+    if (searchLanguage) {
+      url.searchParams.set("search_lang", searchLanguage);
     }
     if (input.freshness) {
       url.searchParams.set("freshness", FRESHNESS_VALUES[input.freshness]);
@@ -267,10 +274,13 @@ export class WebToolsProvider implements WebToolProvider {
   }
 
   private async fetchPublicUrl(initialUrl: string): Promise<{ response: Response; finalUrl: string }> {
-    let current = normalizeHttpUrl(initialUrl);
+    let current = normalizeHttpUrl(initialUrl, WEB_EXTRACT_URL_CONTEXT);
 
     for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-      await assertPublicUrl(current, this.lookupImpl);
+      await assertPublicHttpUrl(current, {
+        context: WEB_EXTRACT_URL_CONTEXT,
+        lookupImpl: this.lookupImpl,
+      });
       const response = await this.fetchImpl(current.toString(), {
         method: "GET",
         redirect: "manual",
@@ -286,7 +296,7 @@ export class WebToolsProvider implements WebToolProvider {
         if (!location) {
           throw new Error(`Web extract redirect from ${current.toString()} did not include a Location header.`);
         }
-        current = normalizeHttpUrl(new URL(location, current).toString());
+        current = normalizeHttpUrl(new URL(location, current).toString(), WEB_EXTRACT_URL_CONTEXT);
         continue;
       }
 
@@ -374,96 +384,12 @@ function normalizeSearchProvider(value: string | undefined): string | undefined 
   return normalized || undefined;
 }
 
-function normalizeHttpUrl(value: string): URL {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error("Web extract URL must be a valid absolute URL.");
+function normalizeBraveSearchLanguage(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
   }
-
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("Web extract only supports http and https URLs.");
-  }
-  if (url.username || url.password) {
-    throw new Error("Web extract URLs must not include credentials.");
-  }
-
-  return url;
-}
-
-async function assertPublicUrl(url: URL, lookupImpl: LookupImpl): Promise<void> {
-  const hostname = normalizeHostname(url.hostname);
-  if (isBlockedHostname(hostname)) {
-    throw new Error(`Web extract blocked non-public host: ${hostname}`);
-  }
-
-  if (isIP(hostname)) {
-    if (isPrivateAddress(hostname)) {
-      throw new Error(`Web extract blocked private IP address: ${hostname}`);
-    }
-    return;
-  }
-
-  const records = await lookupImpl(hostname, { all: true, verbatim: true });
-  if (records.length === 0) {
-    throw new Error(`Web extract could not resolve host: ${hostname}`);
-  }
-  for (const record of records) {
-    if (isPrivateAddress(record.address)) {
-      throw new Error(`Web extract blocked private resolved address for ${hostname}`);
-    }
-  }
-}
-
-function normalizeHostname(value: string): string {
-  return value.trim().toLowerCase().replace(/^\[|\]$/g, "");
-}
-
-function isBlockedHostname(hostname: string): boolean {
-  return (
-    hostname === "localhost" ||
-    hostname.endsWith(".localhost") ||
-    hostname.endsWith(".local") ||
-    hostname === "metadata.google.internal"
-  );
-}
-
-function isPrivateAddress(address: string): boolean {
-  if (address.startsWith("::ffff:")) {
-    return isPrivateAddress(address.slice("::ffff:".length));
-  }
-
-  const version = isIP(address);
-  if (version === 4) {
-    const parts = address.split(".").map((part) => Number(part));
-    const [a, b] = parts;
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 198 && (b === 18 || b === 19)) ||
-      a >= 224
-    );
-  }
-
-  if (version === 6) {
-    const normalized = address.toLowerCase();
-    return (
-      normalized === "::" ||
-      normalized === "::1" ||
-      normalized.startsWith("fc") ||
-      normalized.startsWith("fd") ||
-      normalized.startsWith("fe80") ||
-      normalized.startsWith("ff")
-    );
-  }
-
-  return true;
+  return BRAVE_SEARCH_LANGUAGE_ALIASES[normalized] ?? normalized;
 }
 
 function isRedirectStatus(status: number): boolean {

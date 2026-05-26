@@ -50,6 +50,8 @@ export class SlackAiAssistantStack extends Stack {
       "WEB_SEARCH_API_KEY_PARAMETER_NAME",
     );
     const webSearchBaseUrl = resolveOptionalConfigValue(this, "webSearchBaseUrl", "WEB_SEARCH_BASE_URL");
+    const browserProvider = resolveOptionalConfigValue(this, "browserProvider", "BROWSER_PROVIDER");
+    const browserIdentifier = resolveOptionalConfigValue(this, "browserIdentifier", "BROWSER_IDENTIFIER");
     const googleCalendarTimeZone =
       resolveOptionalConfigValue(this, "googleCalendarTimeZone", "GOOGLE_CALENDAR_TIME_ZONE") ?? "Asia/Tokyo";
     const schedulerScheduleGroupName =
@@ -330,6 +332,8 @@ export class SlackAiAssistantStack extends Stack {
       ...(webSearchProvider ? { WEB_SEARCH_PROVIDER: webSearchProvider } : {}),
       ...(webSearchApiKeyParameterName ? { WEB_SEARCH_API_KEY_PARAMETER_NAME: webSearchApiKeyParameterName } : {}),
       ...(webSearchBaseUrl ? { WEB_SEARCH_BASE_URL: webSearchBaseUrl } : {}),
+      ...(browserProvider ? { BROWSER_PROVIDER: browserProvider } : {}),
+      ...(browserIdentifier ? { BROWSER_IDENTIFIER: browserIdentifier } : {}),
     };
 
     const ingress = createNodeFunction(this, "SlackEventsIngressFunction", {
@@ -546,6 +550,19 @@ export class SlackAiAssistantStack extends Stack {
     slackAgentRuntime.addToPolicy(
       new iam.PolicyStatement({
         actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+        resources: ["*"],
+      }),
+    );
+    slackAgentRuntime.addToPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "bedrock-agentcore:ConnectBrowserAutomationStream",
+          "bedrock-agentcore:GetBrowserSession",
+          "bedrock-agentcore:ListBrowserSessions",
+          "bedrock-agentcore:StartBrowserSession",
+          "bedrock-agentcore:StopBrowserSession",
+          "bedrock-agentcore:UpdateBrowserStream",
+        ],
         resources: ["*"],
       }),
     );

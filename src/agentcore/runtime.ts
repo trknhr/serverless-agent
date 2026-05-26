@@ -24,6 +24,7 @@ import { CustomToolExecutor } from "../tools/executeCustomTool";
 import { customToolDefinitions } from "../tools/definitions";
 import { OpenMeteoWeatherProvider } from "../weather/openMeteo";
 import { WebToolsProvider } from "../web/webTools";
+import { createBrowserProvider } from "../browser/factory";
 import { DynamoDbSkillRepository } from "../skills/dynamoDbSkillRepository";
 import { SkillRegistry, formatSkillSummariesForPrompt } from "../skills/registry";
 
@@ -52,6 +53,7 @@ When the user explicitly approves sharing a channel memory beyond the current ch
 If a previous turn created an individual scheduled reminder and the user says it is not needed or should be included in the daily reminder instead, delete the matching scheduled reminder and store the item in the task or memory layer.
 Use get_weather_forecast when the user asks about weather, rain, temperature, umbrella guidance, or when a scheduled reminder prompt asks for weather.
 Use web_search and web_extract for current public web information, and include source URLs when answering from web results.
+Use browser tools for public JavaScript-heavy or interactive pages when web_extract is insufficient. Do not use browser tools for private, localhost, intranet, credentialed, or user-authenticated URLs.
 For Google Calendar writes, create a reviewable calendar draft first unless the request is an explicit approval of an existing draft.
 Keep Slack replies concise and actionable.`;
 
@@ -196,6 +198,11 @@ function createToolExecutor(
       conversationId: request.context.conversationTs,
       logger: log,
       memoryWritePolicy: request.toolContext.memoryWritePolicy,
+      workSessionPolicy: {
+        idleTimeoutSeconds: resources.workSessionIdleTimeoutSeconds,
+        maxLifetimeSeconds: resources.workSessionMaxLifetimeSeconds,
+        maxActivePerOwner: resources.workSessionMaxActivePerOwner,
+      },
     },
     {
       googleCalendarProvider: () =>
@@ -226,6 +233,11 @@ function createToolExecutor(
           ? () => secretsProvider.getSecretString(resources.webSearchApiKeyParameterName!)
           : undefined,
         searchBaseUrl: resources.webSearchBaseUrl,
+      }),
+      browserProvider: createBrowserProvider({
+        provider: resources.browserProvider,
+        region,
+        browserIdentifier: resources.browserIdentifier,
       }),
       skillRegistry,
     },
