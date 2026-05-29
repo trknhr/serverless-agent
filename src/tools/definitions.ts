@@ -18,7 +18,7 @@ export const customToolDefinitions = [
   {
     name: "propose_skill",
     description:
-      "Create or update a proposed generated skill from a complete SKILL.md document after the user agrees that a repeated workflow should become a reusable skill. This does not enable the skill; ask for approval before calling approve_skill.",
+      "Create or update a proposed generated skill from a complete SKILL.md document only after explicit confirmation that the user wants a reusable skill draft. Do not call propose_skill based only on inferred intent. This does not enable the skill; ask for approval before calling approve_skill.",
     input_schema: {
       type: "object",
       properties: {
@@ -63,7 +63,7 @@ export const customToolDefinitions = [
         },
         version: { type: "string", description: "Skill version. Defaults to 0.1.0." },
       },
-      required: ["skill_markdown"],
+      required: ["skill_markdown", "evaluation_notes", "test_cases"],
     },
   },
   {

@@ -10,6 +10,15 @@ function toolDescription(name: string): string {
   return definition.description;
 }
 
+function toolDefinition(name: string): (typeof customToolDefinitions)[number] {
+  const definition = customToolDefinitions.find((tool) => tool.name === name);
+  if (!definition) {
+    throw new Error(`Tool definition ${name} was not found`);
+  }
+
+  return definition;
+}
+
 describe("tool definitions", () => {
   it("keeps daily reminder contents separate from scheduled notification setup", () => {
     expect(toolDescription("upsert_task")).toContain("inside an existing daily reminder");
@@ -21,8 +30,15 @@ describe("tool definitions", () => {
   });
 
   it("keeps generated skill creation draft-first", () => {
+    const proposeSkill = toolDefinition("propose_skill");
+
     expect(toolDescription("propose_skill")).toContain("proposed generated skill");
     expect(toolDescription("propose_skill")).toContain("does not enable");
+    expect(toolDescription("propose_skill")).toContain("explicit confirmation");
+    expect(toolDescription("propose_skill")).toContain("Do not call propose_skill based only on inferred intent");
+    expect(proposeSkill.input_schema.required).toEqual(
+      expect.arrayContaining(["skill_markdown", "evaluation_notes", "test_cases"]),
+    );
     expect(toolDescription("approve_skill")).toContain("Approve");
     expect(toolDescription("approve_skill")).not.toContain("Enable");
     expect(toolDescription("enable_skill")).toContain("Enable an approved");

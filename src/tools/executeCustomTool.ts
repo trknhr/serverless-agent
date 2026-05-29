@@ -53,8 +53,8 @@ const proposeSkillSchema = z.object({
   trigger_hints: z.array(z.string().min(1)).max(12).optional(),
   tool_allowlist: z.array(z.string().min(1)).max(20).optional(),
   constraints: skillConstraintsSchema.optional(),
-  evaluation_notes: z.string().min(1).optional(),
-  test_cases: z.array(generatedSkillTestCaseInputSchema).max(12).optional(),
+  evaluation_notes: z.string().min(1),
+  test_cases: z.array(generatedSkillTestCaseInputSchema).min(1).max(12),
   version: z.string().min(1).optional(),
 });
 
@@ -611,7 +611,7 @@ export class CustomToolExecutor {
       constraints: parsed.constraints,
       version: parsed.version,
       evaluationNotes: parsed.evaluation_notes,
-      testCases: parsed.test_cases?.map((testCase) =>
+      testCases: parsed.test_cases.map((testCase) =>
         generatedSkillTestCaseSchema.parse({
           name: testCase.name,
           prompt: testCase.prompt,
