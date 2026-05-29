@@ -3,7 +3,7 @@ import { CustomToolExecutor } from "../src/tools/executeCustomTool";
 import { DynamoDbSkillRepository } from "../src/skills/dynamoDbSkillRepository";
 import { SkillRegistry, formatSkillSummariesForPrompt } from "../src/skills/registry";
 import { parseSkillMarkdown } from "../src/skills/skillMarkdown";
-import { BuiltinSkillDefinition, SkillRepository } from "../src/skills/types";
+import { BuiltinSkillDefinition, SkillRepository, SkillStatus } from "../src/skills/types";
 import { logger } from "../src/shared/logger";
 
 const { sendMock } = vi.hoisted(() => ({
@@ -410,6 +410,89 @@ describe("skill registry", () => {
     await expect(registry.approveSkill("T1", "hn-article-summarizer", "U1")).rejects.toThrow(
       "unknown tools: not_a_tool",
     );
+  });
+
+  it("approves only proposed generated skills", async () => {
+    const records = new Map<string, Awaited<ReturnType<NonNullable<SkillRepository["putGeneratedSkill"]>>>>();
+    const repository: SkillRepository = {
+      listBuiltinSkillOverrides: vi.fn().mockResolvedValue([]),
+      getBuiltinSkillOverride: vi.fn().mockResolvedValue(null),
+      listGeneratedSkills: vi.fn().mockImplementation(async () => [...records.values()]),
+      getGeneratedSkill: vi.fn().mockImplementation(async (_workspaceId, skillId) => records.get(skillId) ?? null),
+      putGeneratedSkill: vi.fn().mockImplementation(async (record) => {
+        const saved = {
+          ...record,
+          createdAt: record.createdAt ?? "created",
+          updatedAt: "updated",
+        };
+        records.set(record.skillId, saved);
+        return saved;
+      }),
+    };
+    const registry = new SkillRegistry(repository, builtinSkills);
+    const statuses: SkillStatus[] = ["approved", "enabled", "disabled", "rejected", "archived"];
+
+    for (const status of statuses) {
+      records.set("hn-article-summarizer", {
+        workspaceId: "T1",
+        skillId: "hn-article-summarizer",
+        status,
+        version: "0.1.0",
+        title: "Hacker News Article Summarizer",
+        description: "Summarize Hacker News articles for Slack.",
+        triggerHints: [],
+        toolAllowlist: ["web_extract"],
+        constraints: {},
+        body: sampleSkillMarkdown,
+        testCases: [
+          {
+            name: "article summary",
+            prompt: "Summarize this Hacker News article.",
+            expectedBehavior: "Returns a short summary with source context.",
+          },
+        ],
+        createdAt: "created",
+        updatedAt: "updated",
+      });
+
+      await expect(registry.approveSkill("T1", "hn-article-summarizer", "U1")).rejects.toThrow(
+        "must be proposed before it can be approved",
+      );
+      expect(records.get("hn-article-summarizer")?.status).toBe(status);
+    }
+  });
+
+  it("does not disable proposed generated skills before approval", async () => {
+    const records = new Map<string, Awaited<ReturnType<NonNullable<SkillRepository["putGeneratedSkill"]>>>>();
+    const repository: SkillRepository = {
+      listBuiltinSkillOverrides: vi.fn().mockResolvedValue([]),
+      getBuiltinSkillOverride: vi.fn().mockResolvedValue(null),
+      listGeneratedSkills: vi.fn().mockImplementation(async () => [...records.values()]),
+      getGeneratedSkill: vi.fn().mockImplementation(async (_workspaceId, skillId) => records.get(skillId) ?? null),
+      putGeneratedSkill: vi.fn().mockImplementation(async (record) => {
+        const saved = {
+          ...record,
+          createdAt: record.createdAt ?? "created",
+          updatedAt: "updated",
+        };
+        records.set(record.skillId, saved);
+        return saved;
+      }),
+    };
+    const registry = new SkillRegistry(repository, builtinSkills);
+    await registry.proposeSkill("T1", {
+      skillMarkdown: sampleSkillMarkdown,
+      toolAllowlist: ["not_a_tool"],
+      testCases: [],
+    });
+
+    await expect(registry.disableSkill("T1", "hn-article-summarizer")).rejects.toThrow(
+      "must be enabled before it can be disabled",
+    );
+    await expect(registry.enableSkill("T1", "hn-article-summarizer")).rejects.toThrow(
+      "must be approved or disabled before it can be enabled",
+    );
+    expect(records.get("hn-article-summarizer")?.status).toBe("proposed");
   });
 
   it("does not replace an enabled generated skill with a draft", async () => {

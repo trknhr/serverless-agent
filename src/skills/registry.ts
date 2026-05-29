@@ -193,6 +193,9 @@ export class SkillRegistry {
 
   async approveSkill(workspaceId: string, skillId: string, approvedByUserId?: string): Promise<GeneratedSkillRecord> {
     const existing = await this.getGeneratedSkillForUpdate(workspaceId, skillId);
+    if (existing.status !== "proposed") {
+      throw new Error(`Generated skill ${skillId} must be proposed before it can be approved.`);
+    }
     this.validateGeneratedSkillForApproval(existing);
     return await this.putGeneratedSkillStatus(existing, "approved", approvedByUserId);
   }
@@ -207,6 +210,9 @@ export class SkillRegistry {
 
   async disableSkill(workspaceId: string, skillId: string): Promise<GeneratedSkillRecord> {
     const existing = await this.getGeneratedSkillForUpdate(workspaceId, skillId);
+    if (existing.status !== "enabled") {
+      throw new Error(`Generated skill ${skillId} must be enabled before it can be disabled.`);
+    }
     return await this.putGeneratedSkillStatus(existing, "disabled");
   }
 
