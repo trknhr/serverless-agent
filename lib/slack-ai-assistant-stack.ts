@@ -421,6 +421,7 @@ export class SlackAiAssistantStack extends Stack {
       environment: {
         ...commonEnvironment,
         ...toolEnvironment,
+        LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: lineChannelAccessTokenParameterName,
       },
     });
 
@@ -525,7 +526,7 @@ export class SlackAiAssistantStack extends Stack {
     grantSecureParameterRead(this, slackSigningParameterName, [ingress, slackInteractions, googleOAuth]);
     grantSecureParameterRead(this, slackBotTokenParameterName, [worker, scheduledRunner, slackInteractions]);
     grantSecureParameterRead(this, lineChannelSecretParameterName, [lineIngress]);
-    grantSecureParameterRead(this, lineChannelAccessTokenParameterName, [lineWorker]);
+    grantSecureParameterRead(this, lineChannelAccessTokenParameterName, [lineWorker, scheduledRunner]);
     grantSecureParameterRead(this, googleCalendarParameterName, [
       worker,
       scheduledRunner,

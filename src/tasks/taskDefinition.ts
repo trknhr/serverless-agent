@@ -1,11 +1,17 @@
 import { z } from "zod";
 
+export const scheduledOutputProviderSchema = z.enum(["slack", "line"]);
+export type ScheduledOutputProvider = z.infer<typeof scheduledOutputProviderSchema>;
+
 export const scheduledTaskSchema = z.object({
   taskId: z.string().min(1),
   name: z.string().min(1),
   prompt: z.string().min(1),
   workspaceId: z.string().min(1),
   outputChannelId: z.string().min(1),
+  outputProvider: scheduledOutputProviderSchema.optional(),
+  outputProviderAccountId: z.string().min(1).optional(),
+  outputConversationKey: z.string().min(1).optional(),
   enabled: z.boolean(),
   scheduleName: z.string().min(1).optional(),
   scheduleGroupName: z.string().min(1).optional(),

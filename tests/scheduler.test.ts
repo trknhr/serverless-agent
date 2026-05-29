@@ -5,6 +5,7 @@ import {
   extractDailyCronTime,
   normalizeDailyReminderTime,
 } from "../src/scheduler/scheduledReminder";
+import { resolveScheduledOutputTarget } from "../src/tasks/scheduledOutput";
 
 describe("scheduled reminder scheduler helpers", () => {
   it("builds daily, weekly, and monthly EventBridge cron expressions", () => {
@@ -49,5 +50,34 @@ describe("scheduled reminder scheduler helpers", () => {
     expect(buildScheduleName("serverless-agent", "T1", "task1")).not.toBe(
       buildScheduleName("serverless-agent", "T2", "task1"),
     );
+  });
+
+  it("resolves scheduled output targets for Slack and LINE", () => {
+    expect(resolveScheduledOutputTarget({ outputChannelId: "C1" })).toMatchObject({
+      provider: "slack",
+      channelId: "C1",
+      conversationKey: "channel:C1",
+    });
+
+    expect(resolveScheduledOutputTarget({ outputChannelId: "line:group:G1" })).toMatchObject({
+      provider: "line",
+      channelId: "line:group:G1",
+      conversationKey: "group:G1",
+      targetId: "G1",
+      targetType: "group",
+    });
+
+    expect(
+      resolveScheduledOutputTarget({
+        outputChannelId: "ignored",
+        outputProvider: "line",
+        outputConversationKey: "user:U1",
+      }),
+    ).toMatchObject({
+      provider: "line",
+      channelId: "line:user:U1",
+      targetId: "U1",
+      targetType: "user",
+    });
   });
 });

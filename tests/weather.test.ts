@@ -9,6 +9,7 @@ import {
 describe("weather helpers", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("maps Open-Meteo weather codes to Japanese labels", () => {
@@ -33,6 +34,8 @@ describe("weather helpers", () => {
   });
 
   it("falls back to a city query when the full Japanese location is not found", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-26T00:00:00+09:00"));
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ generationtime_ms: 0.1 }))
       .mockResolvedValueOnce(jsonResponse({

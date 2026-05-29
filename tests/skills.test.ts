@@ -591,4 +591,76 @@ describe("load_skill tool", () => {
     });
     expect(executor.getSummary().savedMemoryIds).toEqual(["mem_1"]);
   });
+
+  it("infers the scheduled reminder provider when updating the output conversation key", async () => {
+    const scheduledTasks = {
+      get: vi.fn().mockResolvedValue({
+        taskId: "sched_1",
+        name: "Morning Reminder",
+        prompt: "Post today's reminder.",
+        workspaceId: "T1",
+        outputChannelId: "C1",
+        outputProvider: "slack",
+        outputConversationKey: "channel:C1",
+        enabled: true,
+        scheduleName: "serverless-agent-sched-1",
+        scheduleGroupName: "default",
+        scheduleExpression: "cron(0 8 * * ? *)",
+        scheduleExpressionTimezone: "Asia/Tokyo",
+        reuseSession: false,
+        createdAt: "created",
+        updatedAt: "updated",
+      }),
+      save: vi.fn(),
+    };
+    const scheduler = {
+      buildScheduleName: vi.fn(),
+      put: vi.fn().mockResolvedValue({
+        scheduleName: "serverless-agent-sched-1",
+        scheduleGroupName: "default",
+        scheduleExpression: "cron(0 8 * * ? *)",
+        timezone: "Asia/Tokyo",
+      }),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        scheduledTasks,
+      } as never,
+      {
+        workspaceId: "T1",
+        userId: "U1",
+        channelId: "C1",
+        logger,
+      },
+      {
+        scheduledReminderScheduler: scheduler as never,
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-1",
+      type: "agent.tool_use",
+      name: "update_scheduled_reminder",
+      input: {
+        scheduled_task_id: "sched_1",
+        output_conversation_key: "group:G1",
+      },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(scheduler.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outputChannelId: "line:group:G1",
+        outputProvider: "line",
+        outputConversationKey: "group:G1",
+      }),
+    );
+    expect(scheduledTasks.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outputChannelId: "line:group:G1",
+        outputProvider: "line",
+        outputConversationKey: "group:G1",
+      }),
+    );
+  });
 });

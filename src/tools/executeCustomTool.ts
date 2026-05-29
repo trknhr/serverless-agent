@@ -23,7 +23,8 @@ import {
 } from "../scheduler/scheduledReminder";
 import { Logger } from "../shared/logger";
 import { RecurringTaskRecurrence, recurringTaskWeekdaySchema } from "../tasks/recurringTask";
-import { ScheduledTask } from "../tasks/taskDefinition";
+import { normalizeScheduledOutputFields } from "../tasks/scheduledOutput";
+import { ScheduledTask, scheduledOutputProviderSchema } from "../tasks/taskDefinition";
 import { TaskStatus } from "../tasks/taskState";
 import { WeatherForecastProvider } from "../weather/openMeteo";
 import { WebToolProvider } from "../web/webTools";
@@ -201,6 +202,9 @@ const createScheduledReminderSchema = z
     schedule_expression: z.string().min(1).optional(),
     timezone: z.string().min(1).optional(),
     output_channel_id: z.string().min(1).optional(),
+    output_provider: scheduledOutputProviderSchema.optional(),
+    output_provider_account_id: z.string().min(1).optional(),
+    output_conversation_key: z.string().min(1).optional(),
     enabled: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
@@ -221,6 +225,9 @@ const updateScheduledReminderSchema = z.object({
   schedule_expression: z.string().min(1).optional(),
   timezone: z.string().min(1).optional(),
   output_channel_id: z.string().min(1).optional(),
+  output_provider: scheduledOutputProviderSchema.optional(),
+  output_provider_account_id: z.string().min(1).optional(),
+  output_conversation_key: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
 });
 
@@ -1238,9 +1245,16 @@ export class CustomToolExecutor {
         `Scheduled reminder ${taskId} already exists in this workspace. Use update_scheduled_reminder to change it.`,
       );
     }
-    const outputChannelId = parsed.output_channel_id ?? this.context.channelId;
-    if (!outputChannelId) {
-      return errorResult("A Slack output channel is required to create a scheduled reminder.");
+    const rawOutputChannelId = parsed.output_channel_id ?? parsed.output_conversation_key ?? this.context.channelId;
+    const output = rawOutputChannelId
+      ? normalizeScheduledOutputFields({
+          outputChannelId: rawOutputChannelId,
+          outputProvider: parsed.output_provider,
+          outputConversationKey: parsed.output_conversation_key,
+        })
+      : null;
+    if (!output) {
+      return errorResult("An output channel is required to create a scheduled reminder.");
     }
 
     const scheduleExpression = resolveScheduledReminderExpression({
@@ -1252,7 +1266,10 @@ export class CustomToolExecutor {
       name: parsed.name,
       prompt: parsed.prompt,
       workspaceId: this.context.workspaceId,
-      outputChannelId,
+      outputChannelId: output.outputChannelId,
+      outputProvider: output.outputProvider,
+      outputProviderAccountId: parsed.output_provider_account_id,
+      outputConversationKey: output.outputConversationKey,
       enabled: parsed.enabled ?? true,
       scheduleName: scheduler.buildScheduleName(this.context.workspaceId, taskId),
       scheduleExpression,
@@ -1298,11 +1315,22 @@ export class CustomToolExecutor {
       throw new Error(`Scheduled reminder ${existing.taskId} does not have a schedule expression`);
     }
 
+    const output = normalizeScheduledOutputFields({
+      outputChannelId: parsed.output_channel_id ?? existing.outputChannelId,
+      outputProvider:
+        parsed.output_provider ??
+        (parsed.output_channel_id || parsed.output_conversation_key ? undefined : existing.outputProvider),
+      outputConversationKey: parsed.output_conversation_key ?? existing.outputConversationKey,
+    });
+
     const updated: ScheduledTask = {
       ...existing,
       name: parsed.name ?? existing.name,
       prompt: parsed.prompt ?? existing.prompt,
-      outputChannelId: parsed.output_channel_id ?? existing.outputChannelId,
+      outputChannelId: output.outputChannelId,
+      outputProvider: output.outputProvider,
+      outputProviderAccountId: parsed.output_provider_account_id ?? existing.outputProviderAccountId,
+      outputConversationKey: output.outputConversationKey,
       enabled: parsed.enabled ?? existing.enabled,
       scheduleName: existing.scheduleName ?? scheduler.buildScheduleName(existing.workspaceId, existing.taskId),
       scheduleExpression,
@@ -2267,6 +2295,9 @@ function serializeScheduledReminder(task: ScheduledTask): Record<string, unknown
     name: task.name,
     prompt: task.prompt,
     output_channel_id: task.outputChannelId,
+    output_provider: task.outputProvider,
+    output_provider_account_id: task.outputProviderAccountId,
+    output_conversation_key: task.outputConversationKey,
     enabled: task.enabled,
     schedule_name: task.scheduleName,
     schedule_group_name: task.scheduleGroupName,

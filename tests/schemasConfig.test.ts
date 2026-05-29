@@ -479,7 +479,10 @@ describe("environment loaders", () => {
   });
 
   it("loads worker and tool runtime env variants", () => {
-    withEnv(toolRuntimeEnv({ GOOGLE_OAUTH_START_URL: "https://oauth/start" }));
+    withEnv(toolRuntimeEnv({
+      GOOGLE_OAUTH_START_URL: "https://oauth/start",
+      LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: "line-token",
+    }));
 
     expect(loadWorkerEnv()).toMatchObject({
       SOURCE_DOCUMENTS_TABLE_NAME: "sources",
@@ -493,6 +496,7 @@ describe("environment loaders", () => {
       CALENDAR_DRAFTS_TABLE_NAME: "calendar-drafts",
     });
     expect(loadSchedulerEnv()).toMatchObject({
+      LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: "line-token",
       RECURRING_TASKS_TABLE_NAME: "recurring-tasks",
     });
     expect(loadSlackInteractionsEnv()).toMatchObject({

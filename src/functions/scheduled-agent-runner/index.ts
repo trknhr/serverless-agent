@@ -4,6 +4,7 @@ import { AgentCoreRuntimeClient } from "../../agentcore/client";
 import { buildAgentRuntimeResources } from "../../agentcore/contracts";
 import { SecretsProvider } from "../../aws/secretsProvider";
 import { loadSchedulerEnv } from "../../config/env";
+import { LineMessagingClient } from "../../line/postMessage";
 import { SessionRepository } from "../../repo/sessionRepository";
 import { RecurringTaskRepository } from "../../repo/recurringTaskRepository";
 import { TaskEventRepository } from "../../repo/taskEventRepository";
@@ -13,6 +14,7 @@ import { logger } from "../../shared/logger";
 import { SlackAuthClient } from "../../slack/authTest";
 import { SlackWebClient } from "../../slack/postMessage";
 import { RecurringTask, RecurringTaskWeekday } from "../../tasks/recurringTask";
+import { resolveScheduledOutputTarget, ScheduledOutputTarget } from "../../tasks/scheduledOutput";
 import { ScheduledTask } from "../../tasks/taskDefinition";
 import { TaskState } from "../../tasks/taskState";
 
@@ -45,6 +47,9 @@ const agentClient = new AgentCoreRuntimeClient({
 });
 const slackClient = new SlackWebClient(() =>
   secretsProvider.getSecretString(env.SLACK_BOT_TOKEN_SECRET_ID),
+);
+const lineClient = new LineMessagingClient(() =>
+  secretsProvider.getSecretString(env.LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID),
 );
 const slackAuthClient = new SlackAuthClient(() =>
   secretsProvider.getSecretString(env.SLACK_BOT_TOKEN_SECRET_ID),
@@ -87,11 +92,12 @@ export async function handler(
     return;
   }
 
+  const outputTarget = resolveScheduledOutputTarget(task);
   const autoClosedTasks = await autoCloseExpiredTasks(task.workspaceId, scheduledAtIso, log);
   const materializedRecurringTasks = await materializeRecurringTasks(task.workspaceId, scheduledAtIso, log);
 
   const reusableSessionRecord = task.reuseSession
-    ? await sessionRepository.findByThread(task.workspaceId, task.outputChannelId, task.taskId)
+    ? await sessionRepository.findByThread(task.workspaceId, outputTarget.channelId, task.taskId)
     : null;
   const completion = await agentClient.invoke({
     sessionId: reusableSessionRecord?.sessionId,
@@ -99,7 +105,13 @@ export async function handler(
       content: [
         {
           type: "text",
-          text: buildScheduledPrompt(task.prompt, scheduledAtIso, autoClosedTasks, materializedRecurringTasks),
+          text: buildScheduledPrompt(
+            task.prompt,
+            scheduledAtIso,
+            outputTarget.provider,
+            autoClosedTasks,
+            materializedRecurringTasks,
+          ),
         },
       ],
       context: {
@@ -114,10 +126,7 @@ export async function handler(
     },
   });
 
-  await slackClient.postMessage({
-    channel: task.outputChannelId,
-    text: buildScheduledSlackMessage(task, completion.text),
-  });
+  await postScheduledMessage(outputTarget, task, completion.text);
 
   const sessionId = completion.sessionId ?? reusableSessionRecord?.sessionId;
   if (task.reuseSession) {
@@ -127,7 +136,7 @@ export async function handler(
     const now = new Date().toISOString();
     await sessionRepository.save({
       workspaceId: task.workspaceId,
-      channelId: task.outputChannelId,
+      channelId: outputTarget.channelId,
       threadTs: task.taskId,
       sessionId,
       memoryStoreId: task.memoryStoreId,
@@ -485,6 +494,7 @@ function resolveScheduledAtIso(
 function buildScheduledPrompt(
   basePrompt: string,
   scheduledAtIso: string,
+  outputProvider: ScheduledOutputTarget["provider"],
   autoClosedTasks: TaskState[] = [],
   materializedRecurringTasks: TaskState[] = [],
 ): string {
@@ -499,7 +509,9 @@ function buildScheduledPrompt(
     `- Current scheduled run time: ${parts.date} ${parts.time} (${parts.weekday})`,
     `- Time zone: ${SCHEDULE_TIMEZONE}`,
     "- Interpret relative dates such as today, yesterday, and tomorrow using this time zone, not UTC.",
-    "- Format the final answer for Slack mrkdwn: use bold labels and bullets, but do not use Markdown headings, horizontal rules, or tables.",
+    outputProvider === "line"
+      ? "- Format the final answer as LINE plain text: use short labels and bullets, but do not use Markdown tables or Slack-specific mrkdwn."
+      : "- Format the final answer for Slack mrkdwn: use bold labels and bullets, but do not use Markdown headings, horizontal rules, or tables.",
     "- Do not narrate tool calls, failed attempts, or intermediate reasoning; post only the final useful reminder content.",
   ];
   if (env.DEFAULT_RESPONSE_LANGUAGE) {
@@ -522,10 +534,32 @@ function buildScheduledPrompt(
   return [...promptParts, "", basePrompt].join("\n");
 }
 
+async function postScheduledMessage(
+  outputTarget: ScheduledOutputTarget,
+  task: ScheduledTask,
+  text: string,
+): Promise<void> {
+  if (outputTarget.provider === "line") {
+    await lineClient.pushText(outputTarget.targetId, buildScheduledLineMessage(task, text));
+    return;
+  }
+
+  await slackClient.postMessage({
+    channel: outputTarget.channelId,
+    text: buildScheduledSlackMessage(task, text),
+  });
+}
+
 function buildScheduledSlackMessage(task: ScheduledTask, text: string): string {
   const reminderName = escapeSlackText(task.name.trim() || task.taskId);
   const body = text.trim();
   return [`*リマインダー:* ${reminderName}`, body].filter(Boolean).join("\n\n");
+}
+
+function buildScheduledLineMessage(task: ScheduledTask, text: string): string {
+  const reminderName = task.name.trim() || task.taskId;
+  const body = text.trim();
+  return [`リマインダー: ${reminderName}`, body].filter(Boolean).join("\n\n");
 }
 
 function escapeSlackText(value: string): string {

@@ -91,7 +91,9 @@ const importWorkerEnvSchema = toolRuntimeEnvSchema.extend({
 
 const chatApiEnvSchema = toolRuntimeEnvSchema;
 
-const schedulerEnvSchema = toolRuntimeEnvSchema;
+const schedulerEnvSchema = toolRuntimeEnvSchema.extend({
+  LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: requiredString,
+});
 
 const slackInteractionsEnvSchema = toolRuntimeEnvSchema;
 

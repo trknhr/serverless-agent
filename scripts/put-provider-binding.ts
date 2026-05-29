@@ -173,14 +173,14 @@ function buildProviderPk(provider: ProviderName, providerAccountId: string): str
 function printUsage(): void {
   console.log([
     "Usage:",
-    "  ts-node scripts/put-provider-binding.ts --table-name TABLE --provider line --provider-account-id Ubot --binding-kind conversation --provider-conversation-key group:G1 --workspace-id ws_123 [options]",
+    "  ts-node scripts/put-provider-binding.ts --table-name TABLE --provider line --provider-account-id LINE_BOT_USER_ID --binding-kind conversation --provider-conversation-key group:LINE_GROUP_ID --workspace-id WORKSPACE_ID [options]",
     "",
     "Options:",
     "  --region ap-northeast-1",
     "  --binding-kind installation|conversation",
     "  --provider slack|line|discord",
-    "  --provider-account-id Ubot",
-    "  --provider-conversation-key group:G1",
+    "  --provider-account-id LINE_BOT_USER_ID",
+    "  --provider-conversation-key group:LINE_GROUP_ID",
     "  --workspace-id ws_123",
     "  --conversation-id line:group:G1",
     "  --status active|disabled",

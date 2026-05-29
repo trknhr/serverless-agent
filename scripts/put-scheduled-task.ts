@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { normalizeScheduledOutputFields } from "../src/tasks/scheduledOutput";
+import type { ScheduledOutputProvider } from "../src/tasks/taskDefinition";
 import { buildScheduledTaskPk, scheduledTaskSchema } from "../src/tasks/taskDefinition";
 
 interface CliOptions {
@@ -11,6 +13,9 @@ interface CliOptions {
   prompt: string;
   workspaceId: string;
   outputChannelId: string;
+  outputProvider?: ScheduledOutputProvider;
+  outputProviderAccountId?: string;
+  outputConversationKey?: string;
   enabled: boolean;
   reuseSession: boolean;
   memoryStoreId?: string;
@@ -22,12 +27,20 @@ interface CliOptions {
 async function main(): Promise<void> {
   const options = await parseArgs(process.argv.slice(2));
   const now = new Date().toISOString();
+  const output = normalizeScheduledOutputFields({
+    outputChannelId: options.outputChannelId,
+    outputProvider: options.outputProvider,
+    outputConversationKey: options.outputConversationKey,
+  });
   const task = scheduledTaskSchema.parse({
     taskId: options.taskId,
     name: options.name,
     prompt: options.prompt,
     workspaceId: options.workspaceId,
-    outputChannelId: options.outputChannelId,
+    outputChannelId: output.outputChannelId,
+    outputProvider: output.outputProvider,
+    outputProviderAccountId: options.outputProviderAccountId,
+    outputConversationKey: output.outputConversationKey,
     enabled: options.enabled,
     reuseSession: options.reuseSession,
     memoryStoreId: options.memoryStoreId,
@@ -55,6 +68,9 @@ async function main(): Promise<void> {
         prompt: task.prompt,
         workspaceId: task.workspaceId,
         outputChannelId: task.outputChannelId,
+        outputProvider: task.outputProvider,
+        outputProviderAccountId: task.outputProviderAccountId,
+        outputConversationKey: task.outputConversationKey,
         enabled: task.enabled,
         reuseSession: task.reuseSession,
         memoryStoreId: task.memoryStoreId,
@@ -109,6 +125,15 @@ async function parseArgs(argv: string[]): Promise<CliOptions> {
       case "--output-channel-id":
         options.outputChannelId = argv[++index];
         break;
+      case "--output-provider":
+        options.outputProvider = parseOutputProvider(argv[++index]);
+        break;
+      case "--output-provider-account-id":
+        options.outputProviderAccountId = argv[++index];
+        break;
+      case "--output-conversation-key":
+        options.outputConversationKey = argv[++index];
+        break;
       case "--disabled":
         options.enabled = false;
         break;
@@ -152,6 +177,9 @@ async function parseArgs(argv: string[]): Promise<CliOptions> {
     prompt: options.prompt,
     workspaceId: options.workspaceId,
     outputChannelId: options.outputChannelId,
+    outputProvider: options.outputProvider,
+    outputProviderAccountId: options.outputProviderAccountId,
+    outputConversationKey: options.outputConversationKey,
     enabled: options.enabled ?? true,
     reuseSession: options.reuseSession ?? false,
     memoryStoreId: options.memoryStoreId,
@@ -159,6 +187,14 @@ async function parseArgs(argv: string[]): Promise<CliOptions> {
     agentIdOverride: options.agentIdOverride,
     environmentIdOverride: options.environmentIdOverride,
   };
+}
+
+function parseOutputProvider(value: string): ScheduledOutputProvider {
+  if (value === "slack" || value === "line") {
+    return value;
+  }
+
+  throw new Error(`Invalid output provider: ${value}`);
 }
 
 function splitCsv(value: string): string[] {
@@ -177,6 +213,9 @@ function printUsage(): void {
     "  --region ap-northeast-1",
     "  --task-id daily-summary",
     "  --name \"Daily Summary\"",
+    "  --output-provider slack|line",
+    "  --output-provider-account-id SLACK_TEAM_ID or LINE_BOT_USER_ID",
+    "  --output-conversation-key channel:SLACK_CHANNEL_ID or group:LINE_GROUP_ID",
     "  --prompt-file prompt.txt",
     "  --disabled",
     "  --reuse-session",

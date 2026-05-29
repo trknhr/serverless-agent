@@ -221,7 +221,7 @@ or AWS Secrets Manager rather than in GitHub.
 ```bash
 npm install
 npx cdk deploy \
-  -c defaultScheduleChannel=C0123456789 \
+  -c defaultScheduleChannel=<slack-channel-id> \
   -c bedrockModelId=<bedrock-model-id> \
   -c bedrockDocumentModelId=<bedrock-document-model-id> \
   -c publicBaseUrl=https://your-api-id.execute-api.ap-northeast-1.amazonaws.com/prod
@@ -343,11 +343,11 @@ npm run put-provider-binding -- \
   --table-name YOUR_PROVIDER_BINDINGS_TABLE \
   --region ap-northeast-1 \
   --provider line \
-  --provider-account-id Ubot \
+  --provider-account-id <line-bot-user-id> \
   --binding-kind conversation \
-  --provider-conversation-key group:G1234567890 \
-  --workspace-id ws_contract_123 \
-  --conversation-id line:group:G1234567890
+  --provider-conversation-key group:<line-group-id> \
+  --workspace-id <workspace-id> \
+  --conversation-id line:group:<line-group-id>
 ```
 
 Provider conversation key examples:
@@ -370,10 +370,10 @@ policies, approval queues, audit logs, and per-channel opt-in controls.
 
 EventBridge Scheduler invokes `scheduled-agent-runner` with a `taskId`.
 Scheduled task definitions live in `ScheduledTasksTable`, while EventBridge
-Scheduler owns the actual trigger. The Slack assistant can create, list, edit,
+Scheduler owns the actual trigger. The assistant can create, list, edit,
 disable, and delete scheduled reminders by using its scheduled reminder tools.
-CDK does not create a fixed default reminder; create reminders from Slack or by
-writing a scheduled task definition and matching EventBridge schedule.
+CDK does not create a fixed default reminder; create reminders from Slack, LINE,
+or by writing a scheduled task definition and matching EventBridge schedule.
 
 The runner also materializes enabled recurring task definitions for the next 7
 days before building the reminder prompt. Scheduled reminders control when the
@@ -388,8 +388,10 @@ Example scheduled task:
   "taskId": "daily-summary",
   "name": "Daily Summary",
   "prompt": "Summarize yesterday's activity and post a concise update.",
-  "workspaceId": "T0123456789",
-  "outputChannelId": "C0123456789",
+  "workspaceId": "workspace_demo",
+  "outputChannelId": "slack_channel_demo",
+  "outputProvider": "slack",
+  "outputConversationKey": "channel:slack_channel_demo",
   "enabled": true,
   "scheduleName": "serverless-agent-daily-summary-dc0570d6ff",
   "scheduleGroupName": "default",
@@ -410,14 +412,20 @@ Example Slack requests:
 @AI Delete the morning task reminder.
 ```
 
+When a reminder is created from LINE without an explicit output target, the
+assistant posts it back to the same LINE user, group, or room. LINE scheduled
+task targets use `outputProvider: "line"`, `outputChannelId:
+"line:group:{groupId}"`, and `outputConversationKey: "group:{groupId}"`.
+
 Create or update a scheduled task definition locally:
 
 ```bash
 npx ts-node scripts/put-scheduled-task.ts \
   --table-name YOUR_SCHEDULED_TASKS_TABLE \
   --region ap-northeast-1 \
-  --workspace-id T0123456789 \
-  --output-channel-id C0123456789 \
+  --workspace-id <workspace-id> \
+  --output-channel-id <slack-channel-id> \
+  --output-provider slack \
   --prompt "Summarize open tasks and upcoming deadlines."
 ```
 
@@ -425,10 +433,10 @@ Example recurring task:
 
 ```json
 {
-  "pk": "WORKSPACE#T0123456789",
+  "pk": "WORKSPACE#workspace_demo",
   "sk": "RECURRING_TASK#rt_cfc324a11246c10f",
   "recurringTaskId": "rt_cfc324a11246c10f",
-  "workspaceId": "T0123456789",
+  "workspaceId": "workspace_demo",
   "title": "Submit weekly report",
   "recurrence": {
     "frequency": "weekly",
@@ -502,7 +510,7 @@ Example:
 ```bash
 npm run import-local-docs -- \
   --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
-  --workspace-id T0123456789 \
+  --workspace-id <workspace-id> \
   --user-id U0123456789 \
   --region ap-northeast-1 \
   --wait \
@@ -536,7 +544,7 @@ Example:
 ```bash
 npm run extract-pdf-markdown -- \
   --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
-  --workspace-id T0123456789 \
+  --workspace-id <workspace-id> \
   --user-id U0123456789 \
   --region ap-northeast-1 \
   --wait \
@@ -563,7 +571,7 @@ Example:
 ```bash
 npm run ingest-markdown -- \
   --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
-  --workspace-id T0123456789 \
+  --workspace-id <workspace-id> \
   --user-id U0123456789 \
   --region ap-northeast-1 \
   --wait \
@@ -578,7 +586,7 @@ the IAM-protected `POST /chat/messages` route.
 ```bash
 npm run ask-agent -- \
   --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
-  --workspace-id T0123456789 \
+  --workspace-id <workspace-id> \
   --user-id local-user \
   --region ap-northeast-1 \
   "What should I do today?"
@@ -589,7 +597,7 @@ To continue the same conversation, pass the returned `session_id` back:
 ```bash
 npm run ask-agent -- \
   --api-base-url https://YOUR_API_ID.execute-api.ap-northeast-1.amazonaws.com/prod \
-  --workspace-id T0123456789 \
+  --workspace-id <workspace-id> \
   --user-id local-user \
   --region ap-northeast-1 \
   --session-id sess_... \
