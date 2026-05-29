@@ -1,14 +1,34 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+import { z, ZodError } from "zod";
 import { AgentCoreRuntimeClient } from "../../agentcore/client";
 import { buildAgentRuntimeResources } from "../../agentcore/contracts";
 import { chatMessageRequestSchema } from "../../chat/contracts";
 import { loadChatApiEnv } from "../../config/env";
 import { logger } from "../../shared/logger";
+import { DynamoDbSkillRepository } from "../../skills/dynamoDbSkillRepository";
+import { SkillRegistry } from "../../skills/registry";
 
 const env = loadChatApiEnv();
 const agentClient = new AgentCoreRuntimeClient({
   runtimeArn: env.AGENTCORE_RUNTIME_ARN,
   qualifier: env.AGENTCORE_RUNTIME_QUALIFIER,
+});
+const skillRegistry = env.SKILLS_TABLE_NAME
+  ? new SkillRegistry(new DynamoDbSkillRepository(env.SKILLS_TABLE_NAME))
+  : undefined;
+
+const listBuiltinSkillsPathSchema = z.object({
+  workspaceId: z.string().min(1),
+});
+
+const updateBuiltinSkillPathSchema = z.object({
+  workspaceId: z.string().min(1),
+  skillId: z.string().min(1),
+});
+
+const updateBuiltinSkillRequestSchema = z.object({
+  enabled: z.boolean(),
+  actorUserId: z.string().min(1).optional(),
 });
 
 export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
@@ -17,11 +37,25 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
   try {
     if (event.httpMethod === "POST" && event.resource === "/chat/messages") {
-      return postMessage(event, log);
+      return await postMessage(event, log);
+    }
+
+    if (event.httpMethod === "GET" && event.resource === "/admin/workspaces/{workspaceId}/builtin-skills") {
+      return await listBuiltinSkills(event);
+    }
+
+    if (event.httpMethod === "PATCH" && event.resource === "/admin/workspaces/{workspaceId}/builtin-skills/{skillId}") {
+      return await updateBuiltinSkill(event);
     }
 
     return response(404, { ok: false, error: "not_found" });
   } catch (error) {
+    if (error instanceof ZodError) {
+      return response(400, { ok: false, error: "bad_request", message: error.message });
+    }
+    if (error instanceof Error && error.message.startsWith("Built-in skill was not found:")) {
+      return response(404, { ok: false, error: "not_found", message: error.message });
+    }
     const message = error instanceof Error ? error.message : "Unknown chat API error";
     log.error("Chat API failed", { error: message });
     return response(500, { ok: false, error: "internal_error", message });
@@ -65,6 +99,37 @@ async function postMessage(
     recurringTaskIds: completion.recurringTaskIds,
     savedMemoryIds: completion.savedMemoryIds,
   });
+}
+
+async function listBuiltinSkills(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
+  const registry = requireSkillRegistry();
+  const { workspaceId } = listBuiltinSkillsPathSchema.parse(event.pathParameters ?? {});
+  const skills = await registry.listBuiltinSkillAdminSummaries(workspaceId);
+
+  return response(200, {
+    ok: true,
+    skills,
+  });
+}
+
+async function updateBuiltinSkill(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
+  const registry = requireSkillRegistry();
+  const { workspaceId, skillId } = updateBuiltinSkillPathSchema.parse(event.pathParameters ?? {});
+  const input = updateBuiltinSkillRequestSchema.parse(parseJsonBody(event));
+  const result = await registry.setBuiltinSkillEnabled(workspaceId, skillId, input.enabled, input.actorUserId);
+
+  return response(200, {
+    ok: true,
+    skill: result.skill,
+    audit: result.audit,
+  });
+}
+
+function requireSkillRegistry(): SkillRegistry {
+  if (!skillRegistry) {
+    throw new Error("Skill registry storage is not configured.");
+  }
+  return skillRegistry;
 }
 
 function parseJsonBody(event: APIGatewayProxyEvent): unknown {

@@ -18,7 +18,7 @@ export const customToolDefinitions = [
   {
     name: "propose_skill",
     description:
-      "Create or update a draft generated skill from a complete SKILL.md document after the user agrees that a repeated workflow should become a reusable skill. This does not enable the skill; ask for approval before calling approve_skill.",
+      "Create or update a proposed generated skill from a complete SKILL.md document after the user agrees that a repeated workflow should become a reusable skill. This does not enable the skill; ask for approval before calling approve_skill.",
     input_schema: {
       type: "object",
       properties: {
@@ -43,6 +43,24 @@ export const customToolDefinitions = [
           type: "object",
           description: "Optional execution constraints such as maxToolCalls or requiresConfirmation.",
         },
+        evaluation_notes: {
+          type: "string",
+          description: "Short notes about how this skill should be evaluated before approval.",
+        },
+        test_cases: {
+          type: "array",
+          maxItems: 12,
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              prompt: { type: "string" },
+              expected_behavior: { type: "string" },
+            },
+            required: ["name", "prompt", "expected_behavior"],
+          },
+          description: "Concrete examples used to validate the generated skill before approval.",
+        },
         version: { type: "string", description: "Skill version. Defaults to 0.1.0." },
       },
       required: ["skill_markdown"],
@@ -51,7 +69,42 @@ export const customToolDefinitions = [
   {
     name: "approve_skill",
     description:
-      "Enable a generated skill after the user explicitly approves the draft. Do not approve a skill based only on inferred intent.",
+      "Approve a generated skill after the user explicitly approves the draft. This validates the draft but does not enable it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        skill_id: { type: "string" },
+      },
+      required: ["skill_id"],
+    },
+  },
+  {
+    name: "enable_skill",
+    description:
+      "Enable an approved or disabled generated skill after the user explicitly asks to make it active.",
+    input_schema: {
+      type: "object",
+      properties: {
+        skill_id: { type: "string" },
+      },
+      required: ["skill_id"],
+    },
+  },
+  {
+    name: "reject_skill",
+    description: "Reject a proposed generated skill after the user explicitly declines the draft.",
+    input_schema: {
+      type: "object",
+      properties: {
+        skill_id: { type: "string" },
+      },
+      required: ["skill_id"],
+    },
+  },
+  {
+    name: "archive_skill",
+    description:
+      "Archive a generated skill after explicit confirmation. Enabled skills must be disabled before archiving.",
     input_schema: {
       type: "object",
       properties: {
@@ -70,7 +123,7 @@ export const customToolDefinitions = [
         source: { type: "string", enum: ["builtin", "generated", "all"] },
         statuses: {
           type: "array",
-          items: { type: "string", enum: ["draft", "approved", "enabled", "disabled"] },
+          items: { type: "string", enum: ["proposed", "approved", "enabled", "disabled", "rejected", "archived"] },
         },
       },
     },

@@ -110,13 +110,14 @@ describe("skill registry", () => {
           toolAllowlist: ["web_search"],
           constraints: {},
           body: "# Generated",
+          testCases: [],
           createdAt: "created",
           updatedAt: "updated",
         },
         {
           workspaceId: "T1",
           skillId: "generated-draft",
-          status: "draft",
+          status: "proposed",
           version: "1",
           title: "Generated Draft",
           description: "Draft skill.",
@@ -124,6 +125,7 @@ describe("skill registry", () => {
           toolAllowlist: [],
           constraints: {},
           body: "# Draft",
+          testCases: [],
           createdAt: "created",
           updatedAt: "updated",
         },
@@ -163,6 +165,7 @@ describe("skill registry", () => {
         toolAllowlist: ["web_search"],
         constraints: {},
         body: "# Generated",
+        testCases: [],
         createdAt: "created",
         updatedAt: "updated",
       }),
@@ -194,6 +197,105 @@ describe("skill registry", () => {
     ).toContain("call load_skill");
   });
 
+  it("lists builtin admin summaries with default and override audit state", async () => {
+    const repository: SkillRepository = {
+      listBuiltinSkillOverrides: vi.fn().mockResolvedValue([
+        {
+          workspaceId: "T1",
+          skillId: "builtin-enabled",
+          enabled: false,
+          updatedAt: "updated",
+          updatedByUserId: "U1",
+          previousEnabled: true,
+        },
+      ]),
+      getBuiltinSkillOverride: vi.fn().mockResolvedValue(null),
+      listGeneratedSkills: vi.fn().mockResolvedValue([]),
+      getGeneratedSkill: vi.fn().mockResolvedValue(null),
+    };
+    const registry = new SkillRegistry(repository, builtinSkills);
+
+    await expect(registry.listBuiltinSkillAdminSummaries("T1")).resolves.toMatchObject([
+      {
+        skillId: "builtin-disabled",
+        source: "builtin",
+        defaultEnabled: false,
+        enabled: false,
+        status: "disabled",
+      },
+      {
+        skillId: "builtin-enabled",
+        source: "builtin",
+        defaultEnabled: true,
+        enabled: false,
+        status: "disabled",
+        audit: {
+          updatedAt: "updated",
+          updatedByUserId: "U1",
+          previousEnabled: true,
+        },
+      },
+    ]);
+  });
+
+  it("updates builtin enablement with audit metadata", async () => {
+    const repository: SkillRepository = {
+      listBuiltinSkillOverrides: vi.fn().mockResolvedValue([]),
+      getBuiltinSkillOverride: vi.fn().mockResolvedValue(null),
+      listGeneratedSkills: vi.fn().mockResolvedValue([]),
+      getGeneratedSkill: vi.fn().mockResolvedValue(null),
+      putBuiltinSkillOverride: vi.fn().mockImplementation(async (record) => ({
+        ...record,
+        updatedAt: "updated",
+      })),
+    };
+    const registry = new SkillRegistry(repository, builtinSkills);
+
+    await expect(registry.setBuiltinSkillEnabled("T1", "builtin-enabled", false, "U1")).resolves.toMatchObject({
+      skill: {
+        skillId: "builtin-enabled",
+        enabled: false,
+        status: "disabled",
+        defaultEnabled: true,
+        audit: {
+          updatedAt: "updated",
+          updatedByUserId: "U1",
+          previousEnabled: true,
+        },
+      },
+      audit: {
+        actorUserId: "U1",
+        previousEnabled: true,
+        nextEnabled: false,
+        updatedAt: "updated",
+      },
+    });
+    expect(repository.putBuiltinSkillOverride).toHaveBeenCalledWith({
+      workspaceId: "T1",
+      skillId: "builtin-enabled",
+      enabled: false,
+      version: "0.1.0",
+      updatedByUserId: "U1",
+      previousEnabled: true,
+    });
+  });
+
+  it("rejects builtin enablement updates for unknown skills", async () => {
+    const repository: SkillRepository = {
+      listBuiltinSkillOverrides: vi.fn().mockResolvedValue([]),
+      getBuiltinSkillOverride: vi.fn().mockResolvedValue(null),
+      listGeneratedSkills: vi.fn().mockResolvedValue([]),
+      getGeneratedSkill: vi.fn().mockResolvedValue(null),
+      putBuiltinSkillOverride: vi.fn(),
+    };
+    const registry = new SkillRegistry(repository, builtinSkills);
+
+    await expect(registry.setBuiltinSkillEnabled("T1", "not-real", true, "U1")).rejects.toThrow(
+      "Built-in skill was not found: not-real",
+    );
+    expect(repository.putBuiltinSkillOverride).not.toHaveBeenCalled();
+  });
+
   it("proposes, approves, lists, and disables generated skills", async () => {
     const records = new Map<string, Awaited<ReturnType<NonNullable<SkillRepository["putGeneratedSkill"]>>>>();
     const repository: SkillRepository = {
@@ -217,15 +319,31 @@ describe("skill registry", () => {
       skillMarkdown: sampleSkillMarkdown,
       triggerHints: ["Hacker News"],
       toolAllowlist: ["web_extract"],
+      evaluationNotes: "Summarize only article content.",
+      testCases: [
+        {
+          name: "article summary",
+          prompt: "Summarize this Hacker News article.",
+          expectedBehavior: "Returns a short summary with source context.",
+        },
+      ],
       createdByUserId: "U1",
       createdFromConversationId: "C1",
     });
 
     expect(draft).toMatchObject({
       skillId: "hn-article-summarizer",
-      status: "draft",
+      status: "proposed",
       title: "Hacker News Article Summarizer",
       body: sampleSkillMarkdown,
+      evaluationNotes: "Summarize only article content.",
+      testCases: [
+        {
+          name: "article summary",
+          prompt: "Summarize this Hacker News article.",
+          expectedBehavior: "Returns a short summary with source context.",
+        },
+      ],
       createdByUserId: "U1",
       createdFromConversationId: "C1",
     });
@@ -233,9 +351,13 @@ describe("skill registry", () => {
 
     const approved = await registry.approveSkill("T1", "hn-article-summarizer", "U1");
     expect(approved).toMatchObject({
-      status: "enabled",
+      status: "approved",
       approvedByUserId: "U1",
     });
+    await expect(registry.loadSkill("T1", "hn-article-summarizer")).resolves.toBeNull();
+
+    const enabled = await registry.enableSkill("T1", "hn-article-summarizer");
+    expect(enabled.status).toBe("enabled");
     await expect(registry.listEnabledSummaries("T1")).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -255,6 +377,39 @@ describe("skill registry", () => {
 
     const disabled = await registry.disableSkill("T1", "hn-article-summarizer");
     expect(disabled.status).toBe("disabled");
+
+    const archived = await registry.archiveSkill("T1", "hn-article-summarizer");
+    expect(archived.status).toBe("archived");
+  });
+
+  it("rejects generated skill approval without known tools and test cases", async () => {
+    const records = new Map<string, Awaited<ReturnType<NonNullable<SkillRepository["putGeneratedSkill"]>>>>();
+    const repository: SkillRepository = {
+      listBuiltinSkillOverrides: vi.fn().mockResolvedValue([]),
+      getBuiltinSkillOverride: vi.fn().mockResolvedValue(null),
+      listGeneratedSkills: vi.fn().mockImplementation(async () => [...records.values()]),
+      getGeneratedSkill: vi.fn().mockImplementation(async (_workspaceId, skillId) => records.get(skillId) ?? null),
+      putGeneratedSkill: vi.fn().mockImplementation(async (record) => {
+        const saved = {
+          ...record,
+          createdAt: record.createdAt ?? "created",
+          updatedAt: "updated",
+        };
+        records.set(record.skillId, saved);
+        return saved;
+      }),
+    };
+    const registry = new SkillRegistry(repository, builtinSkills);
+
+    await registry.proposeSkill("T1", {
+      skillMarkdown: sampleSkillMarkdown,
+      toolAllowlist: ["not_a_tool"],
+      testCases: [],
+    });
+
+    await expect(registry.approveSkill("T1", "hn-article-summarizer", "U1")).rejects.toThrow(
+      "unknown tools: not_a_tool",
+    );
   });
 
   it("does not replace an enabled generated skill with a draft", async () => {
@@ -273,6 +428,7 @@ describe("skill registry", () => {
         toolAllowlist: [],
         constraints: {},
         body: sampleSkillMarkdown,
+        testCases: [],
         createdAt: "created",
         updatedAt: "updated",
       }),
@@ -354,6 +510,92 @@ describe("DynamoDB skill repository", () => {
     });
   });
 
+  it("normalizes legacy draft generated skills and stores generated skill metadata", async () => {
+    const repo = new DynamoDbSkillRepository("skills");
+    sendMock.mockResolvedValueOnce({
+      Items: [
+        {
+          workspaceId: "T1",
+          skillId: "daily-summary",
+          status: "draft",
+          version: "1",
+          title: "Daily Summary",
+          description: "Summarize the day.",
+          triggerHints: ["daily"],
+          toolAllowlist: ["search_memories"],
+          constraints: {},
+          body: "# Daily Summary",
+          evaluationNotes: "Use for daily summaries only.",
+          testCases: [
+            {
+              name: "summarizes request",
+              prompt: "Summarize today.",
+              expectedBehavior: "Returns a concise summary.",
+            },
+          ],
+          createdAt: "created",
+          updatedAt: "updated",
+        },
+      ],
+    });
+
+    await expect(repo.listGeneratedSkills("T1")).resolves.toMatchObject([
+      {
+        skillId: "daily-summary",
+        status: "proposed",
+        evaluationNotes: "Use for daily summaries only.",
+        testCases: [
+          {
+            name: "summarizes request",
+            prompt: "Summarize today.",
+            expectedBehavior: "Returns a concise summary.",
+          },
+        ],
+      },
+    ]);
+
+    sendMock.mockResolvedValueOnce({});
+    await repo.putGeneratedSkill({
+      workspaceId: "T1",
+      skillId: "daily-summary",
+      status: "proposed",
+      version: "1",
+      title: "Daily Summary",
+      description: "Summarize the day.",
+      triggerHints: ["daily"],
+      toolAllowlist: ["search_memories"],
+      constraints: {},
+      body: "# Daily Summary",
+      evaluationNotes: "Use for daily summaries only.",
+      testCases: [
+        {
+          name: "summarizes request",
+          prompt: "Summarize today.",
+          expectedBehavior: "Returns a concise summary.",
+        },
+      ],
+      createdAt: "created",
+      updatedAt: "updated",
+    });
+
+    expect(commandInput(1)).toMatchObject({
+      TableName: "skills",
+      Item: {
+        pk: "WORKSPACE#T1",
+        sk: "SKILL#daily-summary",
+        status: "proposed",
+        evaluationNotes: "Use for daily summaries only.",
+        testCases: [
+          {
+            name: "summarizes request",
+            prompt: "Summarize today.",
+            expectedBehavior: "Returns a concise summary.",
+          },
+        ],
+      },
+    });
+  });
+
   it("reads and stores builtin skill overrides", async () => {
     const repo = new DynamoDbSkillRepository("skills");
     sendMock.mockResolvedValueOnce({
@@ -363,6 +605,8 @@ describe("DynamoDB skill repository", () => {
         enabled: false,
         version: "0.1.0",
         config: { country: "JP" },
+        updatedByUserId: "U1",
+        previousEnabled: true,
         updatedAt: "updated",
       },
     });
@@ -371,6 +615,8 @@ describe("DynamoDB skill repository", () => {
       workspaceId: "T1",
       skillId: "web-research",
       enabled: false,
+      updatedByUserId: "U1",
+      previousEnabled: true,
     });
     expect(commandInput()).toMatchObject({
       TableName: "skills",
@@ -385,6 +631,8 @@ describe("DynamoDB skill repository", () => {
       workspaceId: "T1",
       skillId: "web-research",
       enabled: true,
+      updatedByUserId: "U2",
+      previousEnabled: false,
       updatedAt: "updated",
     });
     expect(commandInput(1)).toMatchObject({
@@ -394,6 +642,8 @@ describe("DynamoDB skill repository", () => {
         sk: "BUILTIN_SKILL#web-research",
         kind: "builtin_override",
         enabled: true,
+        updatedByUserId: "U2",
+        previousEnabled: false,
       },
     });
   });
@@ -443,12 +693,12 @@ describe("load_skill tool", () => {
     });
   });
 
-  it("proposes a generated skill draft through the custom tool executor", async () => {
+  it("proposes a generated skill through the custom tool executor", async () => {
     const registry = {
       proposeSkill: vi.fn().mockResolvedValue({
         workspaceId: "T1",
         skillId: "hn-article-summarizer",
-        status: "draft",
+        status: "proposed",
         version: "0.1.0",
         title: "Hacker News Article Summarizer",
         description: "Summarize Hacker News articles for Slack.",
@@ -456,6 +706,14 @@ describe("load_skill tool", () => {
         toolAllowlist: ["web_extract"],
         constraints: {},
         body: sampleSkillMarkdown,
+        evaluationNotes: "Summarize only article content.",
+        testCases: [
+          {
+            name: "article summary",
+            prompt: "Summarize this article.",
+            expectedBehavior: "Returns a concise article summary.",
+          },
+        ],
         createdFromConversationId: "C1",
         createdByUserId: "U1",
         createdAt: "created",
@@ -483,6 +741,14 @@ describe("load_skill tool", () => {
         skill_markdown: sampleSkillMarkdown,
         trigger_hints: ["Hacker News"],
         tool_allowlist: ["web_extract"],
+        evaluation_notes: "Summarize only article content.",
+        test_cases: [
+          {
+            name: "article summary",
+            prompt: "Summarize this article.",
+            expected_behavior: "Returns a concise article summary.",
+          },
+        ],
       },
     });
 
@@ -492,6 +758,14 @@ describe("load_skill tool", () => {
       toolAllowlist: ["web_extract"],
       constraints: undefined,
       version: undefined,
+      evaluationNotes: "Summarize only article content.",
+      testCases: [
+        {
+          name: "article summary",
+          prompt: "Summarize this article.",
+          expectedBehavior: "Returns a concise article summary.",
+        },
+      ],
       createdFromConversationId: "C1",
       createdByUserId: "U1",
     });
@@ -500,9 +774,76 @@ describe("load_skill tool", () => {
       proposed: true,
       skill: {
         skill_id: "hn-article-summarizer",
-        status: "draft",
+        status: "proposed",
+        evaluation_notes: "Summarize only article content.",
+        test_cases: [
+          {
+            name: "article summary",
+            prompt: "Summarize this article.",
+            expected_behavior: "Returns a concise article summary.",
+          },
+        ],
       },
     });
+  });
+
+  it("executes generated skill lifecycle tools", async () => {
+    const generatedSkill = {
+      workspaceId: "T1",
+      skillId: "hn-article-summarizer",
+      status: "enabled",
+      version: "0.1.0",
+      title: "Hacker News Article Summarizer",
+      description: "Summarize Hacker News articles for Slack.",
+      triggerHints: ["Hacker News"],
+      toolAllowlist: ["web_extract"],
+      constraints: {},
+      body: sampleSkillMarkdown,
+      testCases: [],
+      createdAt: "created",
+      updatedAt: "updated",
+    };
+    const registry = {
+      enableSkill: vi.fn().mockResolvedValue(generatedSkill),
+      rejectSkill: vi.fn().mockResolvedValue({ ...generatedSkill, status: "rejected" }),
+      archiveSkill: vi.fn().mockResolvedValue({ ...generatedSkill, status: "archived" }),
+    };
+    const executor = new CustomToolExecutor(
+      {} as never,
+      {
+        workspaceId: "T1",
+        logger,
+      },
+      {
+        skillRegistry: registry as never,
+      },
+    );
+
+    const enableResult = await executor.execute({
+      id: "tool-enable",
+      type: "agent.tool_use",
+      name: "enable_skill",
+      input: { skill_id: "hn-article-summarizer" },
+    });
+    expect(enableResult.isError).toBeUndefined();
+    const rejectResult = await executor.execute({
+      id: "tool-reject",
+      type: "agent.tool_use",
+      name: "reject_skill",
+      input: { skill_id: "hn-article-summarizer" },
+    });
+    expect(rejectResult.isError).toBeUndefined();
+    const archiveResult = await executor.execute({
+      id: "tool-archive",
+      type: "agent.tool_use",
+      name: "archive_skill",
+      input: { skill_id: "hn-article-summarizer" },
+    });
+    expect(archiveResult.isError).toBeUndefined();
+
+    expect(registry.enableSkill).toHaveBeenCalledWith("T1", "hn-article-summarizer");
+    expect(registry.rejectSkill).toHaveBeenCalledWith("T1", "hn-article-summarizer");
+    expect(registry.archiveSkill).toHaveBeenCalledWith("T1", "hn-article-summarizer");
   });
 
   it("promotes an approved channel memory to workspace memory", async () => {

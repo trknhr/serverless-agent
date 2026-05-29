@@ -1,7 +1,16 @@
 import { z } from "zod";
 
-export const skillStatusSchema = z.enum(["draft", "approved", "enabled", "disabled"]);
+export const skillStatusSchema = z.enum(["proposed", "approved", "enabled", "disabled", "rejected", "archived"]);
+export const storedSkillStatusSchema = z
+  .union([skillStatusSchema, z.literal("draft")])
+  .transform((status) => (status === "draft" ? "proposed" : status));
 export const skillSourceSchema = z.enum(["builtin", "generated"]);
+
+export const generatedSkillTestCaseSchema = z.object({
+  name: z.string().min(1),
+  prompt: z.string().min(1),
+  expectedBehavior: z.string().min(1),
+});
 
 export const skillConstraintsSchema = z
   .object({
@@ -13,6 +22,7 @@ export const skillConstraintsSchema = z
 export type SkillStatus = z.infer<typeof skillStatusSchema>;
 export type SkillSource = z.infer<typeof skillSourceSchema>;
 export type SkillConstraints = z.infer<typeof skillConstraintsSchema>;
+export type GeneratedSkillTestCase = z.infer<typeof generatedSkillTestCaseSchema>;
 
 export interface SkillSummary {
   skillId: string;
@@ -28,6 +38,28 @@ export interface SkillSummary {
 export interface SkillAdminSummary extends SkillSummary {
   status: SkillStatus | "enabled" | "disabled";
   enabled: boolean;
+}
+
+export interface BuiltinSkillAdminSummary extends SkillAdminSummary {
+  source: "builtin";
+  defaultEnabled: boolean;
+  audit?: {
+    updatedAt?: string;
+    updatedByUserId?: string;
+    previousEnabled?: boolean;
+  };
+}
+
+export interface BuiltinSkillEnablementAudit {
+  actorUserId?: string;
+  previousEnabled: boolean;
+  nextEnabled: boolean;
+  updatedAt: string;
+}
+
+export interface SetBuiltinSkillEnabledResult {
+  skill: BuiltinSkillAdminSummary;
+  audit: BuiltinSkillEnablementAudit;
 }
 
 export interface SkillDocument extends SkillSummary {
@@ -57,6 +89,8 @@ export interface GeneratedSkillRecord {
   toolAllowlist: string[];
   constraints: SkillConstraints;
   body: string;
+  evaluationNotes?: string;
+  testCases: GeneratedSkillTestCase[];
   createdFromConversationId?: string;
   createdByUserId?: string;
   approvedByUserId?: string;
@@ -70,6 +104,8 @@ export interface BuiltinSkillOverride {
   enabled: boolean;
   version?: string;
   config?: Record<string, unknown>;
+  updatedByUserId?: string;
+  previousEnabled?: boolean;
   updatedAt: string;
 }
 

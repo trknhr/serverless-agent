@@ -3,10 +3,12 @@ import { documentClient } from "../repo/documentClient";
 import {
   BuiltinSkillOverride,
   GeneratedSkillRecord,
+  GeneratedSkillTestCase,
   SkillConstraints,
   SkillStatus,
+  generatedSkillTestCaseSchema,
   skillConstraintsSchema,
-  skillStatusSchema,
+  storedSkillStatusSchema,
 } from "./types";
 
 const GENERATED_SKILL_PREFIX = "SKILL#";
@@ -86,6 +88,8 @@ export class DynamoDbSkillRepository {
           toolAllowlist: item.toolAllowlist,
           constraints: item.constraints,
           body: item.body,
+          evaluationNotes: item.evaluationNotes,
+          testCases: item.testCases,
           createdFromConversationId: item.createdFromConversationId,
           createdByUserId: item.createdByUserId,
           approvedByUserId: item.approvedByUserId,
@@ -147,6 +151,8 @@ export class DynamoDbSkillRepository {
           enabled: item.enabled,
           version: item.version,
           config: item.config,
+          updatedByUserId: item.updatedByUserId,
+          previousEnabled: item.previousEnabled,
           updatedAt: item.updatedAt,
         },
       }),
@@ -168,6 +174,8 @@ function mapGeneratedSkill(item: Record<string, unknown>): GeneratedSkillRecord 
     toolAllowlist: parseStringArray(item.toolAllowlist),
     constraints: parseConstraints(item.constraints),
     body: requireString(item.body, "body"),
+    evaluationNotes: optionalString(item.evaluationNotes),
+    testCases: parseGeneratedSkillTestCases(item.testCases),
     createdFromConversationId: optionalString(item.createdFromConversationId),
     createdByUserId: optionalString(item.createdByUserId),
     approvedByUserId: optionalString(item.approvedByUserId),
@@ -183,12 +191,14 @@ function mapBuiltinOverride(item: Record<string, unknown>): BuiltinSkillOverride
     enabled: item.enabled === true,
     version: optionalString(item.version),
     config: parseRecord(item.config),
+    updatedByUserId: optionalString(item.updatedByUserId),
+    previousEnabled: optionalBoolean(item.previousEnabled),
     updatedAt: requireString(item.updatedAt, "updatedAt"),
   };
 }
 
 function parseStatus(value: unknown): SkillStatus {
-  return skillStatusSchema.parse(value);
+  return storedSkillStatusSchema.parse(value);
 }
 
 function parseConstraints(value: unknown): SkillConstraints {
@@ -206,6 +216,13 @@ function parseStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
 }
 
+function parseGeneratedSkillTestCases(value: unknown): GeneratedSkillTestCase[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => generatedSkillTestCaseSchema.parse(item));
+}
+
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`Skill record is missing ${field}.`);
@@ -215,4 +232,8 @@ function requireString(value: unknown, field: string): string {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
 }

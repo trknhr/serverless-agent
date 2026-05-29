@@ -21,10 +21,18 @@ describe("tool definitions", () => {
   });
 
   it("keeps generated skill creation draft-first", () => {
-    expect(toolDescription("propose_skill")).toContain("draft generated skill");
+    expect(toolDescription("propose_skill")).toContain("proposed generated skill");
     expect(toolDescription("propose_skill")).toContain("does not enable");
-    expect(toolDescription("approve_skill")).toContain("explicitly approves");
+    expect(toolDescription("approve_skill")).toContain("Approve");
+    expect(toolDescription("approve_skill")).not.toContain("Enable");
+    expect(toolDescription("enable_skill")).toContain("Enable an approved");
+    expect(toolDescription("reject_skill")).toContain("Reject a proposed");
+    expect(toolDescription("archive_skill")).toContain("Archive a generated");
     expect(toolDescription("disable_skill")).toContain("generated skill");
+
+    const listSkills = customToolDefinitions.find((tool) => tool.name === "list_skills")!;
+    expect(JSON.stringify(listSkills.input_schema)).toContain("proposed");
+    expect(JSON.stringify(listSkills.input_schema)).toContain("archived");
   });
 
   it("exposes browser tools without provider-specific implementation details", () => {

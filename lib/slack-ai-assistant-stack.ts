@@ -506,6 +506,7 @@ export class SlackAiAssistantStack extends Stack {
     taskEventsTable.grantReadWriteData(slackInteractions);
     processedEventsTable.grantReadWriteData(ingress);
     processedEventsTable.grantReadWriteData(lineIngress);
+    skillsTable.grantReadWriteData(chatApi);
     scheduledTasksTable.grantReadWriteData(scheduledRunner);
     recurringTasksTable.grantReadWriteData(scheduledRunner);
     providerBindingsTable.grantReadData(ingress);
@@ -649,6 +650,17 @@ export class SlackAiAssistantStack extends Stack {
       .addMethod("POST", new apigateway.LambdaIntegration(chatApi), {
         authorizationType: apigateway.AuthorizationType.IAM,
       });
+    const adminBuiltinSkillsResource = api.root
+      .addResource("admin")
+      .addResource("workspaces")
+      .addResource("{workspaceId}")
+      .addResource("builtin-skills");
+    adminBuiltinSkillsResource.addMethod("GET", new apigateway.LambdaIntegration(chatApi), {
+      authorizationType: apigateway.AuthorizationType.IAM,
+    });
+    adminBuiltinSkillsResource.addResource("{skillId}").addMethod("PATCH", new apigateway.LambdaIntegration(chatApi), {
+      authorizationType: apigateway.AuthorizationType.IAM,
+    });
 
     const schedulerInvokeRole = new iam.Role(this, "SchedulerInvokeRole", {
       assumedBy: new iam.ServicePrincipal("scheduler.amazonaws.com"),

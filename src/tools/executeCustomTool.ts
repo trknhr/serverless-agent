@@ -30,11 +30,22 @@ import { WeatherForecastProvider } from "../weather/openMeteo";
 import { WebToolProvider } from "../web/webTools";
 import { BrowserProvider, BrowserViewport } from "../browser/provider";
 import type { SkillRegistry } from "../skills/registry";
-import { skillConstraintsSchema, skillStatusSchema, type GeneratedSkillRecord } from "../skills/types";
+import {
+  generatedSkillTestCaseSchema,
+  skillConstraintsSchema,
+  skillStatusSchema,
+  type GeneratedSkillRecord,
+} from "../skills/types";
 import type { WorkSessionRecord } from "../shared/contracts";
 
 const loadSkillSchema = z.object({
   skill_id: z.string().min(1).max(128),
+});
+
+const generatedSkillTestCaseInputSchema = z.object({
+  name: z.string().min(1),
+  prompt: z.string().min(1),
+  expected_behavior: z.string().min(1),
 });
 
 const proposeSkillSchema = z.object({
@@ -42,6 +53,8 @@ const proposeSkillSchema = z.object({
   trigger_hints: z.array(z.string().min(1)).max(12).optional(),
   tool_allowlist: z.array(z.string().min(1)).max(20).optional(),
   constraints: skillConstraintsSchema.optional(),
+  evaluation_notes: z.string().min(1).optional(),
+  test_cases: z.array(generatedSkillTestCaseInputSchema).max(12).optional(),
   version: z.string().min(1).optional(),
 });
 
@@ -474,6 +487,12 @@ export class CustomToolExecutor {
           return await this.proposeSkill(input);
         case "approve_skill":
           return await this.approveSkill(input);
+        case "enable_skill":
+          return await this.enableSkill(input);
+        case "reject_skill":
+          return await this.rejectSkill(input);
+        case "archive_skill":
+          return await this.archiveSkill(input);
         case "list_skills":
           return await this.listSkills(input);
         case "disable_skill":
@@ -591,6 +610,14 @@ export class CustomToolExecutor {
       toolAllowlist: parsed.tool_allowlist,
       constraints: parsed.constraints,
       version: parsed.version,
+      evaluationNotes: parsed.evaluation_notes,
+      testCases: parsed.test_cases?.map((testCase) =>
+        generatedSkillTestCaseSchema.parse({
+          name: testCase.name,
+          prompt: testCase.prompt,
+          expectedBehavior: testCase.expected_behavior,
+        }),
+      ),
       createdFromConversationId: this.context.conversationId,
       createdByUserId: this.context.userId,
     });
@@ -609,6 +636,39 @@ export class CustomToolExecutor {
 
     return jsonResult({
       approved: true,
+      skill: serializeGeneratedSkill(skill),
+    });
+  }
+
+  private async enableSkill(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = disableSkillSchema.parse(input);
+    const registry = this.requireSkillRegistry();
+    const skill = await registry.enableSkill(this.context.workspaceId, parsed.skill_id);
+
+    return jsonResult({
+      enabled: true,
+      skill: serializeGeneratedSkill(skill),
+    });
+  }
+
+  private async rejectSkill(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = disableSkillSchema.parse(input);
+    const registry = this.requireSkillRegistry();
+    const skill = await registry.rejectSkill(this.context.workspaceId, parsed.skill_id);
+
+    return jsonResult({
+      rejected: true,
+      skill: serializeGeneratedSkill(skill),
+    });
+  }
+
+  private async archiveSkill(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = disableSkillSchema.parse(input);
+    const registry = this.requireSkillRegistry();
+    const skill = await registry.archiveSkill(this.context.workspaceId, parsed.skill_id);
+
+    return jsonResult({
+      archived: true,
       skill: serializeGeneratedSkill(skill),
     });
   }
@@ -2321,6 +2381,12 @@ function serializeGeneratedSkill(skill: GeneratedSkillRecord): Record<string, un
     trigger_hints: skill.triggerHints,
     tool_allowlist: skill.toolAllowlist,
     constraints: skill.constraints,
+    evaluation_notes: skill.evaluationNotes,
+    test_cases: skill.testCases.map((testCase) => ({
+      name: testCase.name,
+      prompt: testCase.prompt,
+      expected_behavior: testCase.expectedBehavior,
+    })),
     created_from_conversation_id: skill.createdFromConversationId,
     created_by_user_id: skill.createdByUserId,
     approved_by_user_id: skill.approvedByUserId,
