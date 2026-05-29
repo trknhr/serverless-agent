@@ -582,6 +582,20 @@ describe("Slack context prompt blocks", () => {
     expect(text).toContain("ask whether to save them");
   });
 
+  it("includes the local received date when provided", () => {
+    const [{ text }] = buildSlackContextBlocks({
+      contextScope: "channel_top_level",
+      priorTurns: [],
+      currentText: "これ覚えて",
+      attachmentBlocks: [],
+      receivedAt: "2026-05-28T15:30:00.000Z",
+      timeZone: "Asia/Tokyo",
+    });
+
+    expect(text).toContain("Current local date: 2026-05-29 (Asia/Tokyo)");
+    expect(text).toContain("Current user message:\nこれ覚えて");
+  });
+
   it("renders thread and channel context headings with truncated turns", () => {
     const [{ text }] = buildSlackContextBlocks({
       contextScope: "channel_top_level",

@@ -6,10 +6,18 @@ interface BuildSlackContextBlocksInput {
   priorTurns: ConversationTurnRecord[];
   currentText: string;
   attachmentBlocks: AgentContentBlock[];
+  receivedAt?: string;
+  timeZone?: string;
 }
 
 export function buildSlackContextBlocks(input: BuildSlackContextBlocksInput): AgentContentBlock[] {
-  const text = buildPromptText(input.contextScope, input.priorTurns, input.currentText, input.attachmentBlocks.length > 0);
+  const text = buildPromptText(
+    input.contextScope,
+    input.priorTurns,
+    input.currentText,
+    input.attachmentBlocks.length > 0,
+    buildDateContext(input.receivedAt, input.timeZone),
+  );
   return [
     {
       type: "text",
@@ -38,10 +46,14 @@ function buildPromptText(
   priorTurns: ConversationTurnRecord[],
   currentText: string,
   hasAttachments: boolean,
+  dateContext?: string,
 ): string {
   const normalizedCurrentText = currentText.trim() || buildDefaultAttachmentPrompt(hasAttachments);
 
   if (priorTurns.length === 0) {
+    if (dateContext) {
+      return [dateContext, "Current user message:", normalizedCurrentText].join("\n");
+    }
     return normalizedCurrentText;
   }
 
@@ -53,12 +65,37 @@ function buildPromptText(
 
   return [
     "Use the following Slack conversation context only for this same-channel reply.",
+    dateContext,
     heading,
     renderedTurns,
     "",
     "Current user message:",
     normalizedCurrentText,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
+}
+
+function buildDateContext(receivedAt: string | undefined, timeZone = "Asia/Tokyo"): string | undefined {
+  if (!receivedAt) {
+    return undefined;
+  }
+
+  const date = new Date(receivedAt);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  return `Current local date: ${formatDateInTimeZone(date, timeZone)} (${timeZone})`;
+}
+
+function formatDateInTimeZone(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function buildDefaultAttachmentPrompt(hasAttachments: boolean): string {

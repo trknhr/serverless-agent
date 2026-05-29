@@ -157,6 +157,8 @@ export async function handler(event: SQSEvent): Promise<void> {
         priorTurns,
         currentText: queueMessage.text,
         attachmentBlocks,
+        receivedAt: queueMessage.receivedAt,
+        timeZone: "Asia/Tokyo",
       }),
       log,
     });
