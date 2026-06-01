@@ -77,6 +77,9 @@ export class SlackAiAssistantStack extends Stack {
       "defaultResponseLanguage",
       "DEFAULT_RESPONSE_LANGUAGE",
     );
+    const lineWorkspaceResolutionMode =
+      resolveOptionalConfigValue(this, "lineWorkspaceResolutionMode", "LINE_WORKSPACE_RESOLUTION_MODE") ??
+      "fallback";
     const defaultScheduleChannel =
       resolveOptionalConfigValue(this, "defaultScheduleChannel", "DEFAULT_SCHEDULE_CHANNEL") ??
       "C_PLACEHOLDER";
@@ -366,6 +369,7 @@ export class SlackAiAssistantStack extends Stack {
         ...commonRuntimeEnvironment,
         LINE_CHANNEL_SECRET_SECRET_ID: lineChannelSecretParameterName,
         LINE_QUEUE_URL: lineEventsQueue.queueUrl,
+        LINE_WORKSPACE_RESOLUTION_MODE: lineWorkspaceResolutionMode,
       },
     });
 
