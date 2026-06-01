@@ -48,10 +48,16 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
       providerAccountId: queueMessage.providerAccountId,
       providerConversationKey: `${queueMessage.responseTargetType}:${queueMessage.responseTargetId}`,
       fallbackWorkspaceId: queueMessage.workspaceId,
+      resolutionMode: env.LINE_WORKSPACE_RESOLUTION_MODE,
     });
 
     if (!resolvedWorkspace) {
       disabledCount += 1;
+      log.info("LINE event ignored because provider binding did not resolve", {
+        correlationId: queueMessage.correlationId,
+        responseTargetType: queueMessage.responseTargetType,
+        workspaceResolutionMode: env.LINE_WORKSPACE_RESOLUTION_MODE,
+      });
       continue;
     }
 
@@ -70,7 +76,7 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
   }
 
   log.info("LINE webhook processed", {
-    destination: webhook.destination,
+    hasDestination: Boolean(webhook.destination),
     eventCount: webhook.events.length,
     enqueuedCount,
     duplicateCount,
