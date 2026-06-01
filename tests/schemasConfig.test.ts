@@ -470,12 +470,35 @@ describe("environment loaders", () => {
     expect(loadLineIngressEnv()).toMatchObject({
       LINE_CHANNEL_SECRET_SECRET_ID: "line-secret",
       LINE_QUEUE_URL: "https://sqs.local/line",
+      LINE_WORKSPACE_RESOLUTION_MODE: "fallback",
       TOP_LEVEL_CONTEXT_TURN_LIMIT: 10,
     });
     expect(loadLineWorkerEnv()).toMatchObject({
       LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: "line-token",
       CALENDAR_DRAFTS_TABLE_NAME: "calendar-drafts",
     });
+  });
+
+  it("loads LINE workspace resolution mode and rejects invalid values", () => {
+    withEnv({
+      ...toolRuntimeEnv(),
+      LINE_CHANNEL_SECRET_SECRET_ID: "line-secret",
+      LINE_QUEUE_URL: "https://sqs.local/line",
+      LINE_WORKSPACE_RESOLUTION_MODE: "bound_only",
+    });
+
+    expect(loadLineIngressEnv()).toMatchObject({
+      LINE_WORKSPACE_RESOLUTION_MODE: "bound_only",
+    });
+
+    withEnv({
+      ...toolRuntimeEnv(),
+      LINE_CHANNEL_SECRET_SECRET_ID: "line-secret",
+      LINE_QUEUE_URL: "https://sqs.local/line",
+      LINE_WORKSPACE_RESOLUTION_MODE: "invite_code",
+    });
+
+    expect(() => loadLineIngressEnv()).toThrow();
   });
 
   it("loads worker and tool runtime env variants", () => {

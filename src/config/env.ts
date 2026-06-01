@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const requiredString = z.string().min(1);
+const workspaceResolutionModeSchema = z.enum(["fallback", "bound_only"]).default("fallback");
 
 const runtimeBaseEnvSchema = z.object({
   SESSION_TABLE_NAME: requiredString,
@@ -61,6 +62,7 @@ const toolRuntimeEnvSchema = baseEnvSchema.merge(toolResourceEnvSchema);
 const lineIngressEnvSchema = runtimeBaseEnvSchema.extend({
   LINE_CHANNEL_SECRET_SECRET_ID: requiredString,
   LINE_QUEUE_URL: requiredString,
+  LINE_WORKSPACE_RESOLUTION_MODE: workspaceResolutionModeSchema,
 });
 
 const lineWorkerEnvSchema = toolResourceEnvSchema.extend({
