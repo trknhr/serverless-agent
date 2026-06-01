@@ -4,6 +4,7 @@ import { documentClient } from "./documentClient";
 export type ProviderName = "slack" | "line" | "discord";
 export type ProviderBindingStatus = "active" | "disabled";
 export type ProviderBindingKind = "installation" | "conversation";
+export type ProviderWorkspaceResolutionMode = "fallback" | "bound_only";
 
 export interface ProviderBinding {
   provider: ProviderName;
@@ -22,6 +23,7 @@ export interface ResolveWorkspaceInput {
   providerAccountId: string;
   providerConversationKey: string;
   fallbackWorkspaceId: string;
+  resolutionMode?: ProviderWorkspaceResolutionMode;
 }
 
 export interface ResolvedWorkspace {
@@ -93,6 +95,10 @@ export class ProviderBindingRepository {
     const installationBinding = await this.findInstallationBinding(input.provider, input.providerAccountId);
     if (installationBinding) {
       return activeResolution(installationBinding, "installation_binding");
+    }
+
+    if ((input.resolutionMode ?? "fallback") === "bound_only") {
+      return null;
     }
 
     return {

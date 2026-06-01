@@ -263,6 +263,49 @@ describe("basic DynamoDB repositories", () => {
     ).resolves.toBeNull();
   });
 
+  it("can require provider bindings instead of falling back to provider-derived workspaces", async () => {
+    const repo = new ProviderBindingRepository("provider-bindings");
+
+    sendMock.mockResolvedValueOnce({}).mockResolvedValueOnce({});
+    await expect(
+      repo.resolveWorkspace({
+        provider: "line",
+        providerAccountId: "Ubot",
+        providerConversationKey: "group:G1",
+        fallbackWorkspaceId: "line:group:G1",
+        resolutionMode: "bound_only",
+      }),
+    ).resolves.toBeNull();
+
+    expect(commandInput(0)).toMatchObject({
+      TableName: "provider-bindings",
+      Key: {
+        pk: "PROVIDER#line#ACCOUNT#Ubot",
+        sk: "CONVERSATION#group:G1",
+      },
+    });
+    expect(commandInput(1)).toMatchObject({
+      TableName: "provider-bindings",
+      Key: {
+        pk: "PROVIDER#line#ACCOUNT#Ubot",
+        sk: "INSTALLATION",
+      },
+    });
+
+    sendMock.mockResolvedValueOnce({}).mockResolvedValueOnce({});
+    await expect(
+      repo.resolveWorkspace({
+        provider: "line",
+        providerAccountId: "Ubot",
+        providerConversationKey: "group:G1",
+        fallbackWorkspaceId: "line:group:G1",
+      }),
+    ).resolves.toEqual({
+      workspaceId: "line:group:G1",
+      source: "fallback",
+    });
+  });
+
   it("finds and saves user memory records", async () => {
     const repo = new UserMemoryRepository("memory");
     sendMock.mockResolvedValueOnce({
