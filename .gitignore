@@ -8,5 +8,6 @@ coverage
 *.log
 private-docs
 private-notes
+docs/
 
 .docs-ssh.toml
