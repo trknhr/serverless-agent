@@ -333,8 +333,8 @@ Provider bindings separate external chat IDs from internal workspaces:
 Ingress functions resolve `workspaceId` through `ProviderBindingsTable` using
 provider account and conversation keys. If no binding exists, Slack falls back
 to the Slack team ID and LINE falls back to the LINE chat key, preserving local
-OSS behavior while allowing business deployments to map many provider
-conversations into contract workspaces.
+OSS behavior while allowing deployments to map provider conversations into
+internal workspaces.
 
 Create or update a provider binding locally:
 
