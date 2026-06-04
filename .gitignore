@@ -9,5 +9,6 @@ coverage
 private-docs
 private-notes
 docs/
+.worktrees/
 
 .docs-ssh.toml
