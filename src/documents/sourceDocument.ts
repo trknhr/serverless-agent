@@ -18,11 +18,12 @@ export type SourceExtractionStatus = "queued" | "processing" | "extracted" | "fa
 export interface SourceDocument {
   sourceId: string;
   workspaceId: string;
-  sourceType: "slack_file" | "local_file";
+  sourceType: "slack_file" | "local_file" | "line_message_image";
   sourceRef: string;
   title: string;
   slackFileId?: string;
   slackPermalink?: string;
+  lineMessageId?: string;
   channelId?: string;
   threadTs?: string;
   messageTs?: string;
@@ -44,6 +45,8 @@ export interface SourceDocument {
   extractedMarkdownS3Key?: string;
   extractedMarkdownChecksum?: string;
   extractedMarkdownSize?: number;
+  expiresAt?: string;
+  ttl?: number;
   createdAt: string;
   updatedAt: string;
 }
