@@ -1239,6 +1239,24 @@ export class CustomToolExecutor {
 
   private async listTasks(input: Record<string, unknown>): Promise<ToolExecutionResult> {
     const parsed = listTasksSchema.parse(input);
+    const fallbackQuery = extractTaskKeywordSearchQuery(this.context.currentRequestText);
+    if (fallbackQuery) {
+      const tasks = await this.repositories.tasks.search({
+        workspaceId: this.context.workspaceId,
+        query: fallbackQuery,
+        statuses: parsed.statuses as TaskStatus[] | undefined,
+        dueBefore: parsed.due_before,
+        limit: parsed.limit,
+      });
+
+      return jsonResult({
+        mode: "keyword_search",
+        query: fallbackQuery,
+        count: tasks.length,
+        tasks: tasks.map((task) => serializeTaskState(task)),
+      });
+    }
+
     const tasks = await this.repositories.tasks.list({
       workspaceId: this.context.workspaceId,
       statuses: parsed.statuses as TaskStatus[] | undefined,
@@ -2616,6 +2634,46 @@ function serializeGeneratedSkill(skill: GeneratedSkillRecord): Record<string, un
     created_at: skill.createdAt,
     updated_at: skill.updatedAt,
   };
+}
+
+function extractTaskKeywordSearchQuery(text: string | undefined): string | undefined {
+  if (!text) {
+    return undefined;
+  }
+
+  const normalized = text.replace(/<@[^>]+>/g, " ").trim();
+  const patterns = [
+    /[「『"']([^」』"']{1,80})[」』"'].*(?:タスク|検索|探|確認|見つけ|調べ|ある|存在)/i,
+    /タスク(?:から|で|の中から|の中で|に)\s*[「『"']?(.{1,80}?)[」』"']?\s*(?:を|について|に関して)?\s*(?:検索|探|確認|見つけ|調べ|ある|存在)/i,
+    /[「『"']?(.{1,80}?)[」』"']?\s*(?:を|について|に関して)?\s*タスク(?:から|で|の中から|の中で|に).*(?:検索|探|確認|見つけ|調べ|ある|存在)/i,
+    /(?:find|search|look up|lookup|check).{0,40}(?:tasks?|todos?).{0,40}(?:for|named|about)?\s*["']?([^"'?.!,]{1,80})["']?/i,
+  ];
+
+  for (const pattern of patterns) {
+    const candidate = cleanTaskKeywordSearchQuery(normalized.match(pattern)?.[1]);
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
+function cleanTaskKeywordSearchQuery(value: string | undefined): string | undefined {
+  const candidate = value
+    ?.replace(/^[\s:：、。,.?？!！"'「『]+|[\s:：、。,.?？!！"'」』]+$/g, "")
+    .replace(/^(?:から|で|を|について|に関して)\s*/i, "")
+    .replace(/\s*(?:を|について|に関して|検索|探|確認|見つけ|調べ|ある|存在).*$/i, "")
+    .trim();
+
+  if (!candidate || candidate.length < 2) {
+    return undefined;
+  }
+  if (/^(?:タスク|tasks?|todos?|検索|探す|確認|find|search|lookup)$/i.test(candidate)) {
+    return undefined;
+  }
+
+  return candidate;
 }
 
 function normalizeRecurringTaskRecurrence(

@@ -9,6 +9,64 @@ function toolPayload(result: Awaited<ReturnType<CustomToolExecutor["execute"]>>)
 }
 
 describe("search_context tool", () => {
+  it("falls back to task keyword search when list_tasks is selected for a search request", async () => {
+    const tasks = {
+      list: vi.fn(),
+      search: vi.fn().mockResolvedValue([
+        {
+          workspaceId: "T1",
+          taskId: "task_pool_card",
+          title: "Submit swimming form",
+          description: "Prepare the pool card before the swimming lesson.",
+          status: "open",
+          dueAt: "2026-06-05T23:59:00+09:00",
+          updatedAt: "2026-06-05T00:05:00.000Z",
+        },
+      ]),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        tasks,
+        taskEvents: {},
+        memoryItems: {},
+      } as never,
+      {
+        workspaceId: "T1",
+        userId: "U1",
+        logger: new Logger({ test: "list-tasks-search-fallback" }),
+        currentRequestText: "タスクからプールカードを検索できる？",
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-list-tasks",
+      type: "agent.tool_use",
+      name: "list_tasks",
+      input: {},
+    });
+
+    expect(tasks.search).toHaveBeenCalledWith({
+      workspaceId: "T1",
+      query: "プールカード",
+      statuses: undefined,
+      dueBefore: undefined,
+      limit: undefined,
+    });
+    expect(tasks.list).not.toHaveBeenCalled();
+    expect(toolPayload(result)).toMatchObject({
+      mode: "keyword_search",
+      query: "プールカード",
+      count: 1,
+      tasks: [
+        {
+          task_id: "task_pool_card",
+          title: "Submit swimming form",
+          status: "open",
+        },
+      ],
+    });
+  });
+
   it("searches saved tasks and memories through one read-only tool", async () => {
     const memoryItems = {
       search: vi.fn().mockResolvedValue([

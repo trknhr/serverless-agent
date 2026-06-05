@@ -164,7 +164,7 @@ export const customToolDefinitions = [
   {
     name: "search_context",
     description:
-      "Unified read-only search for answering user questions before choosing a domain-specific tool. Use this first for definitions, short-term references, past-context questions, and general lookup requests. It searches saved memories and tracked tasks together by default; set include_web=true only when the answer likely depends on current or public web information. Use the returned task_id or memory_id with specialized tools only when a follow-up update is needed.",
+      "Unified read-only search for answering user questions before choosing a domain-specific tool. Use this first for definitions, short-term references, past-context questions, task keyword searches, and general lookup requests. It searches saved memories and tracked tasks together by default; set include_web=true only when the answer likely depends on current or public web information. Use the returned task_id or memory_id with specialized tools only when a follow-up update is needed.",
     input_schema: {
       type: "object",
       properties: {
@@ -421,7 +421,8 @@ export const customToolDefinitions = [
   },
   {
     name: "list_tasks",
-    description: "List current tasks with filters for status and due date.",
+    description:
+      "List current tasks with filters for status and due date. Do not use this to find a task by name or keyword; use search_context with the exact task term instead.",
     input_schema: {
       type: "object",
       properties: {

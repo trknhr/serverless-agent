@@ -24,7 +24,9 @@ describe("tool definitions", () => {
     expect(toolDescription("upsert_task")).toContain("inside an existing daily reminder");
     expect(toolDescription("search_context")).toContain("Unified read-only search");
     expect(toolDescription("search_context")).toContain("saved memories and tracked tasks");
+    expect(toolDescription("search_context")).toContain("task keyword searches");
     expect(toolDescription("search_context")).toContain("include_web=true");
+    expect(toolDescription("list_tasks")).toContain("Do not use this to find a task by name or keyword");
     expect(toolDescription("patch_task")).toContain("partial update");
     expect(toolDescription("patch_task")).toContain("search_context");
     expect(toolDescription("create_scheduled_reminder")).toContain("explicitly asks for an individual reminder");
