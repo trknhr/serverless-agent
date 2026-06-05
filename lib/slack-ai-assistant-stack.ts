@@ -72,6 +72,12 @@ export class SlackAiAssistantStack extends Stack {
     const workSessionMaxActivePerOwner =
       resolveOptionalConfigValue(this, "workSessionMaxActivePerOwner", "WORK_SESSION_MAX_ACTIVE_PER_OWNER") ??
       "2";
+    const scheduledLineDailySendLimit =
+      resolveOptionalConfigValue(this, "scheduledLineDailySendLimit", "SCHEDULED_LINE_DAILY_SEND_LIMIT") ??
+      "5";
+    const dailyQuotaTTLSeconds =
+      resolveOptionalConfigValue(this, "dailyQuotaTTLSeconds", "DAILY_QUOTA_TTL_SECONDS") ??
+      "259200";
     const defaultResponseLanguage = resolveOptionalConfigValue(
       this,
       "defaultResponseLanguage",
@@ -316,6 +322,8 @@ export class SlackAiAssistantStack extends Stack {
       SCHEDULER_SCHEDULE_GROUP_NAME: schedulerScheduleGroupName,
       SCHEDULER_SCHEDULE_NAME_PREFIX: schedulerScheduleNamePrefix,
       SCHEDULER_DEFAULT_TIME_ZONE: schedulerDefaultTimeZone,
+      SCHEDULED_LINE_DAILY_SEND_LIMIT: scheduledLineDailySendLimit,
+      DAILY_QUOTA_TTL_SECONDS: dailyQuotaTTLSeconds,
       WORK_SESSION_IDLE_TIMEOUT_SECONDS: workSessionIdleTimeoutSeconds,
       WORK_SESSION_MAX_LIFETIME_SECONDS: workSessionMaxLifetimeSeconds,
       WORK_SESSION_MAX_ACTIVE_PER_OWNER: workSessionMaxActivePerOwner,
@@ -521,6 +529,7 @@ export class SlackAiAssistantStack extends Stack {
     taskEventsTable.grantReadWriteData(slackInteractions);
     processedEventsTable.grantReadWriteData(ingress);
     processedEventsTable.grantReadWriteData(lineIngress);
+    processedEventsTable.grantReadWriteData(scheduledRunner);
     skillsTable.grantReadWriteData(chatApi);
     scheduledTasksTable.grantReadWriteData(scheduledRunner);
     recurringTasksTable.grantReadWriteData(scheduledRunner);

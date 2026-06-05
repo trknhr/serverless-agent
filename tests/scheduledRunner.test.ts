@@ -237,4 +237,44 @@ describe("scheduled agent runner", () => {
     );
     expect(mocks.slackPostMessage).not.toHaveBeenCalled();
   });
+
+  it("does not send scheduled LINE reminders after the daily workspace quota is exhausted", async () => {
+    mocks.documentSend
+      .mockResolvedValueOnce({
+        Item: {
+          taskId: "morning",
+          name: "Morning Reminder",
+          prompt: "Post today's reminder.",
+          workspaceId: "ws_1",
+          outputChannelId: "line:group:G1",
+          enabled: true,
+          reuseSession: false,
+          createdAt: "2026-05-29T00:00:00.000Z",
+          updatedAt: "2026-05-29T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockRejectedValueOnce({ name: "ConditionalCheckFailedException" });
+    mocks.agentInvoke.mockResolvedValueOnce({
+      text: "今日の予定です。",
+      sessionId: "agent-session",
+      status: "completed",
+      taskIds: [],
+      recurringTaskIds: [],
+      savedMemoryIds: [],
+      calendarDraftIds: [],
+    });
+
+    const { handler } = await import("../src/functions/scheduled-agent-runner");
+
+    await handler({
+      taskId: "morning",
+      workspaceId: "ws_1",
+    });
+
+    expect(mocks.linePushText).not.toHaveBeenCalled();
+    expect(mocks.slackPostMessage).not.toHaveBeenCalled();
+  });
 });
