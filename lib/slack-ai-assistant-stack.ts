@@ -72,11 +72,11 @@ export class SlackAiAssistantStack extends Stack {
     const workSessionMaxActivePerOwner =
       resolveOptionalConfigValue(this, "workSessionMaxActivePerOwner", "WORK_SESSION_MAX_ACTIVE_PER_OWNER") ??
       "2";
-    const scheduledLineDailySendLimit =
-      resolveOptionalConfigValue(this, "scheduledLineDailySendLimit", "SCHEDULED_LINE_DAILY_SEND_LIMIT") ??
+    const schedulerDailySendLimit =
+      resolveOptionalConfigValue(this, "schedulerDailySendLimit", "SCHEDULER_DAILY_SEND_LIMIT") ??
       "5";
-    const dailyQuotaTTLSeconds =
-      resolveOptionalConfigValue(this, "dailyQuotaTTLSeconds", "DAILY_QUOTA_TTL_SECONDS") ??
+    const dailyLimitTTLSeconds =
+      resolveOptionalConfigValue(this, "dailyLimitTTLSeconds", "DAILY_LIMIT_TTL_SECONDS") ??
       "259200";
     const defaultResponseLanguage = resolveOptionalConfigValue(
       this,
@@ -322,8 +322,8 @@ export class SlackAiAssistantStack extends Stack {
       SCHEDULER_SCHEDULE_GROUP_NAME: schedulerScheduleGroupName,
       SCHEDULER_SCHEDULE_NAME_PREFIX: schedulerScheduleNamePrefix,
       SCHEDULER_DEFAULT_TIME_ZONE: schedulerDefaultTimeZone,
-      SCHEDULED_LINE_DAILY_SEND_LIMIT: scheduledLineDailySendLimit,
-      DAILY_QUOTA_TTL_SECONDS: dailyQuotaTTLSeconds,
+      SCHEDULER_DAILY_SEND_LIMIT: schedulerDailySendLimit,
+      DAILY_LIMIT_TTL_SECONDS: dailyLimitTTLSeconds,
       WORK_SESSION_IDLE_TIMEOUT_SECONDS: workSessionIdleTimeoutSeconds,
       WORK_SESSION_MAX_LIFETIME_SECONDS: workSessionMaxLifetimeSeconds,
       WORK_SESSION_MAX_ACTIVE_PER_OWNER: workSessionMaxActivePerOwner,

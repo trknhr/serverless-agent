@@ -238,7 +238,7 @@ describe("scheduled agent runner", () => {
     expect(mocks.slackPostMessage).not.toHaveBeenCalled();
   });
 
-  it("does not send scheduled LINE reminders after the daily workspace quota is exhausted", async () => {
+  it("does not send scheduled reminders after the daily workspace limit is exhausted", async () => {
     mocks.documentSend
       .mockResolvedValueOnce({
         Item: {
@@ -246,7 +246,7 @@ describe("scheduled agent runner", () => {
           name: "Morning Reminder",
           prompt: "Post today's reminder.",
           workspaceId: "ws_1",
-          outputChannelId: "line:group:G1",
+          outputChannelId: "C1",
           enabled: true,
           reuseSession: false,
           createdAt: "2026-05-29T00:00:00.000Z",

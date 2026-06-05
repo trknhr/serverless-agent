@@ -1,7 +1,7 @@
 import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { documentClient } from "./documentClient";
 
-interface ConsumeDailyQuotaInput {
+interface ConsumeDailyLimitInput {
   workspaceId: string;
   kind: string;
   limit: number;
@@ -11,10 +11,10 @@ interface ConsumeDailyQuotaInput {
 
 const DEFAULT_TTL_SECONDS = 3 * 24 * 60 * 60;
 
-export class DailyQuotaRepository {
+export class DailyLimitRepository {
   constructor(private readonly tableName: string) {}
 
-  async consume(input: ConsumeDailyQuotaInput): Promise<boolean> {
+  async consume(input: ConsumeDailyLimitInput): Promise<boolean> {
     if (input.limit <= 0) {
       return true;
     }
@@ -27,7 +27,7 @@ export class DailyQuotaRepository {
         new UpdateCommand({
           TableName: this.tableName,
           Key: {
-            pk: buildDailyQuotaPk(input.workspaceId, input.kind, now),
+            pk: buildDailyLimitPk(input.workspaceId, input.kind, now),
           },
           UpdateExpression:
             "SET #workspaceId = :workspaceId, #kind = :kind, #date = :date, #ttl = :ttl ADD #count :one",
@@ -60,7 +60,7 @@ export class DailyQuotaRepository {
   }
 }
 
-function buildDailyQuotaPk(workspaceId: string, kind: string, now: Date): string {
+function buildDailyLimitPk(workspaceId: string, kind: string, now: Date): string {
   return `USAGE#WORKSPACE#${workspaceId}#DATE#${formatJstDate(now)}#KIND#${kind}`;
 }
 

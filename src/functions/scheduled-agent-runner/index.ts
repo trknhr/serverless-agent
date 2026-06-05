@@ -7,7 +7,7 @@ import { loadSchedulerEnv } from "../../config/env";
 import { LineMessagingClient } from "../../line/postMessage";
 import { ConversationSessionRepository } from "../../repo/conversationSessionRepository";
 import { ConversationTurnRepository } from "../../repo/conversationTurnRepository";
-import { DailyQuotaRepository } from "../../repo/dailyQuotaRepository";
+import { DailyLimitRepository } from "../../repo/dailyLimitRepository";
 import { SessionRepository } from "../../repo/sessionRepository";
 import { RecurringTaskRepository } from "../../repo/recurringTaskRepository";
 import { TaskEventRepository } from "../../repo/taskEventRepository";
@@ -32,7 +32,7 @@ interface SchedulerPayload {
 
 const SCHEDULE_TIMEZONE = "Asia/Tokyo";
 const RECURRING_TASK_LOOKAHEAD_DAYS = 7;
-const SCHEDULED_LINE_SEND_QUOTA_KIND = "scheduled_line_send";
+const SCHEDULER_SEND_LIMIT_KIND = "scheduler_send";
 const WEEKDAYS: RecurringTaskWeekday[] = [
   "sunday",
   "monday",
@@ -65,7 +65,7 @@ const taskStateRepository = new TaskStateRepository(env.TASKS_TABLE_NAME);
 const sessionRepository = new SessionRepository(env.SESSION_TABLE_NAME);
 const conversationSessionRepository = new ConversationSessionRepository(env.CONVERSATION_SESSIONS_TABLE_NAME);
 const conversationTurnRepository = new ConversationTurnRepository(env.CONVERSATION_TURNS_TABLE_NAME);
-const dailyQuotaRepository = new DailyQuotaRepository(env.PROCESSED_EVENTS_TABLE_NAME);
+const dailyLimitRepository = new DailyLimitRepository(env.PROCESSED_EVENTS_TABLE_NAME);
 
 export async function handler(
   event: EventBridgeEvent<string, SchedulerPayload> | SchedulerPayload,
@@ -565,23 +565,36 @@ async function postScheduledMessage(
   | { provider: "slack"; channelId: string; messageTs?: string; text: string }
   | { provider: "line"; channelId: string; text: string }
 > {
+  const allowed = await dailyLimitRepository.consume({
+    workspaceId: task.workspaceId,
+    kind: SCHEDULER_SEND_LIMIT_KIND,
+    limit: env.SCHEDULER_DAILY_SEND_LIMIT,
+    ttlSeconds: env.DAILY_LIMIT_TTL_SECONDS,
+  });
+  if (!allowed) {
+    logger.warn("Scheduler daily send limit exceeded", {
+      component: "scheduled-agent-runner",
+      workspaceId: task.workspaceId,
+      taskId: task.taskId,
+      provider: outputTarget.provider,
+      limit: env.SCHEDULER_DAILY_SEND_LIMIT,
+    });
+    if (outputTarget.provider === "line") {
+      return {
+        provider: "line",
+        channelId: outputTarget.channelId,
+        text: buildScheduledLineMessage(task, text),
+      };
+    }
+    return {
+      provider: "slack",
+      channelId: outputTarget.channelId,
+      text: buildScheduledSlackMessage(task, text),
+    };
+  }
+
   if (outputTarget.provider === "line") {
     const messageText = buildScheduledLineMessage(task, text);
-    const allowed = await dailyQuotaRepository.consume({
-      workspaceId: task.workspaceId,
-      kind: SCHEDULED_LINE_SEND_QUOTA_KIND,
-      limit: env.SCHEDULED_LINE_DAILY_SEND_LIMIT,
-      ttlSeconds: env.DAILY_QUOTA_TTL_SECONDS,
-    });
-    if (!allowed) {
-      logger.warn("Scheduled LINE reminder daily quota exceeded", {
-        component: "scheduled-agent-runner",
-        workspaceId: task.workspaceId,
-        taskId: task.taskId,
-        limit: env.SCHEDULED_LINE_DAILY_SEND_LIMIT,
-      });
-      return { provider: "line", channelId: outputTarget.channelId, text: messageText };
-    }
     await lineClient.pushText(outputTarget.targetId, messageText);
     return { provider: "line", channelId: outputTarget.channelId, text: messageText };
   }
