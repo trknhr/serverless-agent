@@ -16,6 +16,21 @@ export const customToolDefinitions = [
     },
   },
   {
+    name: "read_attachment_image",
+    description:
+      "Read a short-lived archived image attachment by source_id and return the image to the model. Only use source IDs that were explicitly provided in the current conversation context. Use this when the user asks about an attached, recent, or referenced image; do not use it for unrelated requests.",
+    input_schema: {
+      type: "object",
+      properties: {
+        source_id: {
+          type: "string",
+          description: "Archived image source ID from the current attachment manifest, such as src_abc123.",
+        },
+      },
+      required: ["source_id"],
+    },
+  },
+  {
     name: "propose_skill",
     description:
       "Create or update a proposed generated skill from a complete SKILL.md document only after explicit confirmation that the user wants a reusable skill draft. Do not call propose_skill based only on inferred intent. This does not enable the skill; ask for approval before calling approve_skill.",

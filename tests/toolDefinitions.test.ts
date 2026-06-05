@@ -71,4 +71,14 @@ describe("tool definitions", () => {
     expect(toolDescription("promote_memory_to_workspace")).toContain("current-channel memory");
     expect(toolDescription("promote_memory_to_workspace")).toContain("does not delete");
   });
+
+  it("exposes archived attachment image reading by source ID", () => {
+    const readAttachmentImage = toolDefinition("read_attachment_image");
+
+    expect(readAttachmentImage.description).toContain("Only use source IDs");
+    expect(readAttachmentImage.input_schema.required).toEqual(expect.arrayContaining(["source_id"]));
+    expect(readAttachmentImage.input_schema.properties.source_id).toMatchObject({
+      type: "string",
+    });
+  });
 });
