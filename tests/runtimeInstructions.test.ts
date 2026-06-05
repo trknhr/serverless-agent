@@ -10,4 +10,14 @@ describe("Agent runtime instructions", () => {
     expect(prompt).toContain("Do not call propose_skill based only on inferred intent");
     expect(prompt).toContain("evaluation notes and at least one concrete test case");
   });
+
+  it("tells the model to read image manifests lazily", () => {
+    const prompt = buildSystemPrompt("");
+
+    expect(prompt).toContain("available image attachment manifest");
+    expect(prompt).toContain("do not infer image contents from the manifest alone");
+    expect(prompt).toContain("Call read_attachment_image only when");
+    expect(prompt).toContain("current request is unrelated to the image");
+    expect(prompt).toContain("source IDs explicitly shown in the current attachment manifest");
+  });
 });

@@ -122,7 +122,7 @@ describe("LINE webhook parsing", () => {
         conversationTs: "line:user:U1",
         messageTs: "img-1",
         userId: "line:user:U1",
-        text: expect.stringContaining("Analyze the image content directly"),
+        text: expect.stringContaining("Read the available image attachment"),
         responseTargetId: "U1",
         responseTargetType: "user",
         source: "message",
@@ -416,6 +416,7 @@ describe("LineAttachmentArchiveService", () => {
     const manifestText = result.manifestBlocks[0].type === "text" ? result.manifestBlocks[0].text : "";
     expect(manifestText).toContain(`sourceId=${repository.save.mock.calls[0][0].sourceId}`);
     expect(manifestText).toContain("expiresAt=2026-06-03T03:04:05.000Z");
+    expect(manifestText).toContain("Use read_attachment_image with this sourceId only when");
     expect(manifestText).toContain("Ignored 1 extra LINE image attachment beyond maxImages=3.");
     expect(manifestText).not.toContain("image-one");
   });

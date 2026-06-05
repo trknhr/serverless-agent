@@ -122,7 +122,7 @@ function buildDefaultAttachmentPrompt(attachments: LineQueueMessage["attachments
   }
   return [
     "The user sent image attachment(s) without text.",
-    "Analyze the image content directly and summarize the visible information.",
+    "Read the available image attachment and summarize the visible information.",
     "If the image is a document, read the text as best you can.",
     "Answer in the language of the document or the surrounding conversation.",
   ].join(" ");

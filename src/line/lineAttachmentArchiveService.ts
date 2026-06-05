@@ -157,7 +157,7 @@ export class LineAttachmentArchiveService {
       );
       return {
         document,
-        manifestLine: `Available image attachment: LINE image ${attachment.id} sourceId=${sourceId} expiresAt=${expiresAt}. Use the source document tool to inspect it when needed.`,
+        manifestLine: `Available image attachment: LINE image ${attachment.id} sourceId=${sourceId} expiresAt=${expiresAt}. Use read_attachment_image with this sourceId only when the current user request needs the image.`,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown archive error";
