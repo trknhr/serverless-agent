@@ -127,6 +127,75 @@ describe("scheduled agent runner", () => {
     expect(mocks.linePushText).not.toHaveBeenCalled();
   });
 
+  it("stores scheduled Slack reminders as thread context for follow-up replies", async () => {
+    mocks.documentSend
+      .mockResolvedValueOnce({
+        Item: {
+          taskId: "morning",
+          name: "Morning Reminder",
+          prompt: "Post today's reminder.",
+          workspaceId: "T1",
+          outputChannelId: "C1",
+          enabled: true,
+          reuseSession: false,
+          createdAt: "2026-05-29T00:00:00.000Z",
+          updatedAt: "2026-05-29T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValue({});
+    mocks.agentInvoke.mockResolvedValueOnce({
+      text: "Today's reminder.\nSecond line.",
+      sessionId: "agent-session",
+      status: "completed",
+      taskIds: [],
+      recurringTaskIds: [],
+      savedMemoryIds: [],
+      calendarDraftIds: [],
+    });
+    mocks.slackPostMessage.mockResolvedValueOnce({ ts: "200.123" });
+
+    const { handler } = await import("../src/functions/scheduled-agent-runner");
+
+    await handler({
+      taskId: "morning",
+      workspaceId: "T1",
+    });
+
+    expect(mocks.documentSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          TableName: "conversation_sessions_table_name",
+          Item: expect.objectContaining({
+            pk: "WORKSPACE#T1#CHANNEL#C1",
+            sk: "CONVERSATION#200.123",
+            created_at: expect.any(String),
+            last_used_at: expect.any(String),
+          }),
+        }),
+      }),
+    );
+    expect(mocks.documentSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          TableName: "conversation_turns_table_name",
+          Item: expect.objectContaining({
+            pk: "WORKSPACE#T1#CHANNEL#C1#CONVERSATION#200.123",
+            context_scope: "thread",
+            role: "assistant",
+            source_event: "scheduled_reminder",
+            thread_ts: "200.123",
+            message_ts: "200.123",
+            turn_ts: "200.123",
+            text: "*リマインダー:* Morning Reminder\n\nToday's reminder.\nSecond line.",
+          }),
+        }),
+      }),
+    );
+  });
+
   it("posts scheduled LINE reminders back to the LINE conversation", async () => {
     mocks.documentSend
       .mockResolvedValueOnce({

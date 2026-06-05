@@ -5,6 +5,8 @@ import { buildAgentRuntimeResources } from "../../agentcore/contracts";
 import { SecretsProvider } from "../../aws/secretsProvider";
 import { loadSchedulerEnv } from "../../config/env";
 import { LineMessagingClient } from "../../line/postMessage";
+import { ConversationSessionRepository } from "../../repo/conversationSessionRepository";
+import { ConversationTurnRepository } from "../../repo/conversationTurnRepository";
 import { SessionRepository } from "../../repo/sessionRepository";
 import { RecurringTaskRepository } from "../../repo/recurringTaskRepository";
 import { TaskEventRepository } from "../../repo/taskEventRepository";
@@ -59,6 +61,8 @@ const recurringTaskRepository = new RecurringTaskRepository(env.RECURRING_TASKS_
 const taskEventRepository = new TaskEventRepository(env.TASK_EVENTS_TABLE_NAME);
 const taskStateRepository = new TaskStateRepository(env.TASKS_TABLE_NAME);
 const sessionRepository = new SessionRepository(env.SESSION_TABLE_NAME);
+const conversationSessionRepository = new ConversationSessionRepository(env.CONVERSATION_SESSIONS_TABLE_NAME);
+const conversationTurnRepository = new ConversationTurnRepository(env.CONVERSATION_TURNS_TABLE_NAME);
 
 export async function handler(
   event: EventBridgeEvent<string, SchedulerPayload> | SchedulerPayload,
@@ -126,7 +130,23 @@ export async function handler(
     },
   });
 
-  await postScheduledMessage(outputTarget, task, completion.text);
+  const postedMessage = await postScheduledMessage(outputTarget, task, completion.text);
+  if (postedMessage.provider === "slack" && postedMessage.messageTs) {
+    try {
+      await persistScheduledSlackThreadContext({
+        workspaceId: task.workspaceId,
+        channelId: postedMessage.channelId,
+        messageTs: postedMessage.messageTs,
+        text: postedMessage.text,
+      });
+    } catch (error) {
+      log.warn("Failed to save scheduled Slack reminder as thread context", {
+        error: error instanceof Error ? error.message : "Unknown conversation context error",
+        channelId: postedMessage.channelId,
+        messageTs: postedMessage.messageTs,
+      });
+    }
+  }
 
   const sessionId = completion.sessionId ?? reusableSessionRecord?.sessionId;
   if (task.reuseSession) {
@@ -538,15 +558,55 @@ async function postScheduledMessage(
   outputTarget: ScheduledOutputTarget,
   task: ScheduledTask,
   text: string,
-): Promise<void> {
+): Promise<
+  | { provider: "slack"; channelId: string; messageTs?: string; text: string }
+  | { provider: "line"; channelId: string; text: string }
+> {
   if (outputTarget.provider === "line") {
-    await lineClient.pushText(outputTarget.targetId, buildScheduledLineMessage(task, text));
-    return;
+    const messageText = buildScheduledLineMessage(task, text);
+    await lineClient.pushText(outputTarget.targetId, messageText);
+    return { provider: "line", channelId: outputTarget.channelId, text: messageText };
   }
 
-  await slackClient.postMessage({
+  const messageText = buildScheduledSlackMessage(task, text);
+  const message = await slackClient.postMessage({
     channel: outputTarget.channelId,
-    text: buildScheduledSlackMessage(task, text),
+    text: messageText,
+  });
+  return {
+    provider: "slack",
+    channelId: outputTarget.channelId,
+    messageTs: message?.ts,
+    text: messageText,
+  };
+}
+
+async function persistScheduledSlackThreadContext(input: {
+  workspaceId: string;
+  channelId: string;
+  messageTs: string;
+  text: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  await conversationSessionRepository.save({
+    workspaceId: input.workspaceId,
+    channelId: input.channelId,
+    conversationTs: input.messageTs,
+    createdAt: now,
+    lastUsedAt: now,
+  });
+  await conversationTurnRepository.save({
+    workspaceId: input.workspaceId,
+    channelId: input.channelId,
+    conversationTs: input.messageTs,
+    contextScope: "thread",
+    role: "assistant",
+    source: "slack",
+    sourceEvent: "scheduled_reminder",
+    threadTs: input.messageTs,
+    messageTs: input.messageTs,
+    turnTs: input.messageTs,
+    text: input.text,
   });
 }
 

@@ -476,8 +476,10 @@ export class SlackAiAssistantStack extends Stack {
     sessionTable.grantReadWriteData(scheduledRunner);
     conversationSessionsTable.grantReadWriteData(worker);
     conversationSessionsTable.grantReadWriteData(lineWorker);
+    conversationSessionsTable.grantReadWriteData(scheduledRunner);
     conversationTurnsTable.grantReadWriteData(worker);
     conversationTurnsTable.grantReadWriteData(lineWorker);
+    conversationTurnsTable.grantReadWriteData(scheduledRunner);
     userMemoryTable.grantReadWriteData(worker);
     userMemoryTable.grantReadWriteData(scheduledRunner);
     memoryItemsTable.grantReadWriteData(worker);

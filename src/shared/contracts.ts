@@ -105,6 +105,7 @@ export interface ConversationTurnRecord {
     | "dm"
     | "thread_reply"
     | "assistant_reply"
+    | "scheduled_reminder"
     | "thread_backfill"
     | "line_message"
     | "line_assistant_reply";
