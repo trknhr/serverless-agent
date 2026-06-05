@@ -77,6 +77,7 @@ export const agentRuntimeResourcesSchema = z.object({
   browserProvider: z.string().min(1).optional(),
   browserIdentifier: z.string().min(1).optional(),
   skillsTableName: z.string().min(1).optional(),
+  sourceDocumentsTableName: z.string().min(1).optional(),
   workSessionIdleTimeoutSeconds: z.number().int().min(60).max(28_800).default(900),
   workSessionMaxLifetimeSeconds: z.number().int().min(60).max(28_800).default(28_800),
   workSessionMaxActivePerOwner: z.number().int().positive().default(2),
@@ -150,6 +151,7 @@ export interface ToolRuntimeEnvironment {
   BROWSER_PROVIDER?: string;
   BROWSER_IDENTIFIER?: string;
   SKILLS_TABLE_NAME?: string;
+  SOURCE_DOCUMENTS_TABLE_NAME?: string;
   WORK_SESSION_IDLE_TIMEOUT_SECONDS: number;
   WORK_SESSION_MAX_LIFETIME_SECONDS: number;
   WORK_SESSION_MAX_ACTIVE_PER_OWNER: number;
@@ -180,6 +182,7 @@ export function buildAgentRuntimeResources(env: ToolRuntimeEnvironment): AgentRu
     browserProvider: env.BROWSER_PROVIDER,
     browserIdentifier: env.BROWSER_IDENTIFIER,
     skillsTableName: env.SKILLS_TABLE_NAME,
+    sourceDocumentsTableName: env.SOURCE_DOCUMENTS_TABLE_NAME,
     workSessionIdleTimeoutSeconds: env.WORK_SESSION_IDLE_TIMEOUT_SECONDS,
     workSessionMaxLifetimeSeconds: env.WORK_SESSION_MAX_LIFETIME_SECONDS,
     workSessionMaxActivePerOwner: env.WORK_SESSION_MAX_ACTIVE_PER_OWNER,

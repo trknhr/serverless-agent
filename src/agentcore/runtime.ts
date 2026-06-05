@@ -1,4 +1,5 @@
 import { createUserGoogleCalendarClient } from "../calendar/userGoogleCalendar";
+import { ArchivedAttachmentImageReader } from "../attachments/attachmentImageReader";
 import {
   AgentContentBlock,
   ToolExecutionResult,
@@ -12,6 +13,7 @@ import { ChannelMemoryRepository } from "../repo/channelMemoryRepository";
 import { GoogleOAuthConnectionRepository } from "../repo/googleOAuthConnectionRepository";
 import { MemoryItemRepository } from "../repo/memoryItemRepository";
 import { RecurringTaskRepository } from "../repo/recurringTaskRepository";
+import { SourceDocumentRepository } from "../repo/sourceDocumentRepository";
 import { TaskRepository } from "../repo/taskRepository";
 import { TaskEventRepository } from "../repo/taskEventRepository";
 import { TaskStateRepository } from "../repo/taskStateRepository";
@@ -164,6 +166,10 @@ function createToolExecutor(
   }
 
   const resources = request.resources;
+  const sourceDocuments = resources.sourceDocumentsTableName
+    ? new SourceDocumentRepository(resources.sourceDocumentsTableName)
+    : undefined;
+
   return new CustomToolExecutor(
     {
       memoryItems: new MemoryItemRepository(resources.memoryItemsTableName),
@@ -225,6 +231,9 @@ function createToolExecutor(
         browserIdentifier: resources.browserIdentifier,
       }),
       skillRegistry,
+      attachmentReader: sourceDocuments
+        ? new ArchivedAttachmentImageReader(sourceDocuments)
+        : undefined,
     },
   );
 }
