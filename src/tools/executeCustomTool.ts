@@ -42,6 +42,10 @@ const loadSkillSchema = z.object({
   skill_id: z.string().min(1).max(128),
 });
 
+const readAttachmentImageSchema = z.object({
+  source_id: z.string().min(1),
+});
+
 const generatedSkillTestCaseInputSchema = z.object({
   name: z.string().min(1),
   prompt: z.string().min(1),
@@ -431,6 +435,7 @@ export interface ToolExecutionContext {
   channelId?: string;
   conversationId?: string;
   logger: Logger;
+  attachmentSourceIds?: string[];
   memoryWritePolicy?: {
     allowWorkspaceMemory?: boolean;
     channelInferredStatus?: "active" | "candidate";
@@ -464,6 +469,9 @@ interface ToolIntegrations {
   webProvider?: WebToolProvider;
   browserProvider?: BrowserProvider;
   skillRegistry?: SkillRegistry;
+  attachmentReader?: {
+    readImage(input: { workspaceId: string; sourceId: string }): Promise<ToolExecutionResult["content"]>;
+  };
 }
 
 export interface ToolExecutionSummary {
@@ -501,6 +509,8 @@ export class CustomToolExecutor {
       switch (toolName) {
         case "load_skill":
           return await this.loadSkill(input);
+        case "read_attachment_image":
+          return await this.readAttachmentImage(input);
         case "propose_skill":
           return await this.proposeSkill(input);
         case "approve_skill":
@@ -600,6 +610,24 @@ export class CustomToolExecutor {
       taskIds: [...this.taskIds],
       recurringTaskIds: [...this.recurringTaskIds],
       calendarDraftIds: [...this.calendarDraftIds],
+    };
+  }
+
+  private async readAttachmentImage(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = readAttachmentImageSchema.parse(input);
+    if (!this.context.attachmentSourceIds?.includes(parsed.source_id)) {
+      return errorResult("Archived attachment image is not available in the current request context.");
+    }
+
+    if (!this.integrations.attachmentReader) {
+      return errorResult("Archived attachment image reader is not available for this request.");
+    }
+
+    return {
+      content: await this.integrations.attachmentReader.readImage({
+        workspaceId: this.context.workspaceId,
+        sourceId: parsed.source_id,
+      }),
     };
   }
 

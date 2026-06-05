@@ -239,6 +239,11 @@ export class SlackAiAssistantStack extends Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,
     });
+    attachmentArchiveBucket.addLifecycleRule({
+      id: "ExpireRawPrivateLineObjects",
+      prefix: "raw/private/line/",
+      expiration: Duration.days(1),
+    });
 
     const dlq = new sqs.Queue(this, "SlackEventsDlq", {
       retentionPeriod: Duration.days(14),
@@ -381,6 +386,8 @@ export class SlackAiAssistantStack extends Stack {
         ...commonRuntimeEnvironment,
         ...toolEnvironment,
         LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: lineChannelAccessTokenParameterName,
+        SOURCE_DOCUMENTS_TABLE_NAME: sourceDocumentsTable.tableName,
+        LINE_ATTACHMENT_ARCHIVE_BUCKET_NAME: attachmentArchiveBucket.bucketName,
       },
     });
 
@@ -493,6 +500,7 @@ export class SlackAiAssistantStack extends Stack {
     googleOAuthConnectionsTable.grantReadWriteData(slackInteractions);
     googleOAuthConnectionsTable.grantReadWriteData(googleOAuth);
     sourceDocumentsTable.grantReadWriteData(worker);
+    sourceDocumentsTable.grantReadWriteData(lineWorker);
     sourceDocumentsTable.grantReadWriteData(documentImportApi);
     sourceDocumentsTable.grantReadWriteData(documentImportWorker);
     tasksTable.grantReadWriteData(worker);
@@ -522,6 +530,7 @@ export class SlackAiAssistantStack extends Stack {
     workSessionsTable.grantReadWriteData(slackAgentRuntime.role);
     attachmentArchiveBucket.grantPut(worker, "raw/private/slack/*");
     attachmentArchiveBucket.grantRead(worker, "raw/private/slack/*");
+    attachmentArchiveBucket.grantPut(lineWorker, "raw/private/line/*");
     attachmentArchiveBucket.grantPut(documentImportApi, "raw/private/imports/*");
     attachmentArchiveBucket.grantPut(documentImportApi, "raw/private/notes/*");
     attachmentArchiveBucket.grantRead(documentImportApi, "raw/private/imports/*");
@@ -548,6 +557,7 @@ export class SlackAiAssistantStack extends Stack {
     }
 
     memoryItemsTable.grantReadWriteData(slackAgentRuntime.role);
+    sourceDocumentsTable.grantReadData(slackAgentRuntime.role);
     scheduledTasksTable.grantReadWriteData(slackAgentRuntime.role);
     tasksTable.grantReadWriteData(slackAgentRuntime.role);
     taskEventsTable.grantReadWriteData(slackAgentRuntime.role);
@@ -555,6 +565,7 @@ export class SlackAiAssistantStack extends Stack {
     calendarDraftsTable.grantReadWriteData(slackAgentRuntime.role);
     googleOAuthConnectionsTable.grantReadWriteData(slackAgentRuntime.role);
     skillsTable.grantReadWriteData(slackAgentRuntime.role);
+    attachmentArchiveBucket.grantRead(slackAgentRuntime.role, "raw/private/line/*");
     slackAgentRuntime.addToPolicy(
       new iam.PolicyStatement({
         actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],

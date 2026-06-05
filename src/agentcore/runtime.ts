@@ -1,4 +1,5 @@
 import { createUserGoogleCalendarClient } from "../calendar/userGoogleCalendar";
+import { ArchivedAttachmentImageReader } from "../attachments/attachmentImageReader";
 import {
   AgentContentBlock,
   ToolExecutionResult,
@@ -12,6 +13,7 @@ import { ChannelMemoryRepository } from "../repo/channelMemoryRepository";
 import { GoogleOAuthConnectionRepository } from "../repo/googleOAuthConnectionRepository";
 import { MemoryItemRepository } from "../repo/memoryItemRepository";
 import { RecurringTaskRepository } from "../repo/recurringTaskRepository";
+import { SourceDocumentRepository } from "../repo/sourceDocumentRepository";
 import { TaskRepository } from "../repo/taskRepository";
 import { TaskEventRepository } from "../repo/taskEventRepository";
 import { TaskStateRepository } from "../repo/taskStateRepository";
@@ -28,6 +30,8 @@ import { createBrowserProvider } from "../browser/factory";
 import { DynamoDbSkillRepository } from "../skills/dynamoDbSkillRepository";
 import { SkillRegistry, formatSkillSummariesForPrompt } from "../skills/registry";
 import { buildSystemPrompt } from "./instructions";
+import { shouldUseDocumentModel } from "./modelSelection";
+import { mapToolExecutionResultToModelOutput } from "./toolResultOutput";
 
 type DynamicImport = <T = Record<string, unknown>>(specifier: string) => Promise<T>;
 type SessionHistoryMessage = {
@@ -163,6 +167,10 @@ function createToolExecutor(
   }
 
   const resources = request.resources;
+  const sourceDocuments = resources.sourceDocumentsTableName
+    ? new SourceDocumentRepository(resources.sourceDocumentsTableName)
+    : undefined;
+
   return new CustomToolExecutor(
     {
       memoryItems: new MemoryItemRepository(resources.memoryItemsTableName),
@@ -181,6 +189,7 @@ function createToolExecutor(
       channelId: request.toolContext.channelId,
       conversationId: request.context.conversationTs,
       logger: log,
+      attachmentSourceIds: request.toolContext.attachmentSourceIds,
       memoryWritePolicy: request.toolContext.memoryWritePolicy,
       workSessionPolicy: {
         idleTimeoutSeconds: resources.workSessionIdleTimeoutSeconds,
@@ -224,6 +233,9 @@ function createToolExecutor(
         browserIdentifier: resources.browserIdentifier,
       }),
       skillRegistry,
+      attachmentReader: sourceDocuments
+        ? new ArchivedAttachmentImageReader(sourceDocuments)
+        : undefined,
     },
   );
 }
@@ -288,11 +300,7 @@ function shouldUseSessionHistory(
 }
 
 function selectModelId(request: AgentRuntimeRequest): string {
-  return hasModelBinaryInput(request.content) ? documentModelId : modelId;
-}
-
-function hasModelBinaryInput(blocks: AgentContentBlock[]): boolean {
-  return blocks.some((block) => block.type === "image" || (block.type === "document" && block.source.type !== "text"));
+  return shouldUseDocumentModel(request) ? documentModelId : modelId;
 }
 
 function formatStreamError(error: unknown): string {
@@ -319,32 +327,18 @@ function createTools(
         description: definition.description,
         inputSchema: ai.jsonSchema(definition.input_schema),
         execute: async (input: Record<string, unknown>) => {
-          const result = await executor.execute({
+          return executor.execute({
             id: `agentcore_tool_${Date.now()}_${definition.name}`,
             type: "agent.tool_use",
             name: definition.name,
             input,
           });
-          return simplifyToolResult(result);
         },
+        toModelOutput: ({ output }: { output: ToolExecutionResult }) =>
+          mapToolExecutionResultToModelOutput(output),
       }),
     ]),
   );
-}
-
-function simplifyToolResult(result: ToolExecutionResult): Record<string, unknown> {
-  return {
-    isError: Boolean(result.isError),
-    content: (result.content ?? []).map((block) => {
-      if (block.type === "text") {
-        return { type: "text", text: block.text };
-      }
-      return {
-        type: block.type,
-        note: "Non-text tool output was returned.",
-      };
-    }),
-  };
 }
 
 function toHistoryText(blocks: AgentContentBlock[]): string {

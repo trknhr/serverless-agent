@@ -1189,3 +1189,146 @@ describe("load_skill tool", () => {
     );
   });
 });
+
+describe("read_attachment_image tool", () => {
+  it("reads archived attachment images through the attachment reader integration", async () => {
+    const content = [
+      {
+        type: "text",
+        text: "Archived image src_1.",
+      },
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/png",
+          data: "iVBORw0KGgo=",
+        },
+      },
+    ];
+    const attachmentReader = {
+      readImage: vi.fn().mockResolvedValue(content),
+    };
+    const executor = new CustomToolExecutor(
+      {} as never,
+      {
+        workspaceId: "line:group:G1",
+        logger,
+        attachmentSourceIds: ["src_1"],
+      },
+      {
+        attachmentReader,
+      } as never,
+    );
+
+    await expect(
+      executor.execute({
+        id: "tool-1",
+        type: "agent.tool_use",
+        name: "read_attachment_image",
+        input: { source_id: "src_1" },
+      }),
+    ).resolves.toEqual({ content });
+    expect(attachmentReader.readImage).toHaveBeenCalledWith({
+      workspaceId: "line:group:G1",
+      sourceId: "src_1",
+    });
+  });
+
+  it("returns an error when the attachment source ID is not allowed", async () => {
+    const attachmentReader = {
+      readImage: vi.fn(),
+    };
+    const executor = new CustomToolExecutor(
+      {} as never,
+      {
+        workspaceId: "line:group:G1",
+        logger,
+        attachmentSourceIds: ["src_2"],
+      },
+      {
+        attachmentReader,
+      } as never,
+    );
+
+    await expect(
+      executor.execute({
+        id: "tool-1",
+        type: "agent.tool_use",
+        name: "read_attachment_image",
+        input: { source_id: "src_1" },
+      }),
+    ).resolves.toEqual({
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "Archived attachment image is not available in the current request context.",
+        },
+      ],
+    });
+    expect(attachmentReader.readImage).not.toHaveBeenCalled();
+  });
+
+  it("returns an error when attachment source IDs are missing", async () => {
+    const attachmentReader = {
+      readImage: vi.fn(),
+    };
+    const executor = new CustomToolExecutor(
+      {} as never,
+      {
+        workspaceId: "line:group:G1",
+        logger,
+      },
+      {
+        attachmentReader,
+      } as never,
+    );
+
+    await expect(
+      executor.execute({
+        id: "tool-1",
+        type: "agent.tool_use",
+        name: "read_attachment_image",
+        input: { source_id: "src_1" },
+      }),
+    ).resolves.toEqual({
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "Archived attachment image is not available in the current request context.",
+        },
+      ],
+    });
+    expect(attachmentReader.readImage).not.toHaveBeenCalled();
+  });
+
+  it("returns an error when an allowed attachment source has no reader integration", async () => {
+    const executor = new CustomToolExecutor(
+      {} as never,
+      {
+        workspaceId: "line:group:G1",
+        logger,
+        attachmentSourceIds: ["src_1"],
+      },
+    );
+
+    await expect(
+      executor.execute({
+        id: "tool-1",
+        type: "agent.tool_use",
+        name: "read_attachment_image",
+        input: { source_id: "src_1" },
+      }),
+    ).resolves.toEqual({
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "Archived attachment image reader is not available for this request.",
+        },
+      ],
+    });
+  });
+});

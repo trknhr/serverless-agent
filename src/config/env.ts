@@ -67,6 +67,8 @@ const lineIngressEnvSchema = runtimeBaseEnvSchema.extend({
 
 const lineWorkerEnvSchema = toolResourceEnvSchema.extend({
   LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: requiredString,
+  SOURCE_DOCUMENTS_TABLE_NAME: requiredString,
+  LINE_ATTACHMENT_ARCHIVE_BUCKET_NAME: requiredString,
 });
 
 const googleOAuthEnvSchema = baseEnvSchema.extend({
