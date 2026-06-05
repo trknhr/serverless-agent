@@ -849,6 +849,8 @@ describe("task repositories", () => {
       ],
     });
     sendMock.mockResolvedValueOnce({ Items: [] });
+    sendMock.mockResolvedValueOnce({ Items: [] });
+    sendMock.mockResolvedValueOnce({ Items: [] });
 
     await expect(repo.search({ workspaceId: "T1", query: "alpha search token", limit: 5 })).resolves.toEqual([
       expect.objectContaining({ taskId: "task-alpha" }),
@@ -920,6 +922,32 @@ describe("task repositories", () => {
         patch: { description: "Stale description update." },
       }),
     ).rejects.toThrow("changed since it was loaded");
+  });
+
+  it("searches completed task states when statuses are omitted", async () => {
+    const repo = new TaskStateRepository("states");
+
+    sendMock
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            workspaceId: "T1",
+            taskId: "task-completed-search",
+            title: "Completed search fixture",
+            description: "Contains completed-only fixture token.",
+            status: "done",
+            createdAt: "created",
+            updatedAt: "updated",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ Items: [] });
+
+    await expect(repo.search({ workspaceId: "T1", query: "completed-only fixture", limit: 5 })).resolves.toEqual([
+      expect.objectContaining({ taskId: "task-completed-search", status: "done" }),
+    ]);
   });
 
   it("gets, lists, upserts, and disables recurring tasks", async () => {

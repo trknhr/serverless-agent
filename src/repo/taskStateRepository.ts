@@ -143,9 +143,13 @@ export class TaskStateRepository {
       return [];
     }
 
+    const statuses =
+      input.statuses && input.statuses.length > 0
+        ? input.statuses
+        : (["open", "in_progress", "done", "cancelled"] as TaskStatus[]);
     const candidates = await this.list({
       workspaceId: input.workspaceId,
-      statuses: input.statuses,
+      statuses,
       dueBefore: input.dueBefore,
       ownerUserId: input.ownerUserId,
       limit: 50,

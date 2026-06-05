@@ -23,6 +23,7 @@ describe("tool definitions", () => {
   it("keeps daily reminder contents separate from scheduled notification setup", () => {
     expect(toolDescription("upsert_task")).toContain("inside an existing daily reminder");
     expect(toolDescription("search_tasks")).toContain("Search tracked tasks");
+    expect(toolDescription("search_tasks")).toContain("all statuses");
     expect(toolDescription("patch_task")).toContain("partial update");
     expect(toolDescription("patch_task")).toContain("search_tasks");
     expect(toolDescription("create_scheduled_reminder")).toContain("explicitly asks for an individual reminder");

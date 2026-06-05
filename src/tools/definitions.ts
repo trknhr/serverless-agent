@@ -453,7 +453,7 @@ export const customToolDefinitions = [
   {
     name: "search_tasks",
     description:
-      "Search tracked tasks by natural-language keywords across task title, description, source, and metadata. Use this when the user asks about prior reminders, deadlines, plans, task-derived terms, or wants to update a task but does not know the task_id.",
+      "Search tracked tasks by natural-language keywords across task title, description, source, and metadata. Defaults to all statuses, including completed and cancelled tasks. Use this when the user asks about prior reminders, deadlines, plans, task-derived terms, or wants to update a task but does not know the task_id.",
     input_schema: {
       type: "object",
       properties: {

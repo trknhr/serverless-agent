@@ -18,6 +18,8 @@ describe("Agent runtime instructions", () => {
     expect(prompt).toContain("past reminders");
     expect(prompt).toContain("deadlines");
     expect(prompt).toContain("items to bring");
+    expect(prompt).toContain("short term refers to");
+    expect(prompt).toContain("term itself");
   });
 
   it("tells the model to read image manifests lazily", () => {
