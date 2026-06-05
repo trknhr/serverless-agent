@@ -123,7 +123,7 @@ export class LineAttachmentArchiveService {
         input.logger,
       );
       return {
-        document,
+        ...(document ? { document } : {}),
         manifestLine: `Attachment note: Could not archive LINE image ${attachment.id}. image exceeds archive limit`,
       };
     }
@@ -155,6 +155,11 @@ export class LineAttachmentArchiveService {
         },
         input.logger,
       );
+      if (!document) {
+        return {
+          manifestLine: `Attachment note: Could not archive LINE image ${attachment.id}. metadata unavailable`,
+        };
+      }
       return {
         document,
         manifestLine: `Available image attachment: LINE image ${attachment.id} sourceId=${sourceId} expiresAt=${expiresAt}. Use read_attachment_image with this sourceId only when the current user request needs the image.`,
@@ -175,11 +180,14 @@ export class LineAttachmentArchiveService {
         },
         input.logger,
       );
-      return { document, manifestLine: `Attachment note: Could not archive LINE image ${attachment.id}. ${message}` };
+      return {
+        ...(document ? { document } : {}),
+        manifestLine: `Attachment note: Could not archive LINE image ${attachment.id}. ${message}`,
+      };
     }
   }
 
-  private async persistDocument(document: SourceDocument, logger: Logger): Promise<SourceDocument> {
+  private async persistDocument(document: SourceDocument, logger: Logger): Promise<SourceDocument | null> {
     try {
       return await this.repository.save(document);
     } catch (error) {
@@ -188,7 +196,7 @@ export class LineAttachmentArchiveService {
         lineMessageId: document.lineMessageId,
         error: error instanceof Error ? error.message : "Unknown repository error",
       });
-      return document;
+      return null;
     }
   }
 }

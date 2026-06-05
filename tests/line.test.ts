@@ -455,4 +455,42 @@ describe("LineAttachmentArchiveService", () => {
       expect.objectContaining({ lineMessageId: "img-1", error: "line expired" }),
     );
   });
+
+  it("does not advertise archived images when source metadata cannot be saved", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-02T03:04:05.000Z"));
+    const repository = { save: vi.fn().mockRejectedValue(new Error("ddb down")) };
+    const s3 = { send: vi.fn().mockResolvedValue({}) };
+    const lineClient = {
+      downloadMessageContent: vi.fn().mockResolvedValue({
+        bytes: Buffer.from("image-one"),
+        contentType: "image/jpeg",
+      }),
+    };
+    const logger = { warn: vi.fn() };
+    const service = new LineAttachmentArchiveService("bucket", repository as any, s3);
+
+    const result = await service.archiveAttachments({
+      workspaceId: "line:user:U1",
+      channelId: "line:user:U1",
+      messageTs: "img-1",
+      userId: "line:user:U1",
+      attachments: [{ id: "img-1", type: "image", contentType: "image/jpeg" }],
+      lineClient: lineClient as any,
+      logger: logger as any,
+      ttlSeconds: 86_400,
+      maxImages: 3,
+    });
+
+    expect(s3.send).toHaveBeenCalledTimes(1);
+    expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(result.documents).toEqual([]);
+    expect(result.manifestBlocks).toEqual([
+      { type: "text", text: "Attachment note: Could not archive LINE image img-1. metadata unavailable" },
+    ]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "LINE source document metadata persist failed",
+      expect.objectContaining({ lineMessageId: "img-1", error: "ddb down" }),
+    );
+  });
 });

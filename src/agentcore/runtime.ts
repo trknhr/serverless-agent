@@ -30,6 +30,7 @@ import { createBrowserProvider } from "../browser/factory";
 import { DynamoDbSkillRepository } from "../skills/dynamoDbSkillRepository";
 import { SkillRegistry, formatSkillSummariesForPrompt } from "../skills/registry";
 import { buildSystemPrompt } from "./instructions";
+import { shouldUseDocumentModel } from "./modelSelection";
 import { mapToolExecutionResultToModelOutput } from "./toolResultOutput";
 
 type DynamicImport = <T = Record<string, unknown>>(specifier: string) => Promise<T>;
@@ -299,11 +300,7 @@ function shouldUseSessionHistory(
 }
 
 function selectModelId(request: AgentRuntimeRequest): string {
-  return hasModelBinaryInput(request.content) ? documentModelId : modelId;
-}
-
-function hasModelBinaryInput(blocks: AgentContentBlock[]): boolean {
-  return blocks.some((block) => block.type === "image" || (block.type === "document" && block.source.type !== "text"));
+  return shouldUseDocumentModel(request) ? documentModelId : modelId;
 }
 
 function formatStreamError(error: unknown): string {
