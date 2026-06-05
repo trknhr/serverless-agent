@@ -1016,6 +1016,107 @@ describe("load_skill tool", () => {
     expect(executor.getSummary().savedMemoryIds).toEqual(["mem_1"]);
   });
 
+  it("searches and safely patches tasks through custom tools", async () => {
+    const tasks = {
+      search: vi.fn().mockResolvedValue([
+        {
+          workspaceId: "T1",
+          taskId: "task_alpha",
+          title: "Alpha task",
+          description: "Contains alpha search token. Preserve this detail.",
+          status: "open",
+          dueAt: "2026-06-05T23:59:00+09:00",
+          priority: "high",
+          updatedAt: "old",
+        },
+      ]),
+      patch: vi.fn().mockResolvedValue({
+        workspaceId: "T1",
+        taskId: "task_alpha",
+        title: "Alpha task",
+        description: "Contains alpha search token.",
+        status: "open",
+        dueAt: "2026-06-05T23:59:00+09:00",
+        priority: "high",
+        updatedAt: "new",
+      }),
+    };
+    const taskEvents = {
+      save: vi.fn(),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        tasks,
+        taskEvents,
+      } as never,
+      {
+        workspaceId: "T1",
+        userId: "U1",
+        logger,
+      },
+    );
+
+    const searchResult = await executor.execute({
+      id: "tool-search",
+      type: "agent.tool_use",
+      name: "search_tasks",
+      input: { query: "alpha search token", limit: 5 },
+    });
+    expect(searchResult.isError).toBeUndefined();
+    expect(tasks.search).toHaveBeenCalledWith({
+      workspaceId: "T1",
+      query: "alpha search token",
+      statuses: undefined,
+      dueBefore: undefined,
+      limit: 5,
+    });
+    expect(JSON.parse((searchResult.content?.[0] as { text: string }).text)).toMatchObject({
+      count: 1,
+      tasks: [
+        {
+          task_id: "task_alpha",
+          description: "Contains alpha search token. Preserve this detail.",
+          updated_at: "old",
+        },
+      ],
+    });
+
+    const patchResult = await executor.execute({
+      id: "tool-patch",
+      type: "agent.tool_use",
+      name: "patch_task",
+      input: {
+        task_id: "task_alpha",
+        expected_updated_at: "old",
+        description: "Contains alpha search token.",
+      },
+    });
+
+    expect(patchResult.isError).toBeUndefined();
+    expect(tasks.patch).toHaveBeenCalledWith({
+      workspaceId: "T1",
+      taskId: "task_alpha",
+      expectedUpdatedAt: "old",
+      patch: {
+        description: "Contains alpha search token.",
+      },
+    });
+    expect(taskEvents.save).toHaveBeenCalledWith({
+      taskId: "task_alpha",
+      type: "updated",
+      payload: expect.objectContaining({
+        patched_fields: ["description"],
+        expected_updated_at: "old",
+      }),
+    });
+    expect(JSON.parse((patchResult.content?.[0] as { text: string }).text)).toMatchObject({
+      saved: true,
+      task_id: "task_alpha",
+      description: "Contains alpha search token.",
+    });
+    expect(executor.getSummary().taskIds).toEqual(["task_alpha"]);
+  });
+
   it("infers the scheduled reminder provider when updating the output conversation key", async () => {
     const scheduledTasks = {
       get: vi.fn().mockResolvedValue({

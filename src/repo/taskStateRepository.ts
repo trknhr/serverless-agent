@@ -130,6 +130,89 @@ export class TaskStateRepository {
       .slice(0, Math.min(Math.max(input.limit ?? 10, 1), 50));
   }
 
+  async search(input: {
+    workspaceId: string;
+    query: string;
+    statuses?: TaskStatus[];
+    limit?: number;
+    dueBefore?: string;
+    ownerUserId?: string;
+  }): Promise<TaskState[]> {
+    const query = input.query.trim();
+    if (!query) {
+      return [];
+    }
+
+    const candidates = await this.list({
+      workspaceId: input.workspaceId,
+      statuses: input.statuses,
+      dueBefore: input.dueBefore,
+      ownerUserId: input.ownerUserId,
+      limit: 50,
+    });
+    const terms = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+    const limit = Math.min(Math.max(input.limit ?? 10, 1), 50);
+
+    return candidates
+      .filter((task) => matchesTaskSearch(task, terms))
+      .slice(0, limit);
+  }
+
+  async patch(input: {
+    workspaceId: string;
+    taskId: string;
+    expectedUpdatedAt?: string;
+    patch: Partial<Pick<
+      TaskState,
+      "title" | "description" | "status" | "dueAt" | "priority" | "calendarEventId" | "sourceType" | "sourceRef" | "metadata"
+    >>;
+  }): Promise<TaskState> {
+    const existing = await this.get(input.workspaceId, input.taskId);
+    if (!existing) {
+      throw new Error(`Task ${input.taskId} was not found`);
+    }
+    if (input.expectedUpdatedAt && existing.updatedAt !== input.expectedUpdatedAt) {
+      throw new Error(`Task ${input.taskId} changed since it was loaded`);
+    }
+
+    const now = new Date().toISOString();
+    const record: TaskState = {
+      ...existing,
+      ...stripUndefined(input.patch),
+      updatedAt: now,
+    };
+
+    await documentClient.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          pk: buildWorkspacePk(record.workspaceId),
+          sk: buildTaskSk(record.taskId),
+          gsi1pk: buildStatusGsiPk(record.workspaceId, record.status),
+          gsi1sk: buildStatusGsiSk(record.dueAt, record.updatedAt, record.taskId),
+          workspaceId: record.workspaceId,
+          taskId: record.taskId,
+          title: record.title,
+          description: record.description,
+          status: record.status,
+          dueAt: record.dueAt,
+          priority: record.priority,
+          ownerUserId: record.ownerUserId,
+          calendarEventId: record.calendarEventId,
+          sourceType: record.sourceType,
+          sourceRef: record.sourceRef,
+          metadata: record.metadata,
+          completedAt: record.completedAt,
+          completedByUserId: record.completedByUserId,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+        },
+      }),
+    );
+
+    return record;
+  }
+
   async markDone(input: {
     workspaceId: string;
     taskId: string;
@@ -151,6 +234,33 @@ export class TaskStateRepository {
       workspaceId: existing.workspaceId,
     });
   }
+}
+
+function stripUndefined<T extends Record<string, unknown>>(record: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined),
+  ) as Partial<T>;
+}
+
+function matchesTaskSearch(task: TaskState, terms: string[]): boolean {
+  const haystack = normalizeSearchText(
+    [
+      task.taskId,
+      task.title,
+      task.description,
+      task.sourceType,
+      task.sourceRef,
+      task.metadata ? JSON.stringify(task.metadata) : undefined,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+
+  return terms.every((term) => haystack.includes(term));
+}
+
+function normalizeSearchText(value: string): string {
+  return value.toLocaleLowerCase();
 }
 
 function mapTaskState(item: Record<string, unknown>): TaskState {

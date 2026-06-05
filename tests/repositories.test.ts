@@ -817,6 +817,111 @@ describe("task repositories", () => {
     });
   });
 
+  it("searches and patches task states without dropping existing fields", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T00:00:00Z"));
+    const repo = new TaskStateRepository("states");
+
+    sendMock.mockResolvedValueOnce({
+      Items: [
+        {
+          workspaceId: "T1",
+          taskId: "task-alpha",
+          title: "Alpha task",
+          description: "Contains alpha search token. Preserve this detail.",
+          status: "open",
+          dueAt: "2026-06-05T23:59:00+09:00",
+          ownerUserId: "U1",
+          sourceRef: "source:alpha",
+          metadata: { category: "alpha" },
+          createdAt: "created",
+          updatedAt: "old",
+        },
+        {
+          workspaceId: "T1",
+          taskId: "task-beta",
+          title: "Beta task",
+          description: "Unrelated task detail.",
+          status: "open",
+          createdAt: "created",
+          updatedAt: "old",
+        },
+      ],
+    });
+    sendMock.mockResolvedValueOnce({ Items: [] });
+
+    await expect(repo.search({ workspaceId: "T1", query: "alpha search token", limit: 5 })).resolves.toEqual([
+      expect.objectContaining({ taskId: "task-alpha" }),
+    ]);
+
+    sendMock.mockResolvedValueOnce({
+      Item: {
+        workspaceId: "T1",
+        taskId: "task-alpha",
+        title: "Alpha task",
+        description: "Contains alpha search token. Preserve this detail.",
+        status: "open",
+        dueAt: "2026-06-05T23:59:00+09:00",
+        priority: "high",
+        ownerUserId: "U1",
+        sourceType: "agent",
+        sourceRef: "source:alpha",
+        metadata: { category: "alpha" },
+        createdAt: "created",
+        updatedAt: "old",
+      },
+    });
+    sendMock.mockResolvedValueOnce({});
+
+    await expect(
+      repo.patch({
+        workspaceId: "T1",
+        taskId: "task-alpha",
+        expectedUpdatedAt: "old",
+        patch: {
+          description: "Contains alpha search token.",
+        },
+      }),
+    ).resolves.toMatchObject({
+      taskId: "task-alpha",
+      title: "Alpha task",
+      description: "Contains alpha search token.",
+      dueAt: "2026-06-05T23:59:00+09:00",
+      priority: "high",
+      sourceRef: "source:alpha",
+      metadata: { category: "alpha" },
+      updatedAt: "2026-05-14T00:00:00.000Z",
+    });
+    expect(commandInput(sendMock.mock.calls.length - 1)).toMatchObject({
+      Item: {
+        pk: "WORKSPACE#T1",
+        sk: "TASK#task-alpha",
+        description: "Contains alpha search token.",
+        dueAt: "2026-06-05T23:59:00+09:00",
+        priority: "high",
+      },
+    });
+
+    sendMock.mockResolvedValueOnce({
+      Item: {
+        workspaceId: "T1",
+        taskId: "task-alpha",
+        title: "Alpha task",
+        status: "open",
+        createdAt: "created",
+        updatedAt: "newer",
+      },
+    });
+    await expect(
+      repo.patch({
+        workspaceId: "T1",
+        taskId: "task-alpha",
+        expectedUpdatedAt: "old",
+        patch: { description: "Stale description update." },
+      }),
+    ).rejects.toThrow("changed since it was loaded");
+  });
+
   it("gets, lists, upserts, and disables recurring tasks", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-14T00:00:00Z"));

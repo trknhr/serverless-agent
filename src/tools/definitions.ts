@@ -436,6 +436,24 @@ export const customToolDefinitions = [
     },
   },
   {
+    name: "search_tasks",
+    description:
+      "Search tracked tasks by natural-language keywords across task title, description, source, and metadata. Use this when the user asks about prior reminders, deadlines, plans, task-derived terms, or wants to update a task but does not know the task_id.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        statuses: {
+          type: "array",
+          items: { type: "string", enum: ["open", "in_progress", "done", "cancelled"] },
+        },
+        due_before: { type: "string", description: "RFC3339 timestamp upper bound for due date." },
+        limit: { type: "integer", minimum: 1, maximum: 50 },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "upsert_task",
     description:
       "Create or update a one-off task, dated event, or checklist item after reasoning about future work or calendar events. Use this, not create_scheduled_reminder, for content that should appear inside an existing daily reminder.",
@@ -454,6 +472,31 @@ export const customToolDefinitions = [
         metadata: { type: "object" },
       },
       required: ["title"],
+    },
+  },
+  {
+    name: "patch_task",
+    description:
+      "Safely apply a partial update to an existing tracked task while preserving fields that are not provided. Use search_tasks first when the user describes the task but does not provide a task_id. Pass expected_updated_at from search_tasks when available to avoid overwriting a task that changed after it was loaded.",
+    input_schema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string" },
+        expected_updated_at: {
+          type: "string",
+          description: "Optional updated_at value returned by search_tasks/list_tasks for optimistic conflict checks.",
+        },
+        title: { type: "string" },
+        description: { type: "string" },
+        status: { type: "string", enum: ["open", "in_progress", "done", "cancelled"] },
+        due_at: { type: "string" },
+        priority: { type: "string", enum: ["low", "medium", "high"] },
+        calendar_event_id: { type: "string" },
+        source_type: { type: "string" },
+        source_ref: { type: "string" },
+        metadata: { type: "object" },
+      },
+      required: ["task_id"],
     },
   },
   {

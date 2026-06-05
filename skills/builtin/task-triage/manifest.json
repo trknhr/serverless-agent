@@ -13,7 +13,9 @@
   ],
   "toolAllowlist": [
     "list_tasks",
+    "search_tasks",
     "upsert_task",
+    "patch_task",
     "mark_task_done",
     "search_memories"
   ],

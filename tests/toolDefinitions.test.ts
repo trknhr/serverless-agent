@@ -22,11 +22,16 @@ function toolDefinition(name: string): (typeof customToolDefinitions)[number] {
 describe("tool definitions", () => {
   it("keeps daily reminder contents separate from scheduled notification setup", () => {
     expect(toolDescription("upsert_task")).toContain("inside an existing daily reminder");
+    expect(toolDescription("search_tasks")).toContain("Search tracked tasks");
+    expect(toolDescription("patch_task")).toContain("partial update");
+    expect(toolDescription("patch_task")).toContain("search_tasks");
     expect(toolDescription("create_scheduled_reminder")).toContain("explicitly asks for an individual reminder");
     expect(toolDescription("create_scheduled_reminder")).toContain("one-off events");
     expect(toolDescription("update_scheduled_reminder")).toContain("explicit changes to a separate notification schedule");
     expect(toolDescription("list_scheduled_reminders")).toContain("included in the daily reminder instead");
     expect(toolDescription("delete_scheduled_reminder")).toContain("accidental individual reminder");
+    expect(toolDefinition("search_tasks").input_schema.required).toEqual(["query"]);
+    expect(toolDefinition("patch_task").input_schema.required).toEqual(["task_id"]);
   });
 
   it("keeps generated skill creation draft-first", () => {

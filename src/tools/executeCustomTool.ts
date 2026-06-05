@@ -25,7 +25,7 @@ import { Logger } from "../shared/logger";
 import { RecurringTaskRecurrence, recurringTaskWeekdaySchema } from "../tasks/recurringTask";
 import { normalizeScheduledOutputFields } from "../tasks/scheduledOutput";
 import { ScheduledTask, scheduledOutputProviderSchema } from "../tasks/taskDefinition";
-import { TaskStatus } from "../tasks/taskState";
+import { TaskState, TaskStatus } from "../tasks/taskState";
 import { WeatherForecastProvider } from "../weather/openMeteo";
 import { WebToolProvider } from "../web/webTools";
 import { BrowserProvider, BrowserViewport } from "../browser/provider";
@@ -144,6 +144,10 @@ const listTasksSchema = z.object({
   limit: z.number().int().min(1).max(50).optional(),
 });
 
+const searchTasksSchema = listTasksSchema.extend({
+  query: z.string().min(1),
+});
+
 const upsertTaskSchema = z.object({
   task_id: z.string().min(1).optional(),
   title: z.string().min(1),
@@ -160,6 +164,20 @@ const upsertTaskSchema = z.object({
 const markTaskDoneSchema = z.object({
   task_id: z.string().min(1),
   completed_at: z.string().optional(),
+});
+
+const patchTaskSchema = z.object({
+  task_id: z.string().min(1),
+  expected_updated_at: z.string().min(1).optional(),
+  title: z.string().min(1).optional(),
+  description: z.string().optional(),
+  status: z.enum(["open", "in_progress", "done", "cancelled"]).optional(),
+  due_at: z.string().optional(),
+  priority: z.enum(["low", "medium", "high"]).optional(),
+  calendar_event_id: z.string().optional(),
+  source_type: z.string().optional(),
+  source_ref: z.string().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const recurringTaskRecurrenceInputSchema = z.object({
@@ -519,8 +537,12 @@ export class CustomToolExecutor {
           return await this.browserClose(input);
         case "list_tasks":
           return await this.listTasks(input);
+        case "search_tasks":
+          return await this.searchTasks(input);
         case "upsert_task":
           return await this.upsertTask(input);
+        case "patch_task":
+          return await this.patchTask(input);
         case "mark_task_done":
           return await this.markTaskDone(input);
         case "list_recurring_tasks":
@@ -1115,17 +1137,23 @@ export class CustomToolExecutor {
 
     return jsonResult({
       count: tasks.length,
-      tasks: tasks.map((task) => ({
-        task_id: task.taskId,
-        title: task.title,
-        description: task.description,
-        status: task.status,
-        due_at: task.dueAt,
-        priority: task.priority,
-        calendar_event_id: task.calendarEventId,
-        updated_at: task.updatedAt,
-        completed_at: task.completedAt,
-      })),
+      tasks: tasks.map((task) => serializeTaskState(task)),
+    });
+  }
+
+  private async searchTasks(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = searchTasksSchema.parse(input);
+    const tasks = await this.repositories.tasks.search({
+      workspaceId: this.context.workspaceId,
+      query: parsed.query,
+      statuses: parsed.statuses as TaskStatus[] | undefined,
+      dueBefore: parsed.due_before,
+      limit: parsed.limit,
+    });
+
+    return jsonResult({
+      count: tasks.length,
+      tasks: tasks.map((task) => serializeTaskState(task)),
     });
   }
 
@@ -1170,6 +1198,50 @@ export class CustomToolExecutor {
       due_at: task.dueAt,
       calendar_event_id: task.calendarEventId,
       updated_at: task.updatedAt,
+    });
+  }
+
+  private async patchTask(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = patchTaskSchema.parse(input);
+    const patch = stripUndefined({
+      title: parsed.title,
+      description: parsed.description,
+      status: parsed.status,
+      dueAt: parsed.due_at,
+      priority: parsed.priority,
+      calendarEventId: parsed.calendar_event_id,
+      sourceType: parsed.source_type,
+      sourceRef: parsed.source_ref,
+      metadata: parsed.metadata,
+    });
+    const patchedFields = Object.keys(patch);
+    if (patchedFields.length === 0) {
+      return errorResult("patch_task requires at least one field to update.");
+    }
+
+    const task = await this.repositories.tasks.patch({
+      workspaceId: this.context.workspaceId,
+      taskId: parsed.task_id,
+      expectedUpdatedAt: parsed.expected_updated_at,
+      patch,
+    });
+    this.taskIds.add(task.taskId);
+
+    await this.repositories.taskEvents.save({
+      taskId: task.taskId,
+      type: "updated",
+      payload: {
+        title: task.title,
+        status: task.status,
+        due_at: task.dueAt,
+        patched_fields: patchedFields.map((field) => toSnakeCase(field)),
+        expected_updated_at: parsed.expected_updated_at,
+      },
+    });
+
+    return jsonResult({
+      saved: true,
+      ...serializeTaskState(task),
     });
   }
 
@@ -2314,6 +2386,33 @@ function serializeGoogleEventTime(
 function normalizeOptionalString(value?: string): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
+}
+
+function stripUndefined<T extends Record<string, unknown>>(record: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined),
+  ) as Partial<T>;
+}
+
+function toSnakeCase(value: string): string {
+  return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+}
+
+function serializeTaskState(task: TaskState): Record<string, unknown> {
+  return {
+    task_id: task.taskId,
+    title: task.title,
+    description: task.description,
+    status: task.status,
+    due_at: task.dueAt,
+    priority: task.priority,
+    calendar_event_id: task.calendarEventId,
+    source_type: task.sourceType,
+    source_ref: task.sourceRef,
+    metadata: task.metadata,
+    updated_at: task.updatedAt,
+    completed_at: task.completedAt,
+  };
 }
 
 function buildBrowserViewport(width?: number, height?: number): BrowserViewport | undefined {
