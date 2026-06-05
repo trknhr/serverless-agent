@@ -188,6 +188,7 @@ function createToolExecutor(
       channelId: request.toolContext.channelId,
       conversationId: request.context.conversationTs,
       logger: log,
+      attachmentSourceIds: request.toolContext.attachmentSourceIds,
       memoryWritePolicy: request.toolContext.memoryWritePolicy,
       workSessionPolicy: {
         idleTimeoutSeconds: resources.workSessionIdleTimeoutSeconds,

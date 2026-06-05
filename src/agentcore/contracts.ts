@@ -87,6 +87,7 @@ export const agentToolContextSchema = z.object({
   workspaceId: z.string().min(1),
   userId: z.string().min(1).optional(),
   channelId: z.string().min(1).optional(),
+  attachmentSourceIds: z.array(z.string().min(1)).optional(),
   memoryWritePolicy: z
     .object({
       allowWorkspaceMemory: z.boolean().optional(),

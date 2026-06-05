@@ -149,6 +149,7 @@ describe("runtime contract schemas", () => {
         },
         toolContext: {
           workspaceId: "T1",
+          attachmentSourceIds: ["src_1"],
           memoryWritePolicy: {
             allowWorkspaceMemory: true,
             channelInferredStatus: "candidate",
@@ -158,7 +159,10 @@ describe("runtime contract schemas", () => {
       }),
     ).toMatchObject({
       context: { custom: true },
-      toolContext: { memoryWritePolicy: { defaultOrigin: "imported" } },
+      toolContext: {
+        attachmentSourceIds: ["src_1"],
+        memoryWritePolicy: { defaultOrigin: "imported" },
+      },
     });
 
     expect(

@@ -417,6 +417,7 @@ export interface ToolExecutionContext {
   channelId?: string;
   conversationId?: string;
   logger: Logger;
+  attachmentSourceIds?: string[];
   memoryWritePolicy?: {
     allowWorkspaceMemory?: boolean;
     channelInferredStatus?: "active" | "candidate";
@@ -592,6 +593,10 @@ export class CustomToolExecutor {
 
   private async readAttachmentImage(input: Record<string, unknown>): Promise<ToolExecutionResult> {
     const parsed = readAttachmentImageSchema.parse(input);
+    if (!this.context.attachmentSourceIds?.includes(parsed.source_id)) {
+      return errorResult("Archived attachment image is not available in the current request context.");
+    }
+
     if (!this.integrations.attachmentReader) {
       return errorResult("Archived attachment image reader is not available for this request.");
     }
