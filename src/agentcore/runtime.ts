@@ -28,6 +28,7 @@ import { createBrowserProvider } from "../browser/factory";
 import { DynamoDbSkillRepository } from "../skills/dynamoDbSkillRepository";
 import { SkillRegistry, formatSkillSummariesForPrompt } from "../skills/registry";
 import { buildSystemPrompt } from "./instructions";
+import { mapToolExecutionResultToModelOutput } from "./toolResultOutput";
 
 type DynamicImport = <T = Record<string, unknown>>(specifier: string) => Promise<T>;
 type SessionHistoryMessage = {
@@ -319,32 +320,18 @@ function createTools(
         description: definition.description,
         inputSchema: ai.jsonSchema(definition.input_schema),
         execute: async (input: Record<string, unknown>) => {
-          const result = await executor.execute({
+          return executor.execute({
             id: `agentcore_tool_${Date.now()}_${definition.name}`,
             type: "agent.tool_use",
             name: definition.name,
             input,
           });
-          return simplifyToolResult(result);
         },
+        toModelOutput: ({ output }: { output: ToolExecutionResult }) =>
+          mapToolExecutionResultToModelOutput(output),
       }),
     ]),
   );
-}
-
-function simplifyToolResult(result: ToolExecutionResult): Record<string, unknown> {
-  return {
-    isError: Boolean(result.isError),
-    content: (result.content ?? []).map((block) => {
-      if (block.type === "text") {
-        return { type: "text", text: block.text };
-      }
-      return {
-        type: block.type,
-        note: "Non-text tool output was returned.",
-      };
-    }),
-  };
 }
 
 function toHistoryText(blocks: AgentContentBlock[]): string {
