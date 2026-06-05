@@ -190,6 +190,42 @@ tests/
 3. Install Docker for AgentCore container image builds.
 4. Bootstrap CDK in the target AWS account and region.
 
+## Local Development
+
+For local agent development without Slack, API Gateway, or AgentCore Runtime,
+use the offline chat CLI. It runs the same tool loop against Bedrock directly
+and stores local memory, tasks, skills, calendar drafts, and session history in
+a JSON state file.
+
+```bash
+cp .env.local.example .env.local
+# Set BEDROCK_MODEL_ID in .env.local.
+npm install
+npm run dev:chat -- "Remember that local development uses file-backed state."
+npm run dev:chat -- --session-id local-default "What do you remember?"
+```
+
+Defaults:
+
+- workspace: `local-workspace`
+- user: `local-user`
+- channel: `local-channel`
+- session: `local-default`
+- state file: `.serverless-agent/local-state/state.json`
+
+Useful options:
+
+```bash
+npm run dev:chat -- --help
+npm run dev:chat -- --json "List my open tasks."
+npm run dev:chat -- --session-id local-1 --state-file /tmp/serverless-agent-state.json "Hello"
+```
+
+Local development intentionally does not start a local Slack or HTTP server yet.
+Browser tools and live Google Calendar API tools remain disabled in the local
+runner. Calendar draft storage, memory, tasks, recurring tasks, skills, weather,
+`web_extract`, and optionally configured `web_search` are available.
+
 Google Calendar OAuth client parameter JSON:
 
 ```json

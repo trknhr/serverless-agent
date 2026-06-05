@@ -1,12 +1,9 @@
 import { createUserGoogleCalendarClient } from "../calendar/userGoogleCalendar";
 import {
-  AgentContentBlock,
-  ToolExecutionResult,
-} from "../agent/types";
-import {
   AgentRuntimeRequest,
   agentRuntimeRequestSchema,
 } from "./contracts";
+import { parseBedrockServiceTier, runAgentTurn } from "./runAgentTurn";
 import { CalendarDraftRepository } from "../repo/calendarDraftRepository";
 import { ChannelMemoryRepository } from "../repo/channelMemoryRepository";
 import { GoogleOAuthConnectionRepository } from "../repo/googleOAuthConnectionRepository";
@@ -21,25 +18,15 @@ import { UserPreferenceRepository } from "../repo/userPreferenceRepository";
 import { SecretsProvider } from "../aws/secretsProvider";
 import { logger } from "../shared/logger";
 import { CustomToolExecutor } from "../tools/executeCustomTool";
-import { customToolDefinitions } from "../tools/definitions";
 import { OpenMeteoWeatherProvider } from "../weather/openMeteo";
 import { WebToolsProvider } from "../web/webTools";
 import { createBrowserProvider } from "../browser/factory";
 import { DynamoDbSkillRepository } from "../skills/dynamoDbSkillRepository";
-import { SkillRegistry, formatSkillSummariesForPrompt } from "../skills/registry";
-import { buildSystemPrompt } from "./instructions";
+import { SkillRegistry } from "../skills/registry";
 
 type DynamicImport = <T = Record<string, unknown>>(specifier: string) => Promise<T>;
-type SessionHistoryMessage = {
-  role: "user" | "assistant";
-  content: string;
-};
-const bedrockServiceTiers = ["reserved", "priority", "default", "flex"] as const;
-type BedrockServiceTier = (typeof bedrockServiceTiers)[number];
 
 const dynamicImport = new Function("specifier", "return import(specifier)") as DynamicImport;
-const sessionHistories = new Map<string, SessionHistoryMessage[]>();
-const maxSessionHistoryMessages = 20;
 
 const region = process.env.BEDROCK_REGION ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? "ap-northeast-1";
 const modelId = requireEnv("BEDROCK_MODEL_ID");
@@ -76,76 +63,20 @@ async function main(): Promise<void> {
           runtimeSessionId: context.sessionId,
           source: request.context.source,
         });
-        const skillRegistry =
-          request.disableTools || !request.toolContext ? null : createSkillRegistry(request);
-        const executor = request.disableTools ? null : createToolExecutor(request, log, skillRegistry ?? undefined);
-        const tools = executor ? createTools(ai, executor) : {};
-        const skillPrompt =
-          executor && skillRegistry
-            ? await buildEnabledSkillPrompt(skillRegistry, request.toolContext!.workspaceId, log)
-            : "";
-        const selectedModelId = selectModelId(request);
-        const agent = new ai.ToolLoopAgent({
-          model: bedrock(selectedModelId),
-          instructions: buildSystemPrompt(skillPrompt),
-          tools,
-          ...(bedrockServiceTier
-            ? {
-                providerOptions: {
-                  bedrock: {
-                    serviceTier: bedrockServiceTier,
-                  },
-                },
-              }
-            : {}),
-        });
-
-        log.info("AgentCore request started", {
-          modelId: selectedModelId,
-          bedrockRegion: region,
-          bedrockServiceTier: bedrockServiceTier ?? "default",
-          hasTools: Object.keys(tools).length > 0,
-        });
-
-        const history = getSessionHistory(context.sessionId, request);
-        const userHistoryText = toHistoryText(request.content);
-        const stream = await agent.stream({
-          messages: [
-            ...history,
-            {
-              role: "user",
-              content: toUserContent(request.content),
-            },
-          ],
-        });
-
-        let assistantText = "";
-        for await (const part of stream.fullStream) {
-          if (part.type === "error") {
-            throw new Error(`Model stream failed: ${formatStreamError(part.error)}`);
-          }
-          if (part.type !== "text-delta" || typeof part.text !== "string") {
-            continue;
-          }
-
-          assistantText += part.text;
-          yield { event: "message", data: { text: part.text } };
+        for await (const event of runAgentTurn({
+          request,
+          sessionId: context.sessionId,
+          ai,
+          modelProvider: bedrock,
+          modelId,
+          documentModelId,
+          bedrockServiceTier,
+          log,
+          createExecutor: (request, log, skillRegistry) => createToolExecutor(request, log, skillRegistry),
+          createSkillRegistry,
+        })) {
+          yield event;
         }
-
-        const summary = executor?.getSummary() ?? {
-          taskIds: [],
-          recurringTaskIds: [],
-          savedMemoryIds: [],
-          calendarDraftIds: [],
-        };
-        saveSessionHistory(context.sessionId, request, userHistoryText, assistantText);
-        yield { event: "metadata", data: summary };
-        log.info("AgentCore request completed", {
-          taskIds: summary.taskIds,
-          recurringTaskIds: summary.recurringTaskIds,
-          savedMemoryIds: summary.savedMemoryIds,
-          calendarDraftIds: summary.calendarDraftIds,
-        });
       },
     },
   });
@@ -235,271 +166,12 @@ function createSkillRegistry(request: AgentRuntimeRequest): SkillRegistry {
   return new SkillRegistry(repository);
 }
 
-async function buildEnabledSkillPrompt(
-  skillRegistry: SkillRegistry,
-  workspaceId: string,
-  log: ReturnType<typeof logger.child>,
-): Promise<string> {
-  try {
-    return formatSkillSummariesForPrompt(await skillRegistry.listEnabledSummaries(workspaceId));
-  } catch (error) {
-    log.warn("Failed to load skill summaries", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return "";
-  }
-}
-
-function getSessionHistory(
-  sessionId: string | undefined,
-  request: AgentRuntimeRequest,
-): SessionHistoryMessage[] {
-  if (!shouldUseSessionHistory(sessionId, request)) {
-    return [];
-  }
-
-  return sessionHistories.get(sessionId!) ?? [];
-}
-
-function saveSessionHistory(
-  sessionId: string | undefined,
-  request: AgentRuntimeRequest,
-  userText: string,
-  assistantText: string,
-): void {
-  if (!shouldUseSessionHistory(sessionId, request)) {
-    return;
-  }
-
-  const previous = sessionHistories.get(sessionId!) ?? [];
-  const next = [
-    ...previous,
-    { role: "user" as const, content: userText },
-    { role: "assistant" as const, content: assistantText },
-  ].slice(-maxSessionHistoryMessages);
-  sessionHistories.set(sessionId!, next);
-}
-
-function shouldUseSessionHistory(
-  sessionId: string | undefined,
-  request: AgentRuntimeRequest,
-): boolean {
-  return Boolean(sessionId && ["direct_chat_api", "scheduler"].includes(request.context.source));
-}
-
-function selectModelId(request: AgentRuntimeRequest): string {
-  return hasModelBinaryInput(request.content) ? documentModelId : modelId;
-}
-
-function hasModelBinaryInput(blocks: AgentContentBlock[]): boolean {
-  return blocks.some((block) => block.type === "image" || (block.type === "document" && block.source.type !== "text"));
-}
-
-function formatStreamError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (typeof error === "string") {
-    return error;
-  }
-  return JSON.stringify(error);
-}
-
-function createTools(
-  ai: {
-    jsonSchema: (schema: unknown) => unknown;
-    tool: (options: unknown) => unknown;
-  },
-  executor: CustomToolExecutor,
-): Record<string, unknown> {
-  return Object.fromEntries(
-    customToolDefinitions.map((definition) => [
-      definition.name,
-      ai.tool({
-        description: definition.description,
-        inputSchema: ai.jsonSchema(definition.input_schema),
-        execute: async (input: Record<string, unknown>) => {
-          const result = await executor.execute({
-            id: `agentcore_tool_${Date.now()}_${definition.name}`,
-            type: "agent.tool_use",
-            name: definition.name,
-            input,
-          });
-          return simplifyToolResult(result);
-        },
-      }),
-    ]),
-  );
-}
-
-function simplifyToolResult(result: ToolExecutionResult): Record<string, unknown> {
-  return {
-    isError: Boolean(result.isError),
-    content: (result.content ?? []).map((block) => {
-      if (block.type === "text") {
-        return { type: "text", text: block.text };
-      }
-      return {
-        type: block.type,
-        note: "Non-text tool output was returned.",
-      };
-    }),
-  };
-}
-
-function toHistoryText(blocks: AgentContentBlock[]): string {
-  return blocks
-    .map((block) => {
-      if (block.type === "text") {
-        return block.text;
-      }
-
-      if (block.type === "image") {
-        return block.source.type === "url"
-          ? `[Image attachment: ${block.source.url}]`
-          : `[Image attachment: ${block.source.media_type}]`;
-      }
-
-      const title = block.title ?? "untitled";
-      if (block.source.type === "text") {
-        return [
-          `Attached document: ${title}`,
-          block.context,
-          truncateForHistory(block.source.data),
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-      }
-      if (block.source.type === "url") {
-        return `Attached document: ${title} (${block.source.url})`;
-      }
-      if (block.source.type === "base64") {
-        return `Attached document: ${title} (${block.source.media_type})`;
-      }
-      return `Attached document: ${title} (${block.source.file_id})`;
-    })
-    .join("\n\n")
-    .trim();
-}
-
-function truncateForHistory(value: string): string {
-  const maxLength = 4000;
-  return value.length <= maxLength ? value : `${value.slice(0, maxLength)}\n[truncated]`;
-}
-
-function toUserContent(blocks: AgentContentBlock[]): Array<Record<string, unknown>> {
-  const content: Array<Record<string, unknown>> = [];
-
-  for (const block of blocks) {
-    if (block.type === "text") {
-      content.push({ type: "text", text: block.text });
-      continue;
-    }
-
-    if (block.type === "image") {
-      if (block.source.type === "url") {
-        content.push({ type: "image", image: new URL(block.source.url) });
-        continue;
-      }
-      content.push({
-        type: "image",
-        image: block.source.data,
-        mediaType: block.source.media_type,
-      });
-      continue;
-    }
-
-    if (block.source.type === "text") {
-      content.push({
-        type: "text",
-        text: [
-          `Attached document: ${block.title ?? "untitled"}`,
-          block.context,
-          block.source.data,
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
-      });
-      continue;
-    }
-
-    if (block.source.type === "base64") {
-      content.push({
-        type: "file",
-        data: block.source.data,
-        filename: block.title,
-        mediaType: block.source.media_type,
-      });
-      continue;
-    }
-
-    if (block.source.type === "url") {
-      content.push({
-        type: "file",
-        data: new URL(block.source.url),
-        filename: block.title,
-        mediaType: block.source.media_type ?? inferMediaTypeFromTitle(block.title),
-      });
-      continue;
-    }
-
-    content.push({
-      type: "text",
-      text: `Attachment note: ${block.title ?? block.source.file_id} could not be sent to the model.`,
-    });
-  }
-
-  return content;
-}
-
-function inferMediaTypeFromTitle(title: string | undefined): string {
-  const lower = title?.toLowerCase() ?? "";
-  if (lower.endsWith(".pdf")) {
-    return "application/pdf";
-  }
-  if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
-    return "text/markdown";
-  }
-  if (lower.endsWith(".txt")) {
-    return "text/plain";
-  }
-  if (lower.endsWith(".csv")) {
-    return "text/csv";
-  }
-  if (lower.endsWith(".docx")) {
-    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  }
-  if (lower.endsWith(".doc")) {
-    return "application/msword";
-  }
-  if (lower.endsWith(".xlsx")) {
-    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-  }
-  if (lower.endsWith(".xls")) {
-    return "application/vnd.ms-excel";
-  }
-  if (lower.endsWith(".html") || lower.endsWith(".htm")) {
-    return "text/html";
-  }
-  return "application/octet-stream";
-}
-
 function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) {
     throw new Error(`${name} must be set`);
   }
   return value;
-}
-
-function parseBedrockServiceTier(value: string | undefined): BedrockServiceTier | undefined {
-  if (!value) {
-    return undefined;
-  }
-  if (bedrockServiceTiers.includes(value as BedrockServiceTier)) {
-    return value as BedrockServiceTier;
-  }
-  throw new Error(`Invalid BEDROCK_SERVICE_TIER '${value}'. Expected one of: ${bedrockServiceTiers.join(", ")}`);
 }
 
 main().catch((error) => {

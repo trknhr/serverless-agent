@@ -20,7 +20,8 @@
     "ingest-markdown": "ts-node scripts/ingest-markdown.ts",
     "extract-pdf-markdown": "ts-node scripts/extract-pdf-markdown.ts",
     "put-provider-binding": "ts-node scripts/put-provider-binding.ts",
-    "ask-agent": "ts-node scripts/ask-agent.ts"
+    "ask-agent": "ts-node scripts/ask-agent.ts",
+    "dev:chat": "ts-node scripts/dev-chat.ts"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^4.0.0",
