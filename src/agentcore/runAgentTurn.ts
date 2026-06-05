@@ -88,15 +88,17 @@ export async function* runAgentTurn(options: RunAgentTurnOptions): AsyncGenerato
       ? await buildEnabledSkillPrompt(skillRegistry, request.toolContext!.workspaceId, options.log)
       : "";
   const selectedModelId = selectModelId(request, options.documentModelId ?? options.modelId, options.modelId);
+  const selectedBedrockServiceTier =
+    selectedModelId === options.modelId ? options.bedrockServiceTier : undefined;
   const agent = new options.ai.ToolLoopAgent({
     model: options.modelProvider(selectedModelId),
     instructions: buildSystemPrompt(skillPrompt),
     tools,
-    ...(options.bedrockServiceTier
+    ...(selectedBedrockServiceTier
       ? {
           providerOptions: {
             bedrock: {
-              serviceTier: options.bedrockServiceTier,
+              serviceTier: selectedBedrockServiceTier,
             },
           },
         }
@@ -105,7 +107,7 @@ export async function* runAgentTurn(options: RunAgentTurnOptions): AsyncGenerato
 
   options.log.info("AgentCore request started", {
     modelId: selectedModelId,
-    bedrockServiceTier: options.bedrockServiceTier ?? "default",
+    bedrockServiceTier: selectedBedrockServiceTier ?? "default",
     hasTools: Object.keys(tools).length > 0,
   });
 

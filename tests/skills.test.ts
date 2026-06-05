@@ -1201,23 +1201,9 @@ describe("load_skill tool", () => {
 });
 
 describe("read_attachment_image tool", () => {
-  it("reads archived attachment images through the attachment reader integration", async () => {
-    const content = [
-      {
-        type: "text",
-        text: "Archived image src_1.",
-      },
-      {
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: "image/png",
-          data: "iVBORw0KGgo=",
-        },
-      },
-    ];
-    const attachmentReader = {
-      readImage: vi.fn().mockResolvedValue(content),
+  it("analyzes archived attachment images through the attachment image analyzer integration", async () => {
+    const attachmentImageAnalyzer = {
+      analyzeImage: vi.fn().mockResolvedValue("The image shows a school newsletter."),
     };
     const executor = new CustomToolExecutor(
       {} as never,
@@ -1225,9 +1211,49 @@ describe("read_attachment_image tool", () => {
         workspaceId: "line:group:G1",
         logger,
         attachmentSourceIds: ["src_1"],
+        currentRequestText: "Can you read this image?",
       },
       {
-        attachmentReader,
+        attachmentImageAnalyzer,
+      } as never,
+    );
+
+    await expect(
+      executor.execute({
+        id: "tool-1",
+        type: "agent.tool_use",
+        name: "read_attachment_image",
+        input: { source_id: "src_1", question: "Please read the image content." },
+      }),
+    ).resolves.toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The image shows a school newsletter.",
+        },
+      ],
+    });
+    expect(attachmentImageAnalyzer.analyzeImage).toHaveBeenCalledWith({
+      workspaceId: "line:group:G1",
+      sourceId: "src_1",
+      question: "Please read the image content.",
+    });
+  });
+
+  it("uses the current request text when the tool call omits a question", async () => {
+    const attachmentImageAnalyzer = {
+      analyzeImage: vi.fn().mockResolvedValue("The image is readable."),
+    };
+    const executor = new CustomToolExecutor(
+      {} as never,
+      {
+        workspaceId: "line:group:G1",
+        logger,
+        attachmentSourceIds: ["src_1"],
+        currentRequestText: "Can you read this image?",
+      },
+      {
+        attachmentImageAnalyzer,
       } as never,
     );
 
@@ -1238,16 +1264,24 @@ describe("read_attachment_image tool", () => {
         name: "read_attachment_image",
         input: { source_id: "src_1" },
       }),
-    ).resolves.toEqual({ content });
-    expect(attachmentReader.readImage).toHaveBeenCalledWith({
+    ).resolves.toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The image is readable.",
+        },
+      ],
+    });
+    expect(attachmentImageAnalyzer.analyzeImage).toHaveBeenCalledWith({
       workspaceId: "line:group:G1",
       sourceId: "src_1",
+      question: "Can you read this image?",
     });
   });
 
   it("returns an error when the attachment source ID is not allowed", async () => {
-    const attachmentReader = {
-      readImage: vi.fn(),
+    const attachmentImageAnalyzer = {
+      analyzeImage: vi.fn(),
     };
     const executor = new CustomToolExecutor(
       {} as never,
@@ -1257,7 +1291,7 @@ describe("read_attachment_image tool", () => {
         attachmentSourceIds: ["src_2"],
       },
       {
-        attachmentReader,
+        attachmentImageAnalyzer,
       } as never,
     );
 
@@ -1277,12 +1311,12 @@ describe("read_attachment_image tool", () => {
         },
       ],
     });
-    expect(attachmentReader.readImage).not.toHaveBeenCalled();
+    expect(attachmentImageAnalyzer.analyzeImage).not.toHaveBeenCalled();
   });
 
   it("returns an error when attachment source IDs are missing", async () => {
-    const attachmentReader = {
-      readImage: vi.fn(),
+    const attachmentImageAnalyzer = {
+      analyzeImage: vi.fn(),
     };
     const executor = new CustomToolExecutor(
       {} as never,
@@ -1291,7 +1325,7 @@ describe("read_attachment_image tool", () => {
         logger,
       },
       {
-        attachmentReader,
+        attachmentImageAnalyzer,
       } as never,
     );
 
@@ -1311,10 +1345,10 @@ describe("read_attachment_image tool", () => {
         },
       ],
     });
-    expect(attachmentReader.readImage).not.toHaveBeenCalled();
+    expect(attachmentImageAnalyzer.analyzeImage).not.toHaveBeenCalled();
   });
 
-  it("returns an error when an allowed attachment source has no reader integration", async () => {
+  it("returns an error when an allowed attachment source has no analyzer integration", async () => {
     const executor = new CustomToolExecutor(
       {} as never,
       {
@@ -1336,7 +1370,7 @@ describe("read_attachment_image tool", () => {
       content: [
         {
           type: "text",
-          text: "Archived attachment image reader is not available for this request.",
+          text: "Archived attachment image analyzer is not available for this request.",
         },
       ],
     });

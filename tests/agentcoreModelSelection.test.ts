@@ -19,7 +19,7 @@ describe("AgentCore model selection", () => {
     ).toBe(true);
   });
 
-  it("uses the document model when lazy image attachment source IDs are available", () => {
+  it("keeps the text model when only lazy image attachment source IDs are available", () => {
     expect(
       shouldUseDocumentModel({
         content: [{ type: "text", text: "What is in this image?" }],
@@ -28,7 +28,7 @@ describe("AgentCore model selection", () => {
           attachmentSourceIds: ["src_1"],
         },
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("keeps the text model for text-only requests without lazy images", () => {

@@ -30,6 +30,7 @@ import { WeatherForecastProvider } from "../weather/openMeteo";
 import { WebToolProvider } from "../web/webTools";
 import { BrowserProvider, BrowserViewport } from "../browser/provider";
 import type { SkillRegistry } from "../skills/registry";
+import type { AttachmentImageAnalyzer } from "../attachments/attachmentImageAnalyzer";
 import {
   generatedSkillTestCaseSchema,
   skillConstraintsSchema,
@@ -44,6 +45,7 @@ const loadSkillSchema = z.object({
 
 const readAttachmentImageSchema = z.object({
   source_id: z.string().min(1),
+  question: z.string().min(1).max(2000).optional(),
 });
 
 const generatedSkillTestCaseInputSchema = z.object({
@@ -446,6 +448,7 @@ export interface ToolExecutionContext {
   conversationId?: string;
   logger: Logger;
   attachmentSourceIds?: string[];
+  currentRequestText?: string;
   memoryWritePolicy?: {
     allowWorkspaceMemory?: boolean;
     channelInferredStatus?: "active" | "candidate";
@@ -479,9 +482,7 @@ interface ToolIntegrations {
   webProvider?: WebToolProvider;
   browserProvider?: BrowserProvider;
   skillRegistry?: SkillRegistry;
-  attachmentReader?: {
-    readImage(input: { workspaceId: string; sourceId: string }): Promise<ToolExecutionResult["content"]>;
-  };
+  attachmentImageAnalyzer?: AttachmentImageAnalyzer;
 }
 
 export interface ToolExecutionSummary {
@@ -631,15 +632,23 @@ export class CustomToolExecutor {
       return errorResult("Archived attachment image is not available in the current request context.");
     }
 
-    if (!this.integrations.attachmentReader) {
-      return errorResult("Archived attachment image reader is not available for this request.");
+    if (!this.integrations.attachmentImageAnalyzer) {
+      return errorResult("Archived attachment image analyzer is not available for this request.");
     }
 
+    const analysis = await this.integrations.attachmentImageAnalyzer.analyzeImage({
+      workspaceId: this.context.workspaceId,
+      sourceId: parsed.source_id,
+      question: parsed.question ?? this.context.currentRequestText ?? "",
+    });
+
     return {
-      content: await this.integrations.attachmentReader.readImage({
-        workspaceId: this.context.workspaceId,
-        sourceId: parsed.source_id,
-      }),
+      content: [
+        {
+          type: "text",
+          text: analysis,
+        },
+      ],
     };
   }
 

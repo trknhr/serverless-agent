@@ -28,6 +28,7 @@ describe("Agent runtime instructions", () => {
     expect(prompt).toContain("available image attachment manifest");
     expect(prompt).toContain("do not infer image contents from the manifest alone");
     expect(prompt).toContain("Call read_attachment_image only when");
+    expect(prompt).toContain("question field");
     expect(prompt).toContain("current request is unrelated to the image");
     expect(prompt).toContain("source IDs explicitly shown in the current attachment manifest");
   });

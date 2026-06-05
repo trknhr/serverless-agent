@@ -18,13 +18,19 @@ export const customToolDefinitions = [
   {
     name: "read_attachment_image",
     description:
-      "Read a short-lived archived image attachment by source_id and return the image to the model. Only use source IDs that were explicitly provided in the current conversation context. Use this when the user asks about an attached, recent, or referenced image; do not use it for unrelated requests.",
+      "Analyze a short-lived archived image attachment by source_id and return a text description or transcription. Only use source IDs that were explicitly provided in the current conversation context. Use this when the user asks about an attached, recent, or referenced image; do not use it for unrelated requests.",
     input_schema: {
       type: "object",
       properties: {
         source_id: {
           type: "string",
           description: "Archived image source ID from the current attachment manifest, such as src_abc123.",
+        },
+        question: {
+          type: "string",
+          description:
+            "The specific user question to answer from the image. Include what to read, describe, compare, or extract.",
+          maxLength: 2000,
         },
       },
       required: ["source_id"],

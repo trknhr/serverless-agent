@@ -92,9 +92,13 @@ describe("tool definitions", () => {
   it("exposes archived attachment image reading by source ID", () => {
     const readAttachmentImage = toolDefinition("read_attachment_image");
 
+    expect(readAttachmentImage.description).toContain("return a text description");
     expect(readAttachmentImage.description).toContain("Only use source IDs");
     expect(readAttachmentImage.input_schema.required).toEqual(expect.arrayContaining(["source_id"]));
     expect(readAttachmentImage.input_schema.properties.source_id).toMatchObject({
+      type: "string",
+    });
+    expect(readAttachmentImage.input_schema.properties.question).toMatchObject({
       type: "string",
     });
   });

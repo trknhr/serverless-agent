@@ -1,5 +1,6 @@
 import { createUserGoogleCalendarClient } from "../calendar/userGoogleCalendar";
 import { ArchivedAttachmentImageReader } from "../attachments/attachmentImageReader";
+import { ModelAttachmentImageAnalyzer } from "../attachments/attachmentImageAnalyzer";
 import {
   AgentRuntimeRequest,
   agentRuntimeRequestSchema,
@@ -47,6 +48,7 @@ async function main(): Promise<void> {
     dynamicImport<{ defaultProvider: () => unknown }>("@aws-sdk/credential-provider-node"),
     dynamicImport<{
       ToolLoopAgent: new (options: unknown) => { stream: (options: unknown) => Promise<{ fullStream: AsyncIterable<Record<string, unknown>> }> };
+      generateText: (options: unknown) => Promise<{ text: string }>;
       jsonSchema: (schema: unknown) => unknown;
       tool: (options: unknown) => unknown;
     }>("ai"),
@@ -74,7 +76,11 @@ async function main(): Promise<void> {
           documentModelId,
           bedrockServiceTier,
           log,
-          createExecutor: (request, log, skillRegistry) => createToolExecutor(request, log, skillRegistry),
+          createExecutor: (request, log, skillRegistry) =>
+            createToolExecutor(request, log, skillRegistry, {
+              ai,
+              modelProvider: bedrock,
+            }),
           createSkillRegistry,
         })) {
           yield event;
@@ -90,6 +96,12 @@ function createToolExecutor(
   request: AgentRuntimeRequest,
   log: ReturnType<typeof logger.child>,
   skillRegistry?: SkillRegistry,
+  deps?: {
+    ai: {
+      generateText: (options: unknown) => Promise<{ text: string }>;
+    };
+    modelProvider: (modelId: string) => unknown;
+  },
 ): CustomToolExecutor | null {
   if (!request.resources || !request.toolContext) {
     return null;
@@ -119,6 +131,7 @@ function createToolExecutor(
       conversationId: request.context.conversationTs,
       logger: log,
       attachmentSourceIds: request.toolContext.attachmentSourceIds,
+      currentRequestText: extractTextContent(request.content),
       memoryWritePolicy: request.toolContext.memoryWritePolicy,
       workSessionPolicy: {
         idleTimeoutSeconds: resources.workSessionIdleTimeoutSeconds,
@@ -162,11 +175,26 @@ function createToolExecutor(
         browserIdentifier: resources.browserIdentifier,
       }),
       skillRegistry,
-      attachmentReader: sourceDocuments
-        ? new ArchivedAttachmentImageReader(sourceDocuments)
+      attachmentImageAnalyzer: sourceDocuments && deps
+        ? new ModelAttachmentImageAnalyzer({
+            reader: new ArchivedAttachmentImageReader(sourceDocuments),
+            ai: deps.ai,
+            modelProvider: deps.modelProvider,
+            modelId: documentModelId,
+            bedrockServiceTier: documentModelId === modelId ? bedrockServiceTier : undefined,
+            log,
+          })
         : undefined,
     },
   );
+}
+
+function extractTextContent(content: AgentRuntimeRequest["content"]): string {
+  return content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n\n")
+    .trim();
 }
 
 function createSkillRegistry(request: AgentRuntimeRequest): SkillRegistry {
