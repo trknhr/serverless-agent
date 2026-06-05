@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildLineContextBlocks } from "../src/conversations/buildLineContextBlocks";
+import { LineAttachmentArchiveService } from "../src/line/lineAttachmentArchiveService";
 import { LineMessagingClient, splitTextForLine } from "../src/line/postMessage";
 import { extractLineQueueMessages, parseLineWebhook } from "../src/line/parseEvent";
 import { verifyLineSignature } from "../src/line/verifySignature";
@@ -323,5 +324,134 @@ describe("LINE messaging client", () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.messages).toHaveLength(5);
     expect(body.messages[4].text).toMatch(/\[truncated\]$/);
+  });
+});
+
+describe("LineAttachmentArchiveService", () => {
+  it("archives up to three image attachments and returns lightweight manifest blocks", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-02T03:04:05.000Z"));
+    const repository = { save: vi.fn(async (document) => document) };
+    const s3 = { send: vi.fn().mockResolvedValue({}) };
+    const lineClient = {
+      downloadMessageContent: vi
+        .fn()
+        .mockResolvedValueOnce({ bytes: Buffer.from("image-one"), contentType: "IMAGE/JPEG; charset=binary" })
+        .mockResolvedValueOnce({ bytes: Buffer.from("image-two"), contentType: "image/png" })
+        .mockResolvedValueOnce({ bytes: Buffer.from("image-three"), contentType: undefined }),
+    };
+    const logger = { warn: vi.fn() };
+    const service = new LineAttachmentArchiveService("bucket", repository as any, s3);
+
+    const result = await service.archiveAttachments({
+      workspaceId: "line:group:G1",
+      channelId: "line:group:G1",
+      messageTs: "msg-root",
+      userId: "line:user:U1",
+      attachments: [
+        { id: "img-1", type: "image", contentType: "image/jpeg" },
+        { id: "img-2", type: "image", contentType: "image/png" },
+        { id: "img-3", type: "image" },
+        { id: "img-4", type: "image", contentType: "image/webp" },
+      ],
+      lineClient: lineClient as any,
+      logger: logger as any,
+      ttlSeconds: 86_400,
+      maxImages: 3,
+    });
+
+    expect(lineClient.downloadMessageContent).toHaveBeenCalledTimes(3);
+    expect(lineClient.downloadMessageContent.mock.calls.map(([messageId]) => messageId)).toEqual([
+      "img-1",
+      "img-2",
+      "img-3",
+    ]);
+    expect(s3.send).toHaveBeenCalledTimes(3);
+    expect(repository.save).toHaveBeenCalledTimes(3);
+
+    const firstPut = s3.send.mock.calls[0][0].input;
+    expect(firstPut).toMatchObject({
+      Bucket: "bucket",
+      Key: expect.stringMatching(
+        /^raw\/private\/line\/line:group:G1\/2026\/06\/src_.+\/line-image-img-1\.jpg$/,
+      ),
+      Body: Buffer.from("image-one"),
+      ContentType: "image/jpeg",
+      Metadata: {
+        workspace_id: "line:group:G1",
+        channel_id: "line:group:G1",
+        line_message_id: "img-1",
+      },
+    });
+    expect(firstPut.Metadata.source_id).toMatch(/^src_/);
+
+    expect(repository.save.mock.calls[0][0]).toMatchObject({
+      workspaceId: "line:group:G1",
+      sourceType: "line_message_image",
+      sourceRef: "line:message:img-1",
+      title: "LINE image img-1",
+      lineMessageId: "img-1",
+      channelId: "line:group:G1",
+      messageTs: "msg-root",
+      uploadedByUserId: "line:user:U1",
+      mimeType: "image/jpeg",
+      size: Buffer.byteLength("image-one"),
+      checksum: "8f81413241884229c9135da4ae01c0753131bf403587455763d667ee025cb129",
+      s3Bucket: "bucket",
+      status: "archived",
+      expiresAt: "2026-06-03T03:04:05.000Z",
+      ttl: 1780455845,
+      createdAt: "2026-06-02T03:04:05.000Z",
+      updatedAt: "2026-06-02T03:04:05.000Z",
+    });
+    expect(repository.save.mock.calls[0][0].s3Key).toBe(firstPut.Key);
+
+    expect(result.documents).toHaveLength(3);
+    expect(result.manifestBlocks).toEqual([
+      {
+        type: "text",
+        text: expect.stringContaining("Available image attachment"),
+      },
+    ]);
+    const manifestText = result.manifestBlocks[0].type === "text" ? result.manifestBlocks[0].text : "";
+    expect(manifestText).toContain(`sourceId=${repository.save.mock.calls[0][0].sourceId}`);
+    expect(manifestText).toContain("expiresAt=2026-06-03T03:04:05.000Z");
+    expect(manifestText).toContain("Ignored 1 extra LINE image attachment beyond maxImages=3.");
+    expect(manifestText).not.toContain("image-one");
+  });
+
+  it("returns a note and skips persistence when LINE image download fails", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-02T03:04:05.000Z"));
+    const repository = { save: vi.fn(async (document) => document) };
+    const s3 = { send: vi.fn().mockResolvedValue({}) };
+    const lineClient = {
+      downloadMessageContent: vi.fn().mockRejectedValue(new Error("line expired")),
+    };
+    const logger = { warn: vi.fn() };
+    const service = new LineAttachmentArchiveService("bucket", repository as any, s3);
+
+    const result = await service.archiveAttachments({
+      workspaceId: "line:user:U1",
+      channelId: "line:user:U1",
+      messageTs: "img-1",
+      userId: "line:user:U1",
+      attachments: [{ id: "img-1", type: "image", contentType: "image/jpeg" }],
+      lineClient: lineClient as any,
+      logger: logger as any,
+      ttlSeconds: 86_400,
+      maxImages: 3,
+    });
+
+    expect(result.documents).toEqual([]);
+    expect(result.manifestBlocks).toEqual([
+      { type: "text", text: "Attachment note: Could not archive LINE image img-1. line expired" },
+    ]);
+    expect(repository.save).not.toHaveBeenCalled();
+    expect(s3.send).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "LINE image archive download failed",
+      expect.objectContaining({ lineMessageId: "img-1", error: "line expired" }),
+    );
   });
 });
