@@ -21,18 +21,24 @@ function buildDocument(overrides: Partial<SourceDocument> = {}): SourceDocument 
   };
 }
 
-function buildReader(document: SourceDocument | null, bytes = Buffer.from("image-bytes")) {
+function buildReader(
+  document: SourceDocument | null,
+  bytes = Buffer.from("image-bytes"),
+  s3ObjectOverrides: Record<string, unknown> = {},
+) {
+  const transformToByteArray = vi.fn().mockResolvedValue(Uint8Array.from(bytes));
   const repository = {
     get: vi.fn().mockResolvedValue(document),
   };
   const s3 = {
     send: vi.fn().mockResolvedValue({
       Body: {
-        transformToByteArray: vi.fn().mockResolvedValue(Uint8Array.from(bytes)),
+        transformToByteArray,
       },
+      ...s3ObjectOverrides,
     }),
   };
-  return { reader: new ArchivedAttachmentImageReader(repository, s3), repository, s3 };
+  return { reader: new ArchivedAttachmentImageReader(repository, s3), repository, s3, transformToByteArray };
 }
 
 describe("ArchivedAttachmentImageReader", () => {
@@ -108,5 +114,24 @@ describe("ArchivedAttachmentImageReader", () => {
     await expect(reader.readImage({ workspaceId: "T1", sourceId: "src_image", maxBytes: 4 })).resolves.toEqual([
       { type: "text", text: "Attachment note: Archived image src_image is larger than 4 bytes." },
     ]);
+  });
+
+  it("returns a note when the archived image has no S3 body", async () => {
+    const { reader } = buildReader(buildDocument(), Buffer.from("image-bytes"), { Body: undefined });
+
+    await expect(reader.readImage({ workspaceId: "T1", sourceId: "src_image" })).resolves.toEqual([
+      { type: "text", text: "Attachment note: Archived image src_image could not be read from storage." },
+    ]);
+  });
+
+  it("returns a note from S3 content length without reading oversized image bytes", async () => {
+    const { reader, transformToByteArray } = buildReader(buildDocument(), Buffer.from("too-large"), {
+      ContentLength: 9,
+    });
+
+    await expect(reader.readImage({ workspaceId: "T1", sourceId: "src_image", maxBytes: 4 })).resolves.toEqual([
+      { type: "text", text: "Attachment note: Archived image src_image is larger than 4 bytes." },
+    ]);
+    expect(transformToByteArray).not.toHaveBeenCalled();
   });
 });

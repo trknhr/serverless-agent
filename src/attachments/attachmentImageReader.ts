@@ -9,7 +9,7 @@ interface S3ObjectBody {
 }
 
 interface S3ClientLike {
-  send(command: GetObjectCommand): Promise<{ Body?: S3ObjectBody }>;
+  send(command: GetObjectCommand): Promise<{ Body?: S3ObjectBody; ContentLength?: number }>;
 }
 
 export interface ReadArchivedImageInput {
@@ -56,7 +56,16 @@ export class ArchivedAttachmentImageReader {
         Key: document.s3Key,
       }),
     );
-    const bytes = Buffer.from(await object.Body!.transformToByteArray());
+
+    if (object.ContentLength !== undefined && object.ContentLength > maxBytes) {
+      return [textNote(`Archived image ${input.sourceId} is larger than ${maxBytes} bytes.`)];
+    }
+
+    if (!object.Body) {
+      return [textNote(`Archived image ${input.sourceId} could not be read from storage.`)];
+    }
+
+    const bytes = Buffer.from(await object.Body.transformToByteArray());
 
     if (bytes.byteLength > maxBytes) {
       return [textNote(`Archived image ${input.sourceId} is larger than ${maxBytes} bytes.`)];
