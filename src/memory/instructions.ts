@@ -1,6 +1,6 @@
 export const MEMORY_RESOURCE_PROMPT = [
   "Durable channel memory and user preference memory.",
-  "Before answering questions that may depend on past context, call search_memories.",
+  "Before answering questions that may depend on past context, call search_context.",
   "If the first search is weak, retry with 2-3 alternate queries using synonyms, related entities, and broader or narrower phrasing.",
   "Channel memory is for stable channel-shared rules, decisions, references, and definitions.",
   "User preference memory is for personal preferences like preferred name, response language, writing style, or formatting preferences.",

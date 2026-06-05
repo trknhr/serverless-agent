@@ -82,6 +82,16 @@ const searchMemoriesSchema = z.object({
   scope: z.enum(["all", "channel", "user_preference", "workspace"]).optional(),
 });
 
+const searchContextSchema = z.object({
+  query: z.string().min(1).max(400),
+  limit: z.number().int().min(1).max(20).optional(),
+  include_web: z.boolean().optional(),
+  country: z.string().regex(/^[A-Za-z]{2}$/).optional(),
+  language: z.string().regex(/^[A-Za-z]{2,3}$/).optional(),
+  freshness: z.enum(["day", "week", "month", "year"]).optional(),
+  domains: z.array(z.string().min(1)).max(5).optional(),
+});
+
 const saveMemorySchema = z.object({
   text: z.string().min(1),
   scope: z.enum(["channel", "user_preference", "workspace"]).optional(),
@@ -525,6 +535,8 @@ export class CustomToolExecutor {
           return await this.listSkills(input);
         case "disable_skill":
           return await this.disableSkill(input);
+        case "search_context":
+          return await this.searchContext(input);
         case "search_memories":
           return await this.searchMemories(input);
         case "save_memory":
@@ -745,6 +757,69 @@ export class CustomToolExecutor {
     return jsonResult({
       disabled: true,
       skill: serializeGeneratedSkill(skill),
+    });
+  }
+
+  private async searchContext(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    const parsed = searchContextSchema.parse(input);
+    const [taskResult, memoryResult] = await Promise.all([
+      this.searchTasks({
+        query: parsed.query,
+        limit: parsed.limit,
+      }),
+      this.searchMemories({
+        query: parsed.query,
+        limit: parsed.limit,
+      }),
+    ]);
+    const taskPayload = parseJsonToolResult(taskResult);
+    const memoryPayload = parseJsonToolResult(memoryResult);
+    let webPayload: Record<string, unknown> | undefined;
+    let webError: string | undefined;
+
+    if (parsed.include_web) {
+      try {
+        webPayload = parseJsonToolResult(
+          await this.webSearch({
+            query: parsed.query,
+            limit: Math.min(parsed.limit ?? 5, 10),
+            country: parsed.country,
+            language: parsed.language,
+            freshness: parsed.freshness,
+            domains: parsed.domains,
+          }),
+        );
+      } catch (error) {
+        webError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    const tasks = Array.isArray(taskPayload.tasks) ? taskPayload.tasks : [];
+    const memories = Array.isArray(memoryPayload.memories) ? memoryPayload.memories : [];
+    const webResults =
+      webPayload && Array.isArray(webPayload.results) ? webPayload.results : [];
+
+    this.context.logger.info("Unified search completed", {
+      query: parsed.query,
+      taskCount: tasks.length,
+      memoryCount: memories.length,
+      webCount: webResults.length,
+      includeWeb: parsed.include_web ?? false,
+    });
+
+    return jsonResult({
+      query: parsed.query,
+      count: tasks.length + memories.length + webResults.length,
+      tasks,
+      memories,
+      web: webPayload
+        ? {
+            provider: webPayload.provider,
+            count: webPayload.count,
+            results: webResults,
+          }
+        : undefined,
+      web_error: webError,
     });
   }
 
@@ -2126,6 +2201,18 @@ function jsonResult(payload: unknown): ToolExecutionResult {
       },
     ],
   };
+}
+
+function parseJsonToolResult(result: ToolExecutionResult): Record<string, unknown> {
+  const text = result.content?.find((block) => block.type === "text")?.text;
+  if (!text) {
+    return {};
+  }
+
+  const parsed = JSON.parse(text) as unknown;
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : {};
 }
 
 function errorResult(message: string): ToolExecutionResult {

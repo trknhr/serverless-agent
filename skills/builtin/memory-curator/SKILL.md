@@ -4,7 +4,7 @@ Use this skill when the user asks the assistant to remember something, relies on
 
 ## Workflow
 
-1. Search memory before claiming that a durable fact is unknown.
+1. Use `search_context` before claiming that a durable fact or prior reference is unknown.
 2. Save one memory per stable fact, preference, rule, or project detail.
 3. Use user preference scope for personal preferences such as language, name, writing style, or formatting.
 4. Use channel scope for shared channel rules, decisions, and durable references.

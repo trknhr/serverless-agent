@@ -33,7 +33,7 @@ const builtinSkills: BuiltinSkillDefinition[] = [
     description: "Default enabled skill.",
     defaultEnabled: true,
     triggerHints: ["enabled"],
-    toolAllowlist: ["search_memories"],
+    toolAllowlist: ["search_context"],
     constraints: { maxToolCalls: 3 },
     body: "# Builtin Enabled\n\nUse this skill.",
   },
@@ -107,7 +107,7 @@ describe("skill registry", () => {
           title: "Generated Enabled",
           description: "Generated skill.",
           triggerHints: ["generated"],
-          toolAllowlist: ["web_search"],
+          toolAllowlist: ["search_context"],
           constraints: {},
           body: "# Generated",
           testCases: [],
@@ -162,7 +162,7 @@ describe("skill registry", () => {
         title: "Generated Enabled",
         description: "Generated skill.",
         triggerHints: [],
-        toolAllowlist: ["web_search"],
+        toolAllowlist: ["search_context"],
         constraints: {},
         body: "# Generated",
         testCases: [],
@@ -190,7 +190,7 @@ describe("skill registry", () => {
           title: "Web Research",
           description: "Research public web pages.",
           triggerHints: ["docs"],
-          toolAllowlist: ["web_search"],
+          toolAllowlist: ["search_context"],
           constraints: {},
         },
       ]),
@@ -541,7 +541,7 @@ describe("DynamoDB skill repository", () => {
           title: "Daily Summary",
           description: "Summarize the day.",
           triggerHints: ["daily"],
-          toolAllowlist: ["search_memories"],
+          toolAllowlist: ["search_context"],
           constraints: { maxToolCalls: 4 },
           body: "# Daily Summary",
           createdAt: "created",
@@ -575,7 +575,7 @@ describe("DynamoDB skill repository", () => {
       title: "Daily Summary",
       description: "Summarize the day.",
       triggerHints: ["daily"],
-      toolAllowlist: ["search_memories"],
+      toolAllowlist: ["search_context"],
       constraints: { maxToolCalls: 4 },
       body: "# Daily Summary",
       createdAt: "created",
@@ -605,7 +605,7 @@ describe("DynamoDB skill repository", () => {
           title: "Daily Summary",
           description: "Summarize the day.",
           triggerHints: ["daily"],
-          toolAllowlist: ["search_memories"],
+          toolAllowlist: ["search_context"],
           constraints: {},
           body: "# Daily Summary",
           evaluationNotes: "Use for daily summaries only.",
@@ -646,7 +646,7 @@ describe("DynamoDB skill repository", () => {
       title: "Daily Summary",
       description: "Summarize the day.",
       triggerHints: ["daily"],
-      toolAllowlist: ["search_memories"],
+      toolAllowlist: ["search_context"],
       constraints: {},
       body: "# Daily Summary",
       evaluationNotes: "Use for daily summaries only.",
@@ -742,7 +742,7 @@ describe("load_skill tool", () => {
         title: "Web Research",
         description: "Research public web pages.",
         triggerHints: ["docs"],
-        toolAllowlist: ["web_search", "web_extract"],
+        toolAllowlist: ["search_context", "web_extract"],
         constraints: { maxToolCalls: 8 },
         body: "# Web Research\n\nUse web tools.",
       }),
@@ -1044,8 +1044,12 @@ describe("load_skill tool", () => {
     const taskEvents = {
       save: vi.fn(),
     };
+    const memoryItems = {
+      search: vi.fn().mockResolvedValue([]),
+    };
     const executor = new CustomToolExecutor(
       {
+        memoryItems,
         tasks,
         taskEvents,
       } as never,
@@ -1059,7 +1063,7 @@ describe("load_skill tool", () => {
     const searchResult = await executor.execute({
       id: "tool-search",
       type: "agent.tool_use",
-      name: "search_tasks",
+      name: "search_context",
       input: { query: "alpha search token", limit: 5 },
     });
     expect(searchResult.isError).toBeUndefined();
@@ -1068,6 +1072,12 @@ describe("load_skill tool", () => {
       query: "alpha search token",
       statuses: undefined,
       dueBefore: undefined,
+      limit: 5,
+    });
+    expect(memoryItems.search).toHaveBeenCalledWith({
+      workspaceId: "T1",
+      query: "alpha search token",
+      entityKey: undefined,
       limit: 5,
     });
     expect(JSON.parse((searchResult.content?.[0] as { text: string }).text)).toMatchObject({

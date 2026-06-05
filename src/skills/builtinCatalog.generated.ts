@@ -16,14 +16,14 @@ export const builtinSkillDefinitions = [
       "what do you know"
     ],
     "toolAllowlist": [
-      "search_memories",
+      "search_context",
       "save_memory"
     ],
     "constraints": {
       "maxToolCalls": 5,
       "requiresConfirmation": false
     },
-    "body": "# Memory Curator\n\nUse this skill when the user asks the assistant to remember something, relies on prior context, or states a durable preference or workspace rule.\n\n## Workflow\n\n1. Search memory before claiming that a durable fact is unknown.\n2. Save one memory per stable fact, preference, rule, or project detail.\n3. Use user preference scope for personal preferences such as language, name, writing style, or formatting.\n4. Use channel scope for shared channel rules, decisions, and durable references.\n5. When durable facts come from a user-supplied image, PDF, document, or attachment and the user did not ask to remember them, ask whether to save them before calling `save_memory`.\n6. When the user explicitly approves sharing current-channel memory beyond the current channel, call `promote_memory_to_workspace`.\n7. Keep memory text concise and avoid mixing unrelated facts.\n\n## Boundaries\n\n- Do not save transient chatter, one-off daily summaries, secrets, credentials, or sensitive personal data unless the user explicitly asks and the system allows it.\n- Do not use workspace memory in normal Slack channel conversations unless the current context explicitly permits it.\n- If the memory is inferred rather than explicit, keep confidence modest and do not overstate it."
+    "body": "# Memory Curator\n\nUse this skill when the user asks the assistant to remember something, relies on prior context, or states a durable preference or workspace rule.\n\n## Workflow\n\n1. Use `search_context` before claiming that a durable fact or prior reference is unknown.\n2. Save one memory per stable fact, preference, rule, or project detail.\n3. Use user preference scope for personal preferences such as language, name, writing style, or formatting.\n4. Use channel scope for shared channel rules, decisions, and durable references.\n5. When durable facts come from a user-supplied image, PDF, document, or attachment and the user did not ask to remember them, ask whether to save them before calling `save_memory`.\n6. When the user explicitly approves sharing current-channel memory beyond the current channel, call `promote_memory_to_workspace`.\n7. Keep memory text concise and avoid mixing unrelated facts.\n\n## Boundaries\n\n- Do not save transient chatter, one-off daily summaries, secrets, credentials, or sensitive personal data unless the user explicitly asks and the system allows it.\n- Do not use workspace memory in normal Slack channel conversations unless the current context explicitly permits it.\n- If the memory is inferred rather than explicit, keep confidence modest and do not overstate it."
   },
   {
     "skillId": "task-triage",
@@ -39,18 +39,17 @@ export const builtinSkillDefinitions = [
       "done"
     ],
     "toolAllowlist": [
+      "search_context",
       "list_tasks",
-      "search_tasks",
       "upsert_task",
       "patch_task",
-      "mark_task_done",
-      "search_memories"
+      "mark_task_done"
     ],
     "constraints": {
       "maxToolCalls": 6,
       "requiresConfirmation": false
     },
-    "body": "# Task Triage\n\nUse this skill when the user asks about tasks, follow-ups, priorities, status, or work that should be tracked.\n\n## Workflow\n\n1. Identify concrete action items, owners, due dates, and priority signals from the conversation.\n2. Use `search_tasks` when the user asks about a term that may come from past reminders, deadlines, plans, items to bring, or tracked duties.\n3. Use `list_tasks` before creating duplicates when the request might refer to existing work.\n4. Use `upsert_task` for durable action items that the user expects to track beyond the current reply.\n5. Use `patch_task` to safely update an existing task after `search_tasks` identifies a single clear match.\n6. Use `mark_task_done` only when the user clearly says a tracked task is complete.\n7. Keep the final response short: group tasks by priority or due date and call out missing dates only when they matter.\n\n## Boundaries\n\n- Do not create tasks for casual ideas, transient discussion, or vague possibilities unless the user asks to track them.\n- Do not invent due dates or ownership. Ask one concise clarification if the missing detail blocks action.\n- Prefer updating an existing task over creating a duplicate.\n- If `search_tasks` returns multiple plausible matches for an update request, ask which task to change instead of guessing."
+    "body": "# Task Triage\n\nUse this skill when the user asks about tasks, follow-ups, priorities, status, or work that should be tracked.\n\n## Workflow\n\n1. Identify concrete action items, owners, due dates, and priority signals from the conversation.\n2. Use `search_context` when the user asks about a term that may come from past reminders, deadlines, plans, items to bring, tracked duties, or saved memory.\n3. Use `list_tasks` before creating duplicates when the request might refer to existing work.\n4. Use `upsert_task` for durable action items that the user expects to track beyond the current reply.\n5. Use `patch_task` to safely update an existing task after `search_context` identifies a single clear match.\n6. Use `mark_task_done` only when the user clearly says a tracked task is complete.\n7. Keep the final response short: group tasks by priority or due date and call out missing dates only when they matter.\n\n## Boundaries\n\n- Do not create tasks for casual ideas, transient discussion, or vague possibilities unless the user asks to track them.\n- Do not invent due dates or ownership. Ask one concise clarification if the missing detail blocks action.\n- Prefer updating an existing task over creating a duplicate.\n- If `search_context` returns multiple plausible task matches for an update request, ask which task to change instead of guessing."
   },
   {
     "skillId": "web-research",
@@ -65,15 +64,14 @@ export const builtinSkillDefinitions = [
       "web page verification"
     ],
     "toolAllowlist": [
-      "web_search",
+      "search_context",
       "web_extract",
-      "search_memories",
       "save_memory"
     ],
     "constraints": {
       "maxToolCalls": 8,
       "requiresConfirmation": false
     },
-    "body": "# Web Research\n\nUse this skill when the user asks about current public information, external documentation, recent changes, or a URL that should be inspected before answering.\n\n## Workflow\n\n1. Decide whether saved memory is enough. If the answer depends on current or external facts, use web tools.\n2. Use `web_search` for discovery. Keep queries precise and include product names, dates, versions, or domains when available.\n3. Use `web_extract` on the most relevant source before relying on a result. Treat snippets as leads, not evidence.\n4. Prefer primary sources such as official documentation, standards, release notes, repositories, or original announcements.\n5. Summarize in the user's language and include source URLs for web-derived claims.\n\n## Boundaries\n\n- Do not fetch private, localhost, intranet, credentialed, or user-authenticated URLs.\n- Do not save transient news as durable memory unless the user explicitly asks to remember it.\n- If the result is uncertain, say what was verified and what remains an inference."
+    "body": "# Web Research\n\nUse this skill when the user asks about current public information, external documentation, recent changes, or a URL that should be inspected before answering.\n\n## Workflow\n\n1. Use `search_context` first; set `include_web=true` when the answer depends on current or external facts.\n2. Use `web_extract` on the most relevant returned or user-provided public URL before relying on a result. Treat snippets as leads, not evidence.\n3. Prefer primary sources such as official documentation, standards, release notes, repositories, or original announcements.\n4. Summarize in the user's language and include source URLs for web-derived claims.\n\n## Boundaries\n\n- Do not fetch private, localhost, intranet, credentialed, or user-authenticated URLs.\n- Do not save transient news as durable memory unless the user explicitly asks to remember it.\n- If the result is uncertain, say what was verified and what remains an inference."
   }
 ] satisfies BuiltinSkillDefinition[];

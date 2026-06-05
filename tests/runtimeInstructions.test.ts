@@ -14,12 +14,12 @@ describe("Agent runtime instructions", () => {
   it("looks up tasks when answering task-derived context questions", () => {
     const prompt = buildSystemPrompt("");
 
-    expect(prompt).toContain("search_tasks");
-    expect(prompt).toContain("past reminders");
-    expect(prompt).toContain("deadlines");
-    expect(prompt).toContain("items to bring");
-    expect(prompt).toContain("short term refers to");
-    expect(prompt).toContain("term itself");
+    expect(prompt).toContain("search_context");
+    expect(prompt).toContain("short-term references");
+    expect(prompt).toContain("past-context questions");
+    expect(prompt).toContain("exact term or question");
+    expect(prompt).toContain("returned task_id or memory_id");
+    expect(prompt).toContain("include_web=true");
   });
 
   it("tells the model to read image manifests lazily", () => {

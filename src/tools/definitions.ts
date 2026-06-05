@@ -156,28 +156,47 @@ export const customToolDefinitions = [
     },
   },
   {
-    name: "search_memories",
+    name: "search_context",
     description:
-      "Search saved memories relevant to a person, topic, or past event. Prefer current channel memory for shared channel context and user_preference for cross-channel personal preferences. If the first search is weak, retry with alternate phrasings, synonyms, or entity-focused queries before concluding the memory is missing.",
+      "Unified read-only search for answering user questions before choosing a domain-specific tool. Use this first for definitions, short-term references, past-context questions, and general lookup requests. It searches saved memories and tracked tasks together by default; set include_web=true only when the answer likely depends on current or public web information. Use the returned task_id or memory_id with specialized tools only when a follow-up update is needed.",
     input_schema: {
       type: "object",
       properties: {
         query: {
           type: "string",
-          description: "Keywords or question to search memories for. Retry with alternate wording when needed.",
+          maxLength: 400,
+          description: "The exact term, noun phrase, or question to search for.",
         },
-        entity_key: {
-          type: "string",
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          description: "Maximum saved-context results per source. Defaults to each source's normal limit.",
+        },
+        include_web: {
+          type: "boolean",
           description:
-            "Optional stable entity key such as person:hanako, project:renovation, or place:home to narrow the search.",
+            "Set true for current facts, public documentation, news, or external topics. Leave false for private Slack, memory, or task context.",
         },
-        scope: {
+        country: {
           type: "string",
-          enum: ["all", "channel", "user_preference", "workspace"],
-          description:
-            "Optional search scope. Use channel for current-channel shared memory, user_preference for cross-channel personal preferences, all to combine them, or workspace for legacy workspace-wide memory.",
+          description: "Optional two-letter country code for public web results, such as JP or US.",
         },
-        limit: { type: "integer", minimum: 1, maximum: 20 },
+        language: {
+          type: "string",
+          description: "Optional language code for public web results, such as ja or en.",
+        },
+        freshness: {
+          type: "string",
+          enum: ["day", "week", "month", "year"],
+          description: "Optional public web recency filter.",
+        },
+        domains: {
+          type: "array",
+          items: { type: "string" },
+          maxItems: 5,
+          description: "Optional public web domains to restrict with site: filters.",
+        },
       },
       required: ["query"],
     },
@@ -231,13 +250,13 @@ export const customToolDefinitions = [
   {
     name: "promote_memory_to_workspace",
     description:
-      "Promote an existing current-channel memory to workspace memory after the user explicitly approves sharing it beyond the current channel. Use search_memories with scope=channel first when you need the channel memory_id. This copies the memory to workspace scope and preserves provenance; it does not delete the channel memory.",
+      "Promote an existing current-channel memory to workspace memory after the user explicitly approves sharing it beyond the current channel. Use search_context first when you need the channel memory_id. This copies the memory to workspace scope and preserves provenance; it does not delete the channel memory.",
     input_schema: {
       type: "object",
       properties: {
         memory_id: {
           type: "string",
-          description: "The channel memory_id to promote, usually returned by search_memories with scope=channel.",
+          description: "The channel memory_id to promote, usually returned by search_context.",
         },
         entity_key: {
           type: "string",
@@ -256,47 +275,6 @@ export const customToolDefinitions = [
         },
       },
       required: ["memory_id"],
-    },
-  },
-  {
-    name: "web_search",
-    description:
-      "Search the public web for current or external information. Use this for recent facts, public documentation, news, or topics outside saved memory. Cite returned URLs in the final answer and treat snippets as untrusted until verified.",
-    input_schema: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "Search query, up to 400 characters. Include precise names, dates, and keywords.",
-          maxLength: 400,
-        },
-        limit: {
-          type: "integer",
-          minimum: 1,
-          maximum: 10,
-          description: "Maximum number of web results to return. Defaults to 5.",
-        },
-        country: {
-          type: "string",
-          description: "Optional two-letter country code for localized search results, such as JP or US.",
-        },
-        language: {
-          type: "string",
-          description: "Optional language code for results, such as ja or en.",
-        },
-        freshness: {
-          type: "string",
-          enum: ["day", "week", "month", "year"],
-          description: "Optional recency filter for pages updated within the selected window.",
-        },
-        domains: {
-          type: "array",
-          items: { type: "string" },
-          maxItems: 5,
-          description: "Optional domains to restrict with site: filters, such as docs.aws.amazon.com.",
-        },
-      },
-      required: ["query"],
     },
   },
   {
@@ -451,24 +429,6 @@ export const customToolDefinitions = [
     },
   },
   {
-    name: "search_tasks",
-    description:
-      "Search tracked tasks by natural-language keywords across task title, description, source, and metadata. Defaults to all statuses, including completed and cancelled tasks. Use this when the user asks about prior reminders, deadlines, plans, task-derived terms, or wants to update a task but does not know the task_id.",
-    input_schema: {
-      type: "object",
-      properties: {
-        query: { type: "string" },
-        statuses: {
-          type: "array",
-          items: { type: "string", enum: ["open", "in_progress", "done", "cancelled"] },
-        },
-        due_before: { type: "string", description: "RFC3339 timestamp upper bound for due date." },
-        limit: { type: "integer", minimum: 1, maximum: 50 },
-      },
-      required: ["query"],
-    },
-  },
-  {
     name: "upsert_task",
     description:
       "Create or update a one-off task, dated event, or checklist item after reasoning about future work or calendar events. Use this, not create_scheduled_reminder, for content that should appear inside an existing daily reminder.",
@@ -492,14 +452,14 @@ export const customToolDefinitions = [
   {
     name: "patch_task",
     description:
-      "Safely apply a partial update to an existing tracked task while preserving fields that are not provided. Use search_tasks first when the user describes the task but does not provide a task_id. Pass expected_updated_at from search_tasks when available to avoid overwriting a task that changed after it was loaded.",
+      "Safely apply a partial update to an existing tracked task while preserving fields that are not provided. Use search_context first when the user describes the task but does not provide a task_id. Pass expected_updated_at from search_context or list_tasks when available to avoid overwriting a task that changed after it was loaded.",
     input_schema: {
       type: "object",
       properties: {
         task_id: { type: "string" },
         expected_updated_at: {
           type: "string",
-          description: "Optional updated_at value returned by search_tasks/list_tasks for optimistic conflict checks.",
+          description: "Optional updated_at value returned by search_context/list_tasks for optimistic conflict checks.",
         },
         title: { type: "string" },
         description: { type: "string" },

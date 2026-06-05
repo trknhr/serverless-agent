@@ -4,11 +4,10 @@ Use this skill when the user asks about current public information, external doc
 
 ## Workflow
 
-1. Decide whether saved memory is enough. If the answer depends on current or external facts, use web tools.
-2. Use `web_search` for discovery. Keep queries precise and include product names, dates, versions, or domains when available.
-3. Use `web_extract` on the most relevant source before relying on a result. Treat snippets as leads, not evidence.
-4. Prefer primary sources such as official documentation, standards, release notes, repositories, or original announcements.
-5. Summarize in the user's language and include source URLs for web-derived claims.
+1. Use `search_context` first; set `include_web=true` when the answer depends on current or external facts.
+2. Use `web_extract` on the most relevant returned or user-provided public URL before relying on a result. Treat snippets as leads, not evidence.
+3. Prefer primary sources such as official documentation, standards, release notes, repositories, or original announcements.
+4. Summarize in the user's language and include source URLs for web-derived claims.
 
 ## Boundaries
 

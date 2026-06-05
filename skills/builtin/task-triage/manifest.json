@@ -12,12 +12,11 @@
     "done"
   ],
   "toolAllowlist": [
+    "search_context",
     "list_tasks",
-    "search_tasks",
     "upsert_task",
     "patch_task",
-    "mark_task_done",
-    "search_memories"
+    "mark_task_done"
   ],
   "constraints": {
     "maxToolCalls": 6,

@@ -22,17 +22,28 @@ function toolDefinition(name: string): (typeof customToolDefinitions)[number] {
 describe("tool definitions", () => {
   it("keeps daily reminder contents separate from scheduled notification setup", () => {
     expect(toolDescription("upsert_task")).toContain("inside an existing daily reminder");
-    expect(toolDescription("search_tasks")).toContain("Search tracked tasks");
-    expect(toolDescription("search_tasks")).toContain("all statuses");
+    expect(toolDescription("search_context")).toContain("Unified read-only search");
+    expect(toolDescription("search_context")).toContain("saved memories and tracked tasks");
+    expect(toolDescription("search_context")).toContain("include_web=true");
     expect(toolDescription("patch_task")).toContain("partial update");
-    expect(toolDescription("patch_task")).toContain("search_tasks");
+    expect(toolDescription("patch_task")).toContain("search_context");
     expect(toolDescription("create_scheduled_reminder")).toContain("explicitly asks for an individual reminder");
     expect(toolDescription("create_scheduled_reminder")).toContain("one-off events");
     expect(toolDescription("update_scheduled_reminder")).toContain("explicit changes to a separate notification schedule");
     expect(toolDescription("list_scheduled_reminders")).toContain("included in the daily reminder instead");
     expect(toolDescription("delete_scheduled_reminder")).toContain("accidental individual reminder");
-    expect(toolDefinition("search_tasks").input_schema.required).toEqual(["query"]);
+    expect(toolDefinition("search_context").input_schema.required).toEqual(["query"]);
     expect(toolDefinition("patch_task").input_schema.required).toEqual(["task_id"]);
+  });
+
+  it("uses search_context as the only model-facing search entrypoint", () => {
+    const toolNames = customToolDefinitions.map((tool) => tool.name);
+
+    expect(toolNames).toContain("search_context");
+    expect(toolNames).not.toContain("search_memories");
+    expect(toolNames).not.toContain("search_tasks");
+    expect(toolNames).not.toContain("web_search");
+    expect(toolNames).toContain("web_extract");
   });
 
   it("keeps generated skill creation draft-first", () => {

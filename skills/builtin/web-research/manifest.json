@@ -11,9 +11,8 @@
     "web page verification"
   ],
   "toolAllowlist": [
-    "web_search",
+    "search_context",
     "web_extract",
-    "search_memories",
     "save_memory"
   ],
   "constraints": {

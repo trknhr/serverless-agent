@@ -12,7 +12,7 @@
     "what do you know"
   ],
   "toolAllowlist": [
-    "search_memories",
+    "search_context",
     "save_memory"
   ],
   "constraints": {
