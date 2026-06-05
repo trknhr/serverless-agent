@@ -10,5 +10,6 @@ private-docs
 private-notes
 docs/
 .worktrees/
+.serverless-agent
 
 .docs-ssh.toml
