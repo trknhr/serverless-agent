@@ -93,6 +93,7 @@ function toolRuntimeEnv(overrides: Record<string, string> = {}): Record<string, 
     GOOGLE_OAUTH_CONNECTIONS_TABLE_NAME: "google-connections",
     SOURCE_DOCUMENTS_TABLE_NAME: "sources",
     SLACK_ATTACHMENT_ARCHIVE_BUCKET_NAME: "slack-archive",
+    LINE_ATTACHMENT_ARCHIVE_BUCKET_NAME: "line-archive",
     DOCUMENT_ARCHIVE_BUCKET_NAME: "document-archive",
     DOCUMENT_IMPORT_QUEUE_URL: "https://sqs.local/import",
     ...overrides,
@@ -482,7 +483,29 @@ describe("environment loaders", () => {
     expect(loadLineWorkerEnv()).toMatchObject({
       LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: "line-token",
       CALENDAR_DRAFTS_TABLE_NAME: "calendar-drafts",
+      SOURCE_DOCUMENTS_TABLE_NAME: "sources",
+      LINE_ATTACHMENT_ARCHIVE_BUCKET_NAME: "line-archive",
     });
+  });
+
+  it("requires LINE worker archive env values", () => {
+    withEnv({
+      ...toolRuntimeEnv({
+        LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: "line-token",
+        SOURCE_DOCUMENTS_TABLE_NAME: "",
+      }),
+    });
+
+    expect(() => loadLineWorkerEnv()).toThrow();
+
+    withEnv({
+      ...toolRuntimeEnv({
+        LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: "line-token",
+        LINE_ATTACHMENT_ARCHIVE_BUCKET_NAME: "",
+      }),
+    });
+
+    expect(() => loadLineWorkerEnv()).toThrow();
   });
 
   it("loads LINE workspace resolution mode and rejects invalid values", () => {
