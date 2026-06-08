@@ -22,7 +22,7 @@ export function createUserGoogleCalendarClient(input: {
     defaultTimeZone: input.defaultTimeZone,
     credentialsProvider: async () => {
       if (!input.userId) {
-        throw new Error("Google Calendar requires a Slack user context.");
+        throw new Error("Google Calendar requires a user context.");
       }
 
       const rawSecret = await input.secretsProvider.getSecretString(input.googleCalendarSecretId);
@@ -45,7 +45,7 @@ export function createUserGoogleCalendarClient(input: {
   });
 }
 
-function buildGoogleOAuthStartUrl(
+export function buildGoogleOAuthStartUrl(
   startUrl: string | undefined,
   workspaceId: string,
   userId: string,

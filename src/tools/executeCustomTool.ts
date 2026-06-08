@@ -6,6 +6,7 @@ import {
   GoogleCalendarClient,
   GoogleCalendarListEntry,
 } from "../calendar/googleCalendarClient";
+import { buildGoogleOAuthStartUrl } from "../calendar/userGoogleCalendar";
 import { AgentToolUseEvent, ToolExecutionResult } from "../agent/types";
 import { CalendarDraftRepository } from "../repo/calendarDraftRepository";
 import { ChannelMemoryRepository } from "../repo/channelMemoryRepository";
@@ -298,6 +299,8 @@ const listCalendarEventsSchema = z.object({
   limit: z.number().int().min(1).max(50).optional(),
 });
 
+const startGoogleCalendarAuthorizationSchema = z.object({});
+
 const listGoogleCalendarsSchema = z.object({
   min_access_role: z.enum(["freeBusyReader", "reader", "writer", "owner"]).optional(),
   query: z.string().min(1).optional(),
@@ -481,6 +484,7 @@ interface ToolRepositories {
 interface ToolIntegrations {
   googleCalendar?: GoogleCalendarClient;
   googleCalendarProvider?: () => GoogleCalendarClient | Promise<GoogleCalendarClient>;
+  googleOAuthStartUrl?: string;
   defaultCalendarTimeZone?: string;
   scheduledReminderScheduler?: ScheduledReminderScheduler;
   weatherProvider?: WeatherForecastProvider;
@@ -589,6 +593,8 @@ export class CustomToolExecutor {
           return await this.deleteScheduledReminder(input);
         case "get_weather_forecast":
           return await this.getWeatherForecast(input);
+        case "start_google_calendar_authorization":
+          return await this.startGoogleCalendarAuthorization(input);
         case "list_google_calendars":
           return await this.listGoogleCalendars(input);
         case "list_calendar_events":
@@ -1685,6 +1691,29 @@ export class CustomToolExecutor {
     return jsonResult({
       count: calendars.length,
       calendars: calendars.map(serializeGoogleCalendarListEntry),
+    });
+  }
+
+  private async startGoogleCalendarAuthorization(input: Record<string, unknown>): Promise<ToolExecutionResult> {
+    startGoogleCalendarAuthorizationSchema.parse(input);
+    if (!this.context.userId) {
+      return errorResult("Google Calendar authorization requires a user context.");
+    }
+    if (!this.integrations.googleOAuthStartUrl) {
+      return errorResult("Google OAuth start URL is not configured.");
+    }
+
+    return jsonResult({
+      authorization_required: true,
+      authorization_url: buildGoogleOAuthStartUrl(
+        this.integrations.googleOAuthStartUrl,
+        this.context.workspaceId,
+        this.context.userId,
+      ),
+      workspace_id: this.context.workspaceId,
+      user_id: this.context.userId,
+      channel_id: this.context.channelId,
+      next_step: "Ask the user to open authorization_url to connect Google Calendar for this user.",
     });
   }
 

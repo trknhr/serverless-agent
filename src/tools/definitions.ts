@@ -709,6 +709,15 @@ export const customToolDefinitions = [
     },
   },
   {
+    name: "start_google_calendar_authorization",
+    description:
+      "Start Google Calendar OAuth authorization for the current user. Use this when the user asks to connect, authorize, link, or sign in to Google Calendar. This returns an authorization URL only; it does not read or write calendar data.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
     name: "list_google_calendars",
     description:
       "List Google calendars available to the connected user, including access roles. Use this before targeting a named non-primary calendar such as Family.",

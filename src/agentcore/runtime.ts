@@ -154,8 +154,9 @@ function createToolExecutor(
           googleOAuthStartUrl: resources.googleOAuthStartUrl,
           secretsProvider,
           connections: new GoogleOAuthConnectionRepository(resources.googleOAuthConnectionsTableName),
-        }),
+      }),
       defaultCalendarTimeZone: resources.googleCalendarTimeZone,
+      googleOAuthStartUrl: resources.googleOAuthStartUrl,
       scheduledReminderScheduler:
         resources.schedulerTargetArn && resources.schedulerTargetRoleArn
           ? new EventBridgeScheduledReminderScheduler({

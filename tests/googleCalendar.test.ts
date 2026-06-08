@@ -414,7 +414,7 @@ describe("createUserGoogleCalendarClient", () => {
     };
 
     const withoutUser = createUserGoogleCalendarClient(base as any);
-    await expect(withoutUser.listEvents({})).rejects.toThrow("requires a Slack user context");
+    await expect(withoutUser.listEvents({})).rejects.toThrow("requires a user context");
 
     const withoutConnection = createUserGoogleCalendarClient({
       ...base,

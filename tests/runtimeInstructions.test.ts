@@ -36,6 +36,14 @@ describe("Agent runtime instructions", () => {
     expect(prompt).toContain("source IDs explicitly shown in the current attachment manifest");
   });
 
+  it("starts Google Calendar authorization through the dedicated tool", () => {
+    const prompt = buildSystemPrompt("");
+
+    expect(prompt).toContain("start_google_calendar_authorization");
+    expect(prompt).toContain("connect, authorize, link, or sign in to Google Calendar");
+    expect(prompt).toContain("Do not ask what kind of calendar integration");
+  });
+
   it("appends deployment-specific system prompt instructions by default", () => {
     const prompt = buildSystemPrompt("Skill summaries.", {
       customSystemPrompt: "Deployment-specific instructions.",
