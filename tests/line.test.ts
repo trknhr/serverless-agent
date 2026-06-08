@@ -45,6 +45,19 @@ describe("LINE request signatures", () => {
       }),
     ).toBe(false);
   });
+
+  it("includes the local received date when provided", () => {
+    const [promptBlock] = buildLineContextBlocks({
+      currentText: "Show my upcoming schedule.",
+      priorTurns: [],
+      receivedAt: "2026-06-08T07:52:00.000Z",
+      timeZone: "Asia/Tokyo",
+    });
+
+    expect(promptBlock.text).toContain("Current local date: 2026-06-08 (Asia/Tokyo)");
+    expect(promptBlock.text).toContain("Use this date for relative dates");
+    expect(promptBlock.text).toContain("Current user message:\nShow my upcoming schedule.");
+  });
 });
 
 describe("LINE webhook parsing", () => {
