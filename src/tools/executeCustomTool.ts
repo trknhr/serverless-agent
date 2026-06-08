@@ -425,6 +425,11 @@ type CalendarDraftCandidateInput = z.infer<typeof calendarDraftCandidateSchema>;
 type RecurringTaskRecurrenceInput = z.infer<typeof recurringTaskRecurrenceInputSchema>;
 type ScheduledReminderRecurrenceInput = z.infer<typeof scheduledReminderRecurrenceInputSchema>;
 
+interface AppliedCalendarDraftEventResult {
+  operation: "created" | "updated";
+  summary: string;
+}
+
 const DEFAULT_CALENDAR_TIME_ZONE = "Asia/Tokyo";
 const CALENDAR_PRIVATE_PROPERTY_KEYS = {
   draftId: "slackai_draft",
@@ -1853,13 +1858,7 @@ export class CustomToolExecutor {
       minAccessRole: "writer",
     });
     const appliedAt = new Date().toISOString();
-    const results: Array<{
-      candidate_id: string;
-      operation: "created" | "updated";
-      event_id: string;
-      html_link?: string;
-      summary: string;
-    }> = [];
+    const results: AppliedCalendarDraftEventResult[] = [];
 
     const candidateIds = new Set(selectedCandidates.map((candidate) => candidate.candidateId));
     const updatedCandidates: CalendarDraftCandidate[] = [];
@@ -1899,10 +1898,7 @@ export class CustomToolExecutor {
         appliedAt,
       });
       results.push({
-        candidate_id: candidate.candidateId,
         operation,
-        event_id: appliedEvent.id,
-        html_link: appliedEvent.htmlLink,
         summary: appliedEvent.summary ?? candidate.summary,
       });
     }
@@ -1922,17 +1918,7 @@ export class CustomToolExecutor {
     };
     await draftRepository.save(updatedDraft);
 
-    return jsonResult({
-      applied: true,
-      draft_id: updatedDraft.draftId,
-      status: updatedDraft.status,
-      calendar_id: updatedDraft.calendarId,
-      event_count: results.length,
-      events: results,
-      remaining_pending_candidate_ids: updatedDraft.candidates
-        .filter((candidate) => candidate.status === "pending")
-        .map((candidate) => candidate.candidateId),
-    });
+    return textResult(formatAppliedCalendarDraftResult(updatedDraft, results));
   }
 
   private async discardCalendarDraft(input: Record<string, unknown>): Promise<ToolExecutionResult> {
@@ -1988,16 +1974,7 @@ export class CustomToolExecutor {
     };
     await draftRepository.save(updatedDraft);
 
-    return jsonResult({
-      discarded: true,
-      draft_id: updatedDraft.draftId,
-      status: updatedDraft.status,
-      rejected_candidate_ids: rejectedCandidateIds,
-      skipped_candidate_ids: skippedCandidateIds,
-      remaining_pending_candidate_ids: updatedDraft.candidates
-        .filter((candidate) => candidate.status === "pending")
-        .map((candidate) => candidate.candidateId),
-    });
+    return textResult(formatDiscardedCalendarDraftResult(updatedDraft, rejectedCandidateIds, skippedCandidateIds));
   }
 
   private async requireGoogleCalendar(): Promise<GoogleCalendarClient> {
@@ -2228,6 +2205,68 @@ function jsonResult(payload: unknown): ToolExecutionResult {
       },
     ],
   };
+}
+
+function textResult(text: string): ToolExecutionResult {
+  return {
+    content: [
+      {
+        type: "text",
+        text,
+      },
+    ],
+  };
+}
+
+function formatAppliedCalendarDraftResult(
+  draft: CalendarDraft,
+  results: AppliedCalendarDraftEventResult[],
+): string {
+  const pendingCount = draft.candidates.filter((candidate) => candidate.status === "pending").length;
+  const lines = [
+    `カレンダー下書き「${draft.title}」を承認し、Google Calendarに${results.length}件の予定を反映しました。`,
+    ...formatLimitedLines(results, (result) => `${calendarOperationLabel(result.operation)}: ${result.summary}`),
+  ];
+
+  if (pendingCount > 0) {
+    lines.push(`未処理の候補が${pendingCount}件残っています。`);
+  }
+
+  return lines.join("\n");
+}
+
+function formatDiscardedCalendarDraftResult(
+  draft: CalendarDraft,
+  rejectedCandidateIds: string[],
+  skippedCandidateIds: string[],
+): string {
+  const rejectedIds = new Set(rejectedCandidateIds);
+  const rejectedCandidates = draft.candidates.filter((candidate) => rejectedIds.has(candidate.candidateId));
+  const pendingCount = draft.candidates.filter((candidate) => candidate.status === "pending").length;
+  const lines = [`カレンダー下書き「${draft.title}」を却下しました。`];
+
+  if (rejectedCandidates.length > 0) {
+    lines.push(...formatLimitedLines(rejectedCandidates, (candidate) => `却下: ${candidate.summary}`));
+  }
+  if (skippedCandidateIds.length > 0) {
+    lines.push(`作成済みの候補${skippedCandidateIds.length}件は変更していません。`);
+  }
+  if (pendingCount > 0) {
+    lines.push(`未処理の候補が${pendingCount}件残っています。`);
+  }
+
+  return lines.join("\n");
+}
+
+function formatLimitedLines<T>(items: T[], formatItem: (item: T) => string): string[] {
+  const maxVisibleItems = 5;
+  const visible = items.slice(0, maxVisibleItems).map((item) => `- ${formatItem(item)}`);
+  const hiddenCount = items.length - visible.length;
+  return hiddenCount > 0 ? [...visible, `- ほか${hiddenCount}件`] : visible;
+}
+
+function calendarOperationLabel(operation: AppliedCalendarDraftEventResult["operation"]): string {
+  return operation === "created" ? "作成" : "更新";
 }
 
 function parseJsonToolResult(result: ToolExecutionResult): Record<string, unknown> {

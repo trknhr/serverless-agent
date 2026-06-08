@@ -160,9 +160,13 @@ function formatInteractionResult(
     return `カレンダー下書きの${value.action === "approve" ? "承認" : "却下"}に失敗しました。\n${details ?? ""}`.trim();
   }
 
+  if (details) {
+    return details;
+  }
+
   return value.action === "approve"
-    ? `カレンダー下書きを承認し、予定を作成しました。\n${details ?? ""}`.trim()
-    : `カレンダー下書きを却下しました。\n${details ?? ""}`.trim();
+    ? "カレンダー下書きを承認し、予定を作成しました。"
+    : "カレンダー下書きを却下しました。";
 }
 
 function parseInteractionPayload(rawBody: string): SlackInteractionPayload {
