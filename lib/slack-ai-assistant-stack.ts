@@ -90,7 +90,7 @@ export class SlackAiAssistantStack extends Stack {
       resolveOptionalConfigValue(this, "defaultScheduleChannel", "DEFAULT_SCHEDULE_CHANNEL") ??
       "C_PLACEHOLDER";
     const publicBaseUrl = resolveOptionalConfigValue(this, "publicBaseUrl", "PUBLIC_BASE_URL");
-    const googleOAuthStartUrl = publicBaseUrl
+    const configuredGoogleOAuthStartUrl = publicBaseUrl
       ? `${trimTrailingSlash(publicBaseUrl)}/oauth/google/start`
       : undefined;
     const agentCoreRuntimeQualifier =
@@ -642,14 +642,17 @@ export class SlackAiAssistantStack extends Stack {
     oauthResource.addResource("start").addMethod("GET", new apigateway.LambdaIntegration(googleOAuth));
     oauthResource.addResource("callback").addMethod("GET", new apigateway.LambdaIntegration(googleOAuth));
 
-    if (googleOAuthStartUrl) {
-      worker.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
-      scheduledRunner.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
-      lineWorker.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
-      documentImportWorker.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
-      chatApi.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
-      slackInteractions.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
-    }
+    const googleOAuthStartUrl =
+      configuredGoogleOAuthStartUrl ??
+      cdk.Fn.sub("https://${RestApiId}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod/oauth/google/start", {
+        RestApiId: api.restApiId,
+      });
+    worker.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
+    scheduledRunner.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
+    lineWorker.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
+    documentImportWorker.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
+    chatApi.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
+    slackInteractions.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
     const importsResource = api.root.addResource("imports");
     importsResource.addResource("uploads").addMethod("POST", new apigateway.LambdaIntegration(documentImportApi), {
       authorizationType: apigateway.AuthorizationType.IAM,
