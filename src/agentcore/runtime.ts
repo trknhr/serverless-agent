@@ -5,6 +5,7 @@ import {
   AgentRuntimeRequest,
   agentRuntimeRequestSchema,
 } from "./contracts";
+import { parseSystemPromptMode } from "./instructions";
 import { parseBedrockServiceTier, runAgentTurn } from "./runAgentTurn";
 import { CalendarDraftRepository } from "../repo/calendarDraftRepository";
 import { ChannelMemoryRepository } from "../repo/channelMemoryRepository";
@@ -35,6 +36,8 @@ const region = process.env.BEDROCK_REGION ?? process.env.AWS_REGION ?? process.e
 const modelId = requireEnv("BEDROCK_MODEL_ID");
 const documentModelId = process.env.BEDROCK_DOCUMENT_MODEL_ID ?? modelId;
 const bedrockServiceTier = parseBedrockServiceTier(process.env.BEDROCK_SERVICE_TIER);
+const customSystemPrompt = normalizeOptionalEnv("CUSTOM_SYSTEM_PROMPT");
+const systemPromptMode = parseSystemPromptMode(process.env.SYSTEM_PROMPT_MODE);
 const secretsProvider = new SecretsProvider();
 
 async function main(): Promise<void> {
@@ -75,6 +78,8 @@ async function main(): Promise<void> {
           modelId,
           documentModelId,
           bedrockServiceTier,
+          customSystemPrompt,
+          systemPromptMode,
           log,
           createExecutor: (request, log, skillRegistry) =>
             createToolExecutor(request, log, skillRegistry, {
@@ -210,6 +215,11 @@ function requireEnv(name: string): string {
     throw new Error(`${name} must be set`);
   }
   return value;
+}
+
+function normalizeOptionalEnv(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value || undefined;
 }
 
 main().catch((error) => {

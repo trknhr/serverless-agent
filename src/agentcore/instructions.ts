@@ -24,8 +24,38 @@ Use get_weather_forecast when the user asks about weather, rain, temperature, um
 Use search_context with include_web=true for current public web information, then web_extract when you need to verify a returned or user-provided public URL. Include source URLs when answering from web results.
 Use browser tools for public JavaScript-heavy or interactive pages when web_extract is insufficient. Do not use browser tools for private, localhost, intranet, credentialed, or user-authenticated URLs.
 For Google Calendar writes, create a reviewable calendar draft first unless the request is an explicit approval of an existing draft.
-Keep Slack replies concise and actionable.`;
+Keep chat replies concise and actionable.`;
 
-export function buildSystemPrompt(skillPrompt: string): string {
-  return [defaultSystemPrompt, skillPrompt].filter(Boolean).join("\n\n");
+export type SystemPromptMode = "append" | "replace";
+
+export interface BuildSystemPromptOptions {
+  customSystemPrompt?: string;
+  systemPromptMode?: SystemPromptMode;
+}
+
+export function buildSystemPrompt(skillPrompt: string, options: BuildSystemPromptOptions = {}): string {
+  const customSystemPrompt = normalizePrompt(options.customSystemPrompt);
+  const basePrompt =
+    customSystemPrompt && options.systemPromptMode === "replace"
+      ? customSystemPrompt
+      : [defaultSystemPrompt, customSystemPrompt].filter(Boolean).join("\n\n");
+
+  return [basePrompt, skillPrompt].filter(Boolean).join("\n\n");
+}
+
+export function parseSystemPromptMode(value: string | undefined): SystemPromptMode {
+  const normalized = value?.trim();
+  if (!normalized || normalized === "append") {
+    return "append";
+  }
+  if (normalized === "replace") {
+    return "replace";
+  }
+
+  throw new Error(`Invalid SYSTEM_PROMPT_MODE '${value}'. Expected one of: append, replace`);
+}
+
+function normalizePrompt(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized || undefined;
 }

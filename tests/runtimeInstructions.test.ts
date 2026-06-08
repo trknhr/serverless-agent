@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSystemPrompt } from "../src/agentcore/instructions";
+import { buildSystemPrompt, parseSystemPromptMode } from "../src/agentcore/instructions";
 
 describe("Agent runtime instructions", () => {
   it("asks before creating automatic generated skill drafts", () => {
@@ -34,5 +34,32 @@ describe("Agent runtime instructions", () => {
     expect(prompt).toContain("question field");
     expect(prompt).toContain("current request is unrelated to the image");
     expect(prompt).toContain("source IDs explicitly shown in the current attachment manifest");
+  });
+
+  it("appends deployment-specific system prompt instructions by default", () => {
+    const prompt = buildSystemPrompt("Skill summaries.", {
+      customSystemPrompt: "Deployment-specific instructions.",
+    });
+
+    expect(prompt).toContain("Use tools for durable memory");
+    expect(prompt).toContain("Deployment-specific instructions.");
+    expect(prompt).toContain("Skill summaries.");
+  });
+
+  it("can replace the default system prompt with deployment-specific instructions", () => {
+    const prompt = buildSystemPrompt("Skill summaries.", {
+      customSystemPrompt: "Deployment-specific instructions.",
+      systemPromptMode: "replace",
+    });
+
+    expect(prompt).not.toContain("Use tools for durable memory");
+    expect(prompt).toBe("Deployment-specific instructions.\n\nSkill summaries.");
+  });
+
+  it("parses custom system prompt mode from runtime environment values", () => {
+    expect(parseSystemPromptMode(undefined)).toBe("append");
+    expect(parseSystemPromptMode("append")).toBe("append");
+    expect(parseSystemPromptMode("replace")).toBe("replace");
+    expect(() => parseSystemPromptMode("invalid")).toThrow("Invalid SYSTEM_PROMPT_MODE");
   });
 });

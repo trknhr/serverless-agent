@@ -101,6 +101,10 @@ export class SlackAiAssistantStack extends Stack {
     const bedrockDocumentModelId =
       resolveOptionalConfigValue(this, "bedrockDocumentModelId", "BEDROCK_DOCUMENT_MODEL_ID") ??
       bedrockModelId;
+    const customSystemPrompt = resolveOptionalConfigValue(this, "customSystemPrompt", "CUSTOM_SYSTEM_PROMPT");
+    const systemPromptMode =
+      resolveOptionalConfigValue(this, "systemPromptMode", "SYSTEM_PROMPT_MODE") ?? "append";
+    validateSystemPromptMode(systemPromptMode);
 
     const sessionTable = new dynamodb.Table(this, "SlackThreadSessionsTable", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
@@ -294,6 +298,8 @@ export class SlackAiAssistantStack extends Stack {
         bedrockRegion,
         bedrockServiceTier,
         bedrockDocumentModelId,
+        customSystemPrompt,
+        systemPromptMode,
       }),
     });
     const slackAgentRuntime = agentCoreApplication.environments.get("SlackAgent")?.runtime;
@@ -885,6 +891,8 @@ function buildAgentCoreProjectSpec(input: {
   bedrockRegion?: string;
   bedrockServiceTier?: string;
   bedrockDocumentModelId: string;
+  customSystemPrompt?: string;
+  systemPromptMode: string;
 }): AgentCoreProjectSpec {
   return {
     name: "SlackAiAssistant",
@@ -929,6 +937,18 @@ function buildAgentCoreProjectSpec(input: {
             name: "BEDROCK_DOCUMENT_MODEL_ID",
             value: input.bedrockDocumentModelId,
           },
+          ...(input.customSystemPrompt
+            ? [
+                {
+                  name: "CUSTOM_SYSTEM_PROMPT",
+                  value: input.customSystemPrompt,
+                },
+                {
+                  name: "SYSTEM_PROMPT_MODE",
+                  value: input.systemPromptMode,
+                },
+              ]
+            : []),
         ],
       },
     ],
@@ -994,6 +1014,12 @@ function normalizeConfigValue(value: unknown): string | undefined {
   }
 
   return normalized;
+}
+
+function validateSystemPromptMode(value: string): void {
+  if (value !== "append" && value !== "replace") {
+    throw new Error("Invalid systemPromptMode. Expected one of: append, replace");
+  }
 }
 
 function trimTrailingSlash(value: string): string {

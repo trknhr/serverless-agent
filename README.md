@@ -260,6 +260,8 @@ npx cdk deploy \
   -c defaultScheduleChannel=<slack-channel-id> \
   -c bedrockModelId=<bedrock-model-id> \
   -c bedrockDocumentModelId=<bedrock-document-model-id> \
+  -c customSystemPrompt="$(cat ../private-deploy/prompts/product-system-prompt.md)" \
+  -c systemPromptMode=append \
   -c publicBaseUrl=https://your-api-id.execute-api.ap-northeast-1.amazonaws.com/prod
 ```
 
@@ -271,6 +273,12 @@ Context options:
 - `bedrockDocumentModelId`: optional Bedrock model used when requests include
   image, PDF, or other binary document input. Defaults to `bedrockModelId` when
   omitted.
+- `customSystemPrompt`: optional deployment-specific system prompt text. Keep
+  product-specific instructions in a private deploy repository and pass them in
+  at deploy time.
+- `systemPromptMode`: optional custom prompt mode. `append` keeps the OSS
+  default instructions and appends `customSystemPrompt`; `replace` uses only the
+  custom prompt before skill summaries. Defaults to `append`.
 - `publicBaseUrl`: deployed API base URL used in Slack replies, especially for
   Google Calendar OAuth links
 - `slackSigningParameterName`: optional override for the Slack signing secret

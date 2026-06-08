@@ -4,7 +4,7 @@ import { logger } from "../shared/logger";
 import { CustomToolExecutor } from "../tools/executeCustomTool";
 import { customToolDefinitions } from "../tools/definitions";
 import { AgentRuntimeRequest } from "./contracts";
-import { buildSystemPrompt } from "./instructions";
+import { buildSystemPrompt, type SystemPromptMode } from "./instructions";
 import { shouldUseDocumentModel } from "./modelSelection";
 import { mapToolExecutionResultToModelOutput } from "./toolResultOutput";
 
@@ -51,6 +51,8 @@ export interface RunAgentTurnOptions {
   modelId: string;
   documentModelId?: string;
   bedrockServiceTier?: BedrockServiceTier;
+  customSystemPrompt?: string;
+  systemPromptMode?: SystemPromptMode;
   log: ReturnType<typeof logger.child>;
   createExecutor?: (
     request: AgentRuntimeRequest,
@@ -92,7 +94,10 @@ export async function* runAgentTurn(options: RunAgentTurnOptions): AsyncGenerato
     selectedModelId === options.modelId ? options.bedrockServiceTier : undefined;
   const agent = new options.ai.ToolLoopAgent({
     model: options.modelProvider(selectedModelId),
-    instructions: buildSystemPrompt(skillPrompt),
+    instructions: buildSystemPrompt(skillPrompt, {
+      customSystemPrompt: options.customSystemPrompt,
+      systemPromptMode: options.systemPromptMode,
+    }),
     tools,
     ...(selectedBedrockServiceTier
       ? {
