@@ -29,16 +29,19 @@ function buildPromptText(
   dateContext?: string,
 ): string {
   const normalizedCurrentText = currentText.trim();
+  const formatInstruction =
+    "Format the final answer as LINE plain text. Do not use Markdown syntax such as **bold**, headings, tables, code fences, or Slack mrkdwn.";
 
   if (priorTurns.length === 0) {
     if (dateContext) {
-      return [dateContext, "Current user message:", normalizedCurrentText].join("\n");
+      return [formatInstruction, dateContext, "Current user message:", normalizedCurrentText].join("\n");
     }
-    return normalizedCurrentText;
+    return [formatInstruction, "Current user message:", normalizedCurrentText].join("\n");
   }
 
   return [
     "Use the following LINE conversation context only for this same-chat reply.",
+    formatInstruction,
     dateContext,
     "Recent AI conversation turns from this LINE chat:",
     priorTurns.map((turn, index) => renderTurn(index, turn)).join("\n"),

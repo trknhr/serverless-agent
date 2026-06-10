@@ -82,7 +82,7 @@ beforeEach(() => {
     manifestBlocks: [],
   });
   mocks.agentInvoke.mockResolvedValue({
-    text: "Agent reply.",
+    text: "**Agent reply.**",
     sessionId: "agent-session-1",
     status: "completed",
     taskIds: [],
@@ -198,6 +198,7 @@ describe("LINE events worker", () => {
       {
         type: "text",
         text: [
+          "Format the final answer as LINE plain text. Do not use Markdown syntax such as **bold**, headings, tables, code fences, or Slack mrkdwn.",
           "Current local date: 2026-06-05 (Asia/Tokyo)",
           "Use this date for relative dates such as today, tomorrow, and this week.",
           "Current user message:",

@@ -31,6 +31,22 @@ export function normalizeTextForSlack(text: string): string {
   ).trim();
 }
 
+export function normalizeTextForLine(text: string): string {
+  return transformOutsideCode(stripModelThinking(text), (segment) =>
+    segment
+      .replace(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/gm, "$1")
+      .replace(/^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/gm, "")
+      .replace(/^\s{0,3}>\s?/gm, "")
+      .replace(/^\s*\|?\s*:?-{3,}:?(?:\s*\|\s*:?-{3,}:?)+\s*\|?\s*$/gm, "")
+      .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1\n$2")
+      .replace(/\*\*(.+?)\*\*/gs, "$1")
+      .replace(/__(.+?)__/gs, "$1")
+      .replace(/~~(.+?)~~/gs, "$1")
+      .replace(/(^|[^\w])_([^_\n]+)_([^\w]|$)/g, "$1$2$3")
+      .replace(/(^|[^\w])\*([^*\n]+)\*([^\w]|$)/g, "$1$2$3"),
+  ).trim();
+}
+
 export function stripModelThinking(text: string): string {
   return text
     .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")

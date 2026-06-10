@@ -56,6 +56,7 @@ describe("LINE request signatures", () => {
 
     expect(promptBlock.text).toContain("Current local date: 2026-06-08 (Asia/Tokyo)");
     expect(promptBlock.text).toContain("Use this date for relative dates");
+    expect(promptBlock.text).toContain("Format the final answer as LINE plain text");
     expect(promptBlock.text).toContain("Current user message:\nShow my upcoming schedule.");
   });
 });
@@ -255,6 +256,7 @@ describe("LINE conversation prompt blocks", () => {
     const text = promptBlock.text;
 
     expect(text).toContain("LINE conversation context");
+    expect(text).toContain("Format the final answer as LINE plain text");
     expect(text).toContain("1. user:U1: first");
     expect(text).toContain("Current user message:\nwhat changed?");
     expect(attachmentBlock).toEqual({ type: "text", text: "Attached image: img-1" });

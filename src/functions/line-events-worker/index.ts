@@ -11,7 +11,7 @@ import { ConversationTurnRepository } from "../../repo/conversationTurnRepositor
 import { SourceDocumentRepository } from "../../repo/sourceDocumentRepository";
 import { ConversationSessionRecord, lineQueueMessageSchema } from "../../shared/contracts";
 import { logger } from "../../shared/logger";
-import { stripModelThinking } from "../../shared/text";
+import { normalizeTextForLine } from "../../shared/text";
 
 const env = loadLineWorkerEnv();
 const secretsProvider = new SecretsProvider();
@@ -124,7 +124,7 @@ export async function handler(event: SQSEvent): Promise<void> {
         },
       },
     });
-    const completionText = stripModelThinking(completion.text) || "処理は完了しましたが、返答テキストが空でした。";
+    const completionText = normalizeTextForLine(completion.text) || "処理は完了しましたが、返答テキストが空でした。";
 
     await lineClient.pushText(queueMessage.responseTargetId, completionText);
 

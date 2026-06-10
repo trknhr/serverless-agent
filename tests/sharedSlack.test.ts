@@ -26,6 +26,7 @@ import {
 } from "../src/slack/parseEvent";
 import { verifySlackSignature } from "../src/slack/verifySignature";
 import {
+  normalizeTextForLine,
   normalizeTextForSlack,
   splitTextForSlack,
   stripModelThinking,
@@ -70,6 +71,27 @@ describe("Slack text formatting", () => {
   it("strips model thinking tags before Slack formatting", () => {
     expect(stripModelThinking("<thinking>hidden</thinking>\nVisible")).toBe("Visible");
     expect(normalizeTextForSlack("<think>hidden</think>\n**Visible**")).toBe("*Visible*");
+  });
+
+  it("normalizes markdown for LINE plain text", () => {
+    const normalized = normalizeTextForLine(
+      [
+        "## Schedule",
+        "**Today**",
+        "- [Calendar](https://example.com/calendar)",
+        "| day | item |",
+        "| --- | --- |",
+        "| Mon | prep |",
+        "`**literal**`",
+      ].join("\n"),
+    );
+
+    expect(normalized).toContain("Schedule");
+    expect(normalized).toContain("Today");
+    expect(normalized).toContain("Calendar\nhttps://example.com/calendar");
+    expect(normalized).not.toContain("**Today**");
+    expect(normalized).not.toContain("| --- | --- |");
+    expect(normalized).toContain("`**literal**`");
   });
 });
 
