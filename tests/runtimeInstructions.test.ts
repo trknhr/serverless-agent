@@ -44,6 +44,13 @@ describe("Agent runtime instructions", () => {
     expect(prompt).toContain("Do not ask what kind of calendar integration");
   });
 
+  it("does not invite broad Google Calendar use for ordinary reminders", () => {
+    const prompt = buildSystemPrompt("");
+
+    expect(prompt).not.toContain("calendar operations when they are relevant");
+    expect(prompt).toContain("Use Google Calendar tools only when the user explicitly asks");
+  });
+
   it("appends deployment-specific system prompt instructions by default", () => {
     const prompt = buildSystemPrompt("Skill summaries.", {
       customSystemPrompt: "Deployment-specific instructions.",

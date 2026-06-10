@@ -1705,6 +1705,7 @@ export class CustomToolExecutor {
 
     return jsonResult({
       authorization_required: true,
+      authorization_url_available: true,
       authorization_url: buildGoogleOAuthStartUrl(
         this.integrations.googleOAuthStartUrl,
         this.context.workspaceId,
