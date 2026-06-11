@@ -120,6 +120,9 @@ describe("scheduled agent runner", () => {
       workspaceId: "T1",
     });
 
+    const agentRequestText = mocks.agentInvoke.mock.calls[0][0].request.content[0].text;
+    expect(agentRequestText).toContain("Only include facts, reminders, dates, tasks, events, and notes that are present in tool results");
+    expect(agentRequestText).toContain("If the prompt asks for a memo or note and no grounded item is available, omit that section");
     expect(mocks.slackPostMessage).toHaveBeenCalledWith({
       channel: "C1",
       text: "*リマインダー:* Morning Reminder\n\nToday's reminder.",

@@ -536,6 +536,9 @@ function buildScheduledPrompt(
       ? "- Format the final answer as LINE plain text: use short labels and bullets, but do not use Markdown tables or Slack-specific mrkdwn."
       : "- Format the final answer for Slack mrkdwn: use bold labels and bullets, but do not use Markdown headings, horizontal rules, or tables.",
     "- Do not narrate tool calls, failed attempts, or intermediate reasoning; post only the final useful reminder content.",
+    "- Only include facts, reminders, dates, tasks, events, and notes that are present in tool results, the scheduling context, or the scheduled reminder prompt.",
+    "- Do not invent or infer extra memo items, calendar events, reminders, deadlines, or family notes that were not returned by tools.",
+    "- If the prompt asks for a memo or note and no grounded item is available, omit that section or say there is no note to add.",
   ];
   if (env.DEFAULT_RESPONSE_LANGUAGE) {
     promptParts.push(`- Reply language: ${env.DEFAULT_RESPONSE_LANGUAGE}.`);
