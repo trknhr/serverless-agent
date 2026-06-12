@@ -169,6 +169,7 @@ describe("runtime contract schemas", () => {
     expect(
       buildAgentRuntimeResources({
         MEMORY_ITEMS_TABLE_NAME: "memory",
+        AGENT_TURN_TRACES_TABLE_NAME: "turn-traces",
         WORK_SESSIONS_TABLE_NAME: "work-sessions",
         TASK_TABLE_NAME: "scheduled",
         TASKS_TABLE_NAME: "tasks",
@@ -198,6 +199,7 @@ describe("runtime contract schemas", () => {
       }),
     ).toEqual({
       memoryItemsTableName: "memory",
+      agentTurnTracesTableName: "turn-traces",
       workSessionsTableName: "work-sessions",
       scheduledTasksTableName: "scheduled",
       tasksTableName: "tasks",

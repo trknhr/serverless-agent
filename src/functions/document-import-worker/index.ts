@@ -135,6 +135,9 @@ async function importDocument(
         workspaceId: source.workspaceId,
         userId: queueMessage.userId,
         sourceId: source.sourceId,
+        traceId: queueMessage.correlationId,
+        turnId: `${source.sourceId}:import`,
+        correlationId: queueMessage.correlationId,
       },
       resources: buildAgentRuntimeResources(env),
       toolContext: {
@@ -191,7 +194,11 @@ async function extractMarkdown(
         workspaceId: source.workspaceId,
         userId: queueMessage.userId,
         sourceId: source.sourceId,
+        traceId: queueMessage.correlationId,
+        turnId: `${source.sourceId}:extract_markdown`,
+        correlationId: queueMessage.correlationId,
       },
+      resources: buildAgentRuntimeResources(env),
       disableTools: true,
     },
   });

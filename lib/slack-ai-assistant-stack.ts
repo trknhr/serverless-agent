@@ -142,6 +142,27 @@ export class SlackAiAssistantStack extends Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    // Turn-trace capture is opt-in: without the flag no table is created and
+    // the runtime/workers skip trace writes entirely.
+    const agentTurnTracesEnabled =
+      (resolveOptionalConfigValue(this, "enableAgentTurnTraces", "ENABLE_AGENT_TURN_TRACES") ?? "")
+        .toLowerCase() === "true";
+    const agentTurnTracesTable = agentTurnTracesEnabled
+      ? new dynamodb.Table(this, "AgentTurnTracesTable", {
+          partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+          sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+          billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+          timeToLiveAttribute: "expires_at",
+          pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+        })
+      : undefined;
+    agentTurnTracesTable?.addGlobalSecondaryIndex({
+      indexName: "TraceIdIndex",
+      partitionKey: { name: "gsi1pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "gsi1sk", type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
     const userMemoryTable = new dynamodb.Table(this, "UserMemoriesTable", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -314,6 +335,7 @@ export class SlackAiAssistantStack extends Stack {
       CONVERSATION_TURNS_TABLE_NAME: conversationTurnsTable.tableName,
       USER_MEMORY_TABLE_NAME: userMemoryTable.tableName,
       MEMORY_ITEMS_TABLE_NAME: memoryItemsTable.tableName,
+      ...(agentTurnTracesTable ? { AGENT_TURN_TRACES_TABLE_NAME: agentTurnTracesTable.tableName } : {}),
       TASKS_TABLE_NAME: tasksTable.tableName,
       TASK_EVENTS_TABLE_NAME: taskEventsTable.tableName,
       RECURRING_TASKS_TABLE_NAME: recurringTasksTable.tableName,
@@ -581,6 +603,12 @@ export class SlackAiAssistantStack extends Stack {
     calendarDraftsTable.grantReadWriteData(slackAgentRuntime.role);
     googleOAuthConnectionsTable.grantReadWriteData(slackAgentRuntime.role);
     skillsTable.grantReadWriteData(slackAgentRuntime.role);
+    if (agentTurnTracesTable) {
+      agentTurnTracesTable.grantReadWriteData(slackAgentRuntime.role);
+      agentTurnTracesTable.grantReadWriteData(worker);
+      agentTurnTracesTable.grantReadWriteData(lineWorker);
+      agentTurnTracesTable.grantReadWriteData(scheduledRunner);
+    }
     attachmentArchiveBucket.grantRead(slackAgentRuntime.role, "raw/private/line/*");
     slackAgentRuntime.addToPolicy(
       new iam.PolicyStatement({
@@ -819,6 +847,11 @@ export class SlackAiAssistantStack extends Stack {
     new cdk.CfnOutput(this, "ConversationTurnsTableName", {
       value: conversationTurnsTable.tableName,
     });
+    if (agentTurnTracesTable) {
+      new cdk.CfnOutput(this, "AgentTurnTracesTableName", {
+        value: agentTurnTracesTable.tableName,
+      });
+    }
     new cdk.CfnOutput(this, "SourceDocumentsTableName", {
       value: sourceDocumentsTable.tableName,
     });

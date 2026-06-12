@@ -68,4 +68,6 @@ export interface AgentRunResult {
   recurringTaskIds: string[];
   savedMemoryIds: string[];
   calendarDraftIds: string[];
+  traceId?: string;
+  turnId?: string;
 }

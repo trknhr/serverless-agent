@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AgentTurnTraceRepository } from "../src/repo/agentTurnTraceRepository";
 import { CalendarDraftRepository } from "../src/repo/calendarDraftRepository";
 import { ChannelMemoryRepository } from "../src/repo/channelMemoryRepository";
 import { ConversationSessionRepository } from "../src/repo/conversationSessionRepository";
@@ -1500,6 +1501,220 @@ describe("conversation turn repository", () => {
     sendMock.mockResolvedValueOnce({ Items: [] });
     await expect(repo.listRecentChannelTopLevelTurns("T1", "C1", 0)).resolves.toEqual([]);
     expect(commandInput(2)).toMatchObject({ Limit: 1 });
+  });
+});
+
+describe("agent turn trace repository", () => {
+  it("saves and lists eval trace records by workspace", async () => {
+    const repo = new AgentTurnTraceRepository("turn-traces");
+
+    sendMock.mockResolvedValueOnce({});
+    await repo.save({
+      traceId: "trace-1",
+      turnId: "turn-1",
+      workspaceId: "T1",
+      source: "slack",
+      status: "completed",
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:01.000Z",
+      expiresAt: 1787529600,
+      modelId: "moonshotai.kimi-k2.5",
+      bedrockRegion: "ap-northeast-1",
+      bedrockServiceTier: "flex",
+      runtimeSessionId: "runtime-1",
+      userIdHash: "user-hash",
+      channelIdHash: "channel-hash",
+      conversationId: "100",
+      input: {
+        text: "hello",
+        blocks: [{ type: "text", text: "hello" }],
+      },
+      output: {
+        text: "hi",
+      },
+      modelOutput: {
+        text: "hi",
+      },
+      displayedOutput: {
+        surface: "slack",
+        text: "hi",
+        messageTs: "100.1",
+        threadTs: "100.0",
+        channelIdHash: "channel-hash",
+        postedAt: "2026-05-26T00:00:02.000Z",
+      },
+      toolCalls: [
+        {
+          toolCallId: "tool-1",
+          name: "list_tasks",
+          input: {},
+          output: { count: 0 },
+          isError: false,
+          startedAt: "2026-05-26T00:00:00.100Z",
+          completedAt: "2026-05-26T00:00:00.200Z",
+          durationMs: 100,
+        },
+      ],
+      summary: {
+        taskIds: [],
+        recurringTaskIds: [],
+        savedMemoryIds: [],
+        calendarDraftIds: [],
+      },
+      latencyMs: 1000,
+    });
+
+    expect(commandInput()).toMatchObject({
+      TableName: "turn-traces",
+      Item: {
+        pk: "WORKSPACE#T1",
+        sk: "TRACE#2026-05-26T00:00:00.000Z#trace-1#TURN#turn-1",
+        gsi1pk: "TRACE#trace-1",
+        gsi1sk: "2026-05-26T00:00:00.000Z#TURN#turn-1",
+        trace_id: "trace-1",
+        turn_id: "turn-1",
+        expires_at: 1787529600,
+        model_output: { text: "hi" },
+        displayed_output: expect.objectContaining({ surface: "slack", messageTs: "100.1" }),
+        tool_calls: [expect.objectContaining({ name: "list_tasks" })],
+      },
+    });
+
+    sendMock.mockResolvedValueOnce({
+      Items: [
+        {
+          trace_id: "trace-1",
+          turn_id: "turn-1",
+          workspace_id: "T1",
+          source: "slack",
+          status: "completed",
+          created_at: "2026-05-26T00:00:00.000Z",
+          updated_at: "2026-05-26T00:00:01.000Z",
+          expires_at: 1787529600,
+          input: { text: "hello", blocks: [] },
+          output: { text: "hi" },
+          model_output: { text: "hi" },
+          displayed_output: { surface: "slack", text: "hi", postedAt: "2026-05-26T00:00:02.000Z" },
+          tool_calls: [],
+          summary: {
+            taskIds: [],
+            recurringTaskIds: [],
+            savedMemoryIds: [],
+            calendarDraftIds: [],
+          },
+          latency_ms: 1000,
+        },
+      ],
+    });
+    await expect(repo.listRecentByWorkspace({ workspaceId: "T1", limit: 500 })).resolves.toMatchObject([
+      {
+        traceId: "trace-1",
+        turnId: "turn-1",
+        expiresAt: 1787529600,
+        modelOutput: { text: "hi" },
+        displayedOutput: { surface: "slack" },
+      },
+    ]);
+    expect(commandInput(1)).toMatchObject({
+      KeyConditionExpression: "pk = :pk",
+      ExpressionAttributeValues: {
+        ":pk": "WORKSPACE#T1",
+      },
+      ScanIndexForward: false,
+      Limit: 200,
+    });
+
+    sendMock.mockResolvedValueOnce({
+      Items: [
+        {
+          trace_id: "trace-1",
+          turn_id: "turn-1",
+          workspace_id: "T1",
+          source: "slack",
+          status: "completed",
+          created_at: "2026-05-26T00:00:00.000Z",
+          updated_at: "2026-05-26T00:00:01.000Z",
+          expires_at: 1787529600,
+          input: { text: "hello", blocks: [] },
+          model_output: { text: "hi" },
+          tool_calls: [],
+          summary: {
+            taskIds: [],
+            recurringTaskIds: [],
+            savedMemoryIds: [],
+            calendarDraftIds: [],
+          },
+          latency_ms: 1000,
+        },
+      ],
+    });
+    await expect(repo.listByTraceId({ traceId: "trace-1", limit: 0 })).resolves.toMatchObject([
+      { traceId: "trace-1", turnId: "turn-1" },
+    ]);
+    expect(commandInput(2)).toMatchObject({
+      IndexName: "TraceIdIndex",
+      KeyConditionExpression: "gsi1pk = :gsi1pk",
+      ExpressionAttributeValues: {
+        ":gsi1pk": "TRACE#trace-1",
+      },
+      ScanIndexForward: true,
+      Limit: 1,
+    });
+
+    sendMock.mockResolvedValueOnce({
+      Items: [
+        {
+          pk: "WORKSPACE#T1",
+          sk: "TRACE#2026-05-26T00:00:00.000Z#trace-1#TURN#turn-1",
+          trace_id: "trace-1",
+          turn_id: "turn-1",
+          workspace_id: "T1",
+          source: "slack",
+          status: "completed",
+          created_at: "2026-05-26T00:00:00.000Z",
+          updated_at: "2026-05-26T00:00:01.000Z",
+          input: { text: "hello", blocks: [] },
+          tool_calls: [],
+          summary: {
+            taskIds: [],
+            recurringTaskIds: [],
+            savedMemoryIds: [],
+            calendarDraftIds: [],
+          },
+          latency_ms: 1000,
+        },
+      ],
+    });
+    sendMock.mockResolvedValueOnce({});
+    await expect(
+      repo.updateDisplayedOutput({
+        traceId: "trace-1",
+        turnId: "turn-1",
+        displayedOutput: {
+          surface: "slack",
+          text: "updated",
+          messageTs: "100.2",
+          channelIdHash: "channel-hash",
+          postedAt: "2026-05-26T00:00:03.000Z",
+        },
+        updatedAt: "2026-05-26T00:00:04.000Z",
+      }),
+    ).resolves.toBe(true);
+    expect(commandInput(3)).toMatchObject({
+      IndexName: "TraceIdIndex",
+      KeyConditionExpression: "gsi1pk = :gsi1pk",
+    });
+    expect(commandInput(4)).toMatchObject({
+      Key: {
+        pk: "WORKSPACE#T1",
+        sk: "TRACE#2026-05-26T00:00:00.000Z#trace-1#TURN#turn-1",
+      },
+      UpdateExpression: "SET displayed_output = :displayedOutput, updated_at = :updatedAt",
+      ExpressionAttributeValues: {
+        ":displayedOutput": expect.objectContaining({ surface: "slack", text: "updated" }),
+        ":updatedAt": "2026-05-26T00:00:04.000Z",
+      },
+    });
   });
 });
 

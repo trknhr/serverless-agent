@@ -55,6 +55,7 @@ export const agentContentBlockSchema = z.union([
 
 export const agentRuntimeResourcesSchema = z.object({
   memoryItemsTableName: z.string().min(1),
+  agentTurnTracesTableName: z.string().min(1).optional(),
   workSessionsTableName: z.string().min(1),
   scheduledTasksTableName: z.string().min(1),
   tasksTableName: z.string().min(1),
@@ -108,6 +109,9 @@ export const agentRuntimeRequestSchema = z.object({
       conversationTs: z.string().min(1).optional(),
       taskId: z.string().min(1).optional(),
       sourceId: z.string().min(1).optional(),
+      traceId: z.string().min(1).optional(),
+      turnId: z.string().min(1).optional(),
+      correlationId: z.string().min(1).optional(),
     })
     .passthrough(),
   resources: agentRuntimeResourcesSchema.optional(),
@@ -121,6 +125,8 @@ export const agentRuntimeResponseSchema = z.object({
   recurringTaskIds: z.array(z.string()).default([]),
   savedMemoryIds: z.array(z.string()).default([]),
   calendarDraftIds: z.array(z.string()).default([]),
+  traceId: z.string().optional(),
+  turnId: z.string().optional(),
 });
 
 export type AgentRuntimeRequest = z.infer<typeof agentRuntimeRequestSchema>;
@@ -130,6 +136,7 @@ export type AgentRuntimeResponse = z.infer<typeof agentRuntimeResponseSchema>;
 
 export interface ToolRuntimeEnvironment {
   MEMORY_ITEMS_TABLE_NAME: string;
+  AGENT_TURN_TRACES_TABLE_NAME?: string;
   WORK_SESSIONS_TABLE_NAME: string;
   TASK_TABLE_NAME: string;
   TASKS_TABLE_NAME: string;
@@ -161,6 +168,7 @@ export interface ToolRuntimeEnvironment {
 export function buildAgentRuntimeResources(env: ToolRuntimeEnvironment): AgentRuntimeResources {
   return {
     memoryItemsTableName: env.MEMORY_ITEMS_TABLE_NAME,
+    agentTurnTracesTableName: env.AGENT_TURN_TRACES_TABLE_NAME,
     workSessionsTableName: env.WORK_SESSIONS_TABLE_NAME,
     scheduledTasksTableName: env.TASK_TABLE_NAME,
     tasksTableName: env.TASKS_TABLE_NAME,

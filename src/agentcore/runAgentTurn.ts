@@ -1,4 +1,14 @@
+import { randomUUID } from "node:crypto";
 import { AgentContentBlock, ToolExecutionResult } from "../agent/types";
+import {
+  AgentTurnToolCallTrace,
+  AgentTurnTraceRecord,
+  buildTraceExpiresAt,
+  hashTraceIdentifier,
+  sanitizeTraceValue,
+  summarizeAgentContentBlocks,
+  truncateTraceText,
+} from "../eval/agentTurnTrace";
 import { SkillRegistry, formatSkillSummariesForPrompt } from "../skills/registry";
 import { logger } from "../shared/logger";
 import { CustomToolExecutor } from "../tools/executeCustomTool";
@@ -35,6 +45,8 @@ export type AgentTurnEvent =
         recurringTaskIds: string[];
         savedMemoryIds: string[];
         calendarDraftIds: string[];
+        traceId?: string;
+        turnId?: string;
       };
     };
 
@@ -62,6 +74,9 @@ export interface RunAgentTurnOptions {
   createSkillRegistry?: (request: AgentRuntimeRequest) => SkillRegistry | null;
   sessionHistoryStore?: SessionHistoryStore;
   useSessionHistory?: (request: AgentRuntimeRequest) => boolean;
+  bedrockRegion?: string;
+  runtimeSessionId?: string;
+  saveTurnTrace?: (record: AgentTurnTraceRecord) => Promise<void>;
 }
 
 const bedrockServiceTiers = ["reserved", "priority", "default", "flex"] as const;
@@ -79,82 +94,151 @@ const inMemorySessionHistoryStore: SessionHistoryStore = {
 
 export async function* runAgentTurn(options: RunAgentTurnOptions): AsyncGenerator<AgentTurnEvent> {
   const request = options.request;
-  const skillRegistry =
-    request.disableTools || !request.toolContext ? null : options.createSkillRegistry?.(request) ?? null;
-  const executor = request.disableTools
-    ? null
-    : await options.createExecutor?.(request, options.log, skillRegistry ?? undefined);
-  const tools = executor ? createTools(options.ai, executor) : {};
-  const skillPrompt =
-    executor && skillRegistry
-      ? await buildEnabledSkillPrompt(skillRegistry, request.toolContext!.workspaceId, options.log)
-      : "";
+  const traceId = request.context.traceId ?? request.context.correlationId ?? `trace_${randomUUID()}`;
+  const turnId = request.context.turnId ?? `turn_${randomUUID()}`;
+  const started = Date.now();
+  const startedAt = new Date(started).toISOString();
+  const toolCalls: AgentTurnToolCallTrace[] = [];
+  const onToolCall = options.saveTurnTrace
+    ? (call: AgentTurnToolCallTrace) => {
+        toolCalls.push(call);
+      }
+    : undefined;
   const selectedModelId = selectModelId(request, options.documentModelId ?? options.modelId, options.modelId);
   const selectedBedrockServiceTier =
     selectedModelId === options.modelId ? options.bedrockServiceTier : undefined;
-  const agent = new options.ai.ToolLoopAgent({
-    model: options.modelProvider(selectedModelId),
-    instructions: buildSystemPrompt(skillPrompt, {
-      customSystemPrompt: options.customSystemPrompt,
-      systemPromptMode: options.systemPromptMode,
-    }),
-    tools,
-    ...(selectedBedrockServiceTier
-      ? {
-          providerOptions: {
-            bedrock: {
-              serviceTier: selectedBedrockServiceTier,
-            },
-          },
-        }
-      : {}),
-  });
-
-  options.log.info("AgentCore request started", {
-    modelId: selectedModelId,
-    bedrockServiceTier: selectedBedrockServiceTier ?? "default",
-    hasTools: Object.keys(tools).length > 0,
-  });
-
-  const history = await getSessionHistory(options);
-  const userHistoryText = toHistoryText(request.content);
-  const stream = await agent.stream({
-    messages: [
-      ...history,
-      {
-        role: "user",
-        content: toUserContent(request.content),
-      },
-    ],
-  });
-
   let assistantText = "";
-  for await (const part of stream.fullStream) {
-    if (part.type === "error") {
-      throw new Error(`Model stream failed: ${formatStreamError(part.error)}`);
-    }
-    if (part.type !== "text-delta" || typeof part.text !== "string") {
-      continue;
+  let summary = emptyToolSummary();
+  let status: AgentTurnTraceRecord["status"] = "completed";
+  let errorMessage: string | undefined;
+  let executor: CustomToolExecutor | null = null;
+
+  try {
+    const skillRegistry =
+      request.disableTools || !request.toolContext ? null : options.createSkillRegistry?.(request) ?? null;
+    executor = request.disableTools
+      ? null
+      : (await options.createExecutor?.(request, options.log, skillRegistry ?? undefined)) ?? null;
+    const tools = executor ? createTools(options.ai, executor, onToolCall) : {};
+    const skillPrompt =
+      executor && skillRegistry
+        ? await buildEnabledSkillPrompt(skillRegistry, request.toolContext!.workspaceId, options.log)
+        : "";
+    const agent = new options.ai.ToolLoopAgent({
+      model: options.modelProvider(selectedModelId),
+      instructions: buildSystemPrompt(skillPrompt, {
+        customSystemPrompt: options.customSystemPrompt,
+        systemPromptMode: options.systemPromptMode,
+      }),
+      tools,
+      ...(selectedBedrockServiceTier
+        ? {
+            providerOptions: {
+              bedrock: {
+                serviceTier: selectedBedrockServiceTier,
+              },
+            },
+          }
+        : {}),
+    });
+
+    options.log.info("AgentCore request started", {
+      modelId: selectedModelId,
+      bedrockServiceTier: selectedBedrockServiceTier ?? "default",
+      hasTools: Object.keys(tools).length > 0,
+    });
+
+    const history = await getSessionHistory(options);
+    const userHistoryText = toHistoryText(request.content);
+    const stream = await agent.stream({
+      messages: [
+        ...history,
+        {
+          role: "user",
+          content: toUserContent(request.content),
+        },
+      ],
+    });
+
+    for await (const part of stream.fullStream) {
+      if (part.type === "error") {
+        throw new Error(`Model stream failed: ${formatStreamError(part.error)}`);
+      }
+      if (part.type !== "text-delta" || typeof part.text !== "string") {
+        continue;
+      }
+
+      assistantText += part.text;
+      yield { event: "message", data: { text: part.text } };
     }
 
-    assistantText += part.text;
-    yield { event: "message", data: { text: part.text } };
+    summary = executor?.getSummary() ?? summary;
+    await saveSessionHistory(options, history, userHistoryText, assistantText);
+    yield { event: "metadata", data: { ...summary, traceId, turnId } };
+    options.log.info("AgentCore request completed", {
+      taskIds: summary.taskIds,
+      recurringTaskIds: summary.recurringTaskIds,
+      savedMemoryIds: summary.savedMemoryIds,
+      calendarDraftIds: summary.calendarDraftIds,
+    });
+  } catch (error) {
+    status = "failed";
+    errorMessage = error instanceof Error ? error.message : String(error);
+    summary = executor?.getSummary() ?? summary;
+    throw error;
+  } finally {
+    if (options.saveTurnTrace) {
+      try {
+        const modelOutputText = assistantText ? truncateTraceText(assistantText) : undefined;
+        await options.saveTurnTrace({
+          traceId,
+          turnId,
+          workspaceId: request.context.workspaceId,
+          source: request.context.source,
+          status,
+          createdAt: startedAt,
+          updatedAt: new Date().toISOString(),
+          expiresAt: buildTraceExpiresAt(startedAt),
+          modelId: selectedModelId,
+          bedrockRegion: options.bedrockRegion,
+          bedrockServiceTier: selectedBedrockServiceTier ?? "default",
+          runtimeSessionId: options.runtimeSessionId ?? options.sessionId,
+          userIdHash: hashTraceIdentifier(request.context.userId),
+          channelIdHash: hashTraceIdentifier(request.context.channelId),
+          conversationId: request.context.conversationTs,
+          taskId: request.context.taskId,
+          sourceId: request.context.sourceId,
+          input: summarizeAgentContentBlocks(request.content),
+          output: modelOutputText ? { text: modelOutputText } : undefined,
+          modelOutput: modelOutputText ? { text: modelOutputText } : undefined,
+          toolCalls,
+          summary,
+          error: errorMessage,
+          latencyMs: Date.now() - started,
+        });
+      } catch (traceError) {
+        options.log.warn("Failed to save agent turn trace", {
+          traceId,
+          turnId,
+          error: traceError instanceof Error ? traceError.message : String(traceError),
+        });
+      }
+    }
   }
+}
 
-  const summary = executor?.getSummary() ?? {
+function emptyToolSummary(): {
+  taskIds: string[];
+  recurringTaskIds: string[];
+  savedMemoryIds: string[];
+  calendarDraftIds: string[];
+} {
+  return {
     taskIds: [],
     recurringTaskIds: [],
     savedMemoryIds: [],
     calendarDraftIds: [],
   };
-  await saveSessionHistory(options, history, userHistoryText, assistantText);
-  yield { event: "metadata", data: summary };
-  options.log.info("AgentCore request completed", {
-    taskIds: summary.taskIds,
-    recurringTaskIds: summary.recurringTaskIds,
-    savedMemoryIds: summary.savedMemoryIds,
-    calendarDraftIds: summary.calendarDraftIds,
-  });
 }
 
 export function parseBedrockServiceTier(value: string | undefined): BedrockServiceTier | undefined {
@@ -167,7 +251,11 @@ export function parseBedrockServiceTier(value: string | undefined): BedrockServi
   throw new Error(`Invalid BEDROCK_SERVICE_TIER '${value}'. Expected one of: ${bedrockServiceTiers.join(", ")}`);
 }
 
-function createTools(ai: AgentRunnerAi, executor: CustomToolExecutor): Record<string, unknown> {
+function createTools(
+  ai: AgentRunnerAi,
+  executor: CustomToolExecutor,
+  onToolCall?: (call: AgentTurnToolCallTrace) => void,
+): Record<string, unknown> {
   return Object.fromEntries(
     customToolDefinitions.map((definition) => [
       definition.name,
@@ -175,18 +263,69 @@ function createTools(ai: AgentRunnerAi, executor: CustomToolExecutor): Record<st
         description: definition.description,
         inputSchema: ai.jsonSchema(definition.input_schema),
         execute: async (input: Record<string, unknown>) => {
-          return executor.execute({
-            id: `agentcore_tool_${Date.now()}_${definition.name}`,
-            type: "agent.tool_use",
+          const toolCallId = `agentcore_tool_${Date.now()}_${definition.name}`;
+          const toolUseEvent = {
+            id: toolCallId,
+            type: "agent.tool_use" as const,
             name: definition.name,
             input,
-          });
+          };
+          if (!onToolCall) {
+            return executor.execute(toolUseEvent);
+          }
+
+          const started = Date.now();
+          const startedAt = new Date(started).toISOString();
+          try {
+            const result = await executor.execute(toolUseEvent);
+            onToolCall({
+              toolCallId,
+              name: definition.name,
+              input: sanitizeTraceValue(input),
+              output: summarizeToolResultForTrace(result),
+              isError: Boolean(result.isError),
+              startedAt,
+              completedAt: new Date().toISOString(),
+              durationMs: Date.now() - started,
+            });
+            return result;
+          } catch (error) {
+            onToolCall({
+              toolCallId,
+              name: definition.name,
+              input: sanitizeTraceValue(input),
+              isError: true,
+              error: error instanceof Error ? error.message : String(error),
+              startedAt,
+              completedAt: new Date().toISOString(),
+              durationMs: Date.now() - started,
+            });
+            throw error;
+          }
         },
         toModelOutput: ({ output }: { output: ToolExecutionResult }) =>
           mapToolExecutionResultToModelOutput(output),
       }),
     ]),
   );
+}
+
+function summarizeToolResultForTrace(result: ToolExecutionResult): unknown {
+  return sanitizeTraceValue({
+    isError: Boolean(result.isError),
+    content: (result.content ?? []).map((block) => {
+      if (block.type === "text") {
+        return {
+          type: "text",
+          text: block.text,
+        };
+      }
+      return {
+        type: block.type,
+        note: "Non-text tool output omitted from trace.",
+      };
+    }),
+  });
 }
 
 async function buildEnabledSkillPrompt(

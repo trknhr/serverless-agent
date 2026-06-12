@@ -9,6 +9,13 @@ import { CalendarDraft } from "../../calendar/calendarDraft";
 import { buildSlackContextBlocks, buildTurnText } from "../../conversations/buildSlackContextBlocks";
 import { loadWorkerEnv } from "../../config/env";
 import { SourceDocument } from "../../documents/sourceDocument";
+import {
+  AgentTurnDisplayedOutput,
+  buildTraceExpiresAt,
+  hashTraceIdentifier,
+  summarizeAgentContentBlocks,
+} from "../../eval/agentTurnTrace";
+import { AgentTurnTraceRepository } from "../../repo/agentTurnTraceRepository";
 import { CalendarDraftRepository } from "../../repo/calendarDraftRepository";
 import { ConversationSessionRepository } from "../../repo/conversationSessionRepository";
 import { ConversationTurnRepository } from "../../repo/conversationTurnRepository";
@@ -41,6 +48,9 @@ const slackFilesClient = new SlackFilesClient(
 const calendarDraftRepository = new CalendarDraftRepository(env.CALENDAR_DRAFTS_TABLE_NAME);
 const conversationSessionRepository = new ConversationSessionRepository(env.CONVERSATION_SESSIONS_TABLE_NAME);
 const conversationTurnRepository = new ConversationTurnRepository(env.CONVERSATION_TURNS_TABLE_NAME);
+const agentTurnTraceRepository = env.AGENT_TURN_TRACES_TABLE_NAME
+  ? new AgentTurnTraceRepository(env.AGENT_TURN_TRACES_TABLE_NAME)
+  : null;
 const sourceDocumentRepository = new SourceDocumentRepository(env.SOURCE_DOCUMENTS_TABLE_NAME);
 const attachmentArchiveService = new SlackAttachmentArchiveService(
   env.SLACK_ATTACHMENT_ARCHIVE_BUCKET_NAME,
@@ -133,7 +143,7 @@ export async function handler(event: SQSEvent): Promise<void> {
             env.TOP_LEVEL_CONTEXT_TURN_LIMIT,
           );
 
-    await conversationTurnRepository.save({
+    const userTurn = await conversationTurnRepository.save({
       workspaceId: queueMessage.workspaceId,
       channelId: queueMessage.channelId,
       conversationTs: queueMessage.conversationTs,
@@ -161,6 +171,7 @@ export async function handler(event: SQSEvent): Promise<void> {
         timeZone: "Asia/Tokyo",
       }),
       log,
+      userTurnId: userTurn.turnId,
     });
     if (!completion) {
       await conversationSessionRepository.save({
@@ -171,6 +182,7 @@ export async function handler(event: SQSEvent): Promise<void> {
     }
     const completionText = stripModelThinking(completion.text) || "処理は完了しましたが、返答テキストが空でした。";
 
+    let displayedMessageTs = thinkingMessage.ts;
     if (thinkingMessage.ts) {
       try {
         await slackClient.updateMessage({
@@ -183,21 +195,23 @@ export async function handler(event: SQSEvent): Promise<void> {
         log.warn("Failed to replace Slack thinking message; posting final response separately", {
           error: error instanceof Error ? error.message : "Unknown Slack update error",
         });
-        await slackClient.postMessage({
+        const postedMessage = await slackClient.postMessage({
           channel: queueMessage.channelId,
           threadTs: queueMessage.replyThreadTs,
           text: completionText,
         });
+        displayedMessageTs = postedMessage.ts ?? displayedMessageTs;
       }
     } else {
-      await slackClient.postMessage({
+      const postedMessage = await slackClient.postMessage({
         channel: queueMessage.channelId,
         threadTs: queueMessage.replyThreadTs,
         text: completionText,
       });
+      displayedMessageTs = postedMessage.ts;
     }
 
-    const assistantMessageTs = thinkingMessage.ts ?? createSyntheticSlackTs();
+    const assistantMessageTs = displayedMessageTs ?? createSyntheticSlackTs();
     await conversationTurnRepository.save({
       workspaceId: queueMessage.workspaceId,
       channelId: queueMessage.channelId,
@@ -210,6 +224,16 @@ export async function handler(event: SQSEvent): Promise<void> {
       messageTs: assistantMessageTs,
       turnTs: assistantMessageTs,
       text: completionText,
+    });
+
+    await updateSlackDisplayedOutputTrace({
+      traceId: completion.traceId ?? queueMessage.correlationId,
+      turnId: completion.turnId ?? userTurn.turnId,
+      channelId: queueMessage.channelId,
+      threadTs: queueMessage.replyThreadTs,
+      messageTs: displayedMessageTs,
+      text: completionText,
+      log,
     });
 
     for (const draftId of completion.calendarDraftIds) {
@@ -247,6 +271,7 @@ export async function handler(event: SQSEvent): Promise<void> {
 
 async function invokeAgentOrRespondWithError(input: {
   queueMessage: {
+    correlationId: string;
     workspaceId: string;
     channelId: string;
     conversationTs: string;
@@ -258,7 +283,10 @@ async function invokeAgentOrRespondWithError(input: {
   thinkingMessageTs?: string;
   content: ReturnType<typeof buildSlackContextBlocks>;
   log: ReturnType<typeof logger.child>;
+  userTurnId: string;
 }): Promise<AgentRunResult | null> {
+  const started = Date.now();
+  const startedAt = new Date(started).toISOString();
   try {
     return await agentClient.invoke({
       sessionId: input.sessionRecord.agentRuntimeSessionId,
@@ -271,6 +299,9 @@ async function invokeAgentOrRespondWithError(input: {
           userId: input.queueMessage.userId,
           channelId: input.queueMessage.channelId,
           conversationTs: input.queueMessage.conversationTs,
+          traceId: input.queueMessage.correlationId,
+          turnId: input.userTurnId,
+          correlationId: input.queueMessage.correlationId,
         },
         resources: buildAgentRuntimeResources(env),
         toolContext: {
@@ -289,6 +320,7 @@ async function invokeAgentOrRespondWithError(input: {
     const message = error instanceof Error ? error.message : "Unknown AgentCore invocation error";
     input.log.error("AgentCore invocation failed", { error: message });
     const responseText = buildAgentInvocationErrorText(message);
+    let displayedMessageTs = input.thinkingMessageTs;
 
     if (input.thinkingMessageTs) {
       try {
@@ -302,21 +334,23 @@ async function invokeAgentOrRespondWithError(input: {
         input.log.warn("Failed to replace Slack thinking message after AgentCore failure", {
           error: error instanceof Error ? error.message : "Unknown Slack update error",
         });
-        await slackClient.postMessage({
+        const postedMessage = await slackClient.postMessage({
           channel: input.queueMessage.channelId,
           threadTs: input.queueMessage.replyThreadTs,
           text: responseText,
         });
+        displayedMessageTs = postedMessage.ts ?? displayedMessageTs;
       }
     } else {
-      await slackClient.postMessage({
+      const postedMessage = await slackClient.postMessage({
         channel: input.queueMessage.channelId,
         threadTs: input.queueMessage.replyThreadTs,
         text: responseText,
       });
+      displayedMessageTs = postedMessage.ts;
     }
 
-    const errorMessageTs = input.thinkingMessageTs ?? createSyntheticSlackTs();
+    const errorMessageTs = displayedMessageTs ?? createSyntheticSlackTs();
     await conversationTurnRepository.save({
       workspaceId: input.queueMessage.workspaceId,
       channelId: input.queueMessage.channelId,
@@ -331,8 +365,129 @@ async function invokeAgentOrRespondWithError(input: {
       text: responseText,
     });
 
+    await saveSlackInvocationFailureTrace({
+      traceId: input.queueMessage.correlationId,
+      turnId: input.userTurnId,
+      queueMessage: input.queueMessage,
+      content: input.content,
+      startedAt,
+      latencyMs: Date.now() - started,
+      error: message,
+      displayedOutput: buildSlackDisplayedOutput({
+        channelId: input.queueMessage.channelId,
+        threadTs: input.queueMessage.replyThreadTs,
+        messageTs: displayedMessageTs,
+        text: responseText,
+      }),
+      log: input.log,
+    });
+
     return null;
   }
+}
+
+async function updateSlackDisplayedOutputTrace(input: {
+  traceId: string;
+  turnId: string;
+  channelId: string;
+  threadTs?: string;
+  messageTs?: string;
+  text: string;
+  log: ReturnType<typeof logger.child>;
+}): Promise<void> {
+  if (!agentTurnTraceRepository) {
+    return;
+  }
+
+  try {
+    const updated = await agentTurnTraceRepository.updateDisplayedOutput({
+      traceId: input.traceId,
+      turnId: input.turnId,
+      displayedOutput: buildSlackDisplayedOutput(input),
+    });
+    if (!updated) {
+      input.log.warn("Agent turn trace was not found for displayed output update", {
+        traceId: input.traceId,
+        turnId: input.turnId,
+      });
+    }
+  } catch (error) {
+    input.log.warn("Failed to update agent turn displayed output trace", {
+      traceId: input.traceId,
+      turnId: input.turnId,
+      error: error instanceof Error ? error.message : "Unknown trace update error",
+    });
+  }
+}
+
+async function saveSlackInvocationFailureTrace(input: {
+  traceId: string;
+  turnId: string;
+  queueMessage: {
+    workspaceId: string;
+    channelId: string;
+    conversationTs: string;
+    userId: string;
+  };
+  content: ReturnType<typeof buildSlackContextBlocks>;
+  startedAt: string;
+  latencyMs: number;
+  error: string;
+  displayedOutput: AgentTurnDisplayedOutput;
+  log: ReturnType<typeof logger.child>;
+}): Promise<void> {
+  if (!agentTurnTraceRepository) {
+    return;
+  }
+
+  try {
+    await agentTurnTraceRepository.save({
+      traceId: input.traceId,
+      turnId: input.turnId,
+      workspaceId: input.queueMessage.workspaceId,
+      source: "slack",
+      status: "failed",
+      createdAt: input.startedAt,
+      updatedAt: new Date().toISOString(),
+      expiresAt: buildTraceExpiresAt(input.startedAt),
+      userIdHash: hashTraceIdentifier(input.queueMessage.userId),
+      channelIdHash: hashTraceIdentifier(input.queueMessage.channelId),
+      conversationId: input.queueMessage.conversationTs,
+      input: summarizeAgentContentBlocks(input.content),
+      displayedOutput: input.displayedOutput,
+      toolCalls: [],
+      summary: {
+        taskIds: [],
+        recurringTaskIds: [],
+        savedMemoryIds: [],
+        calendarDraftIds: [],
+      },
+      error: input.error,
+      latencyMs: input.latencyMs,
+    });
+  } catch (error) {
+    input.log.warn("Failed to save AgentCore invocation failure trace", {
+      traceId: input.traceId,
+      turnId: input.turnId,
+      error: error instanceof Error ? error.message : "Unknown trace save error",
+    });
+  }
+}
+
+function buildSlackDisplayedOutput(input: {
+  channelId: string;
+  threadTs?: string;
+  messageTs?: string;
+  text: string;
+}): AgentTurnDisplayedOutput {
+  return {
+    surface: "slack",
+    text: input.text,
+    messageTs: input.messageTs,
+    threadTs: input.threadTs,
+    channelIdHash: hashTraceIdentifier(input.channelId),
+    postedAt: new Date().toISOString(),
+  };
 }
 
 async function presignSourceDocument(document: SourceDocument): Promise<string> {

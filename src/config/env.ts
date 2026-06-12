@@ -10,6 +10,7 @@ const runtimeBaseEnvSchema = z.object({
   CONVERSATION_TURNS_TABLE_NAME: requiredString,
   USER_MEMORY_TABLE_NAME: requiredString,
   MEMORY_ITEMS_TABLE_NAME: requiredString,
+  AGENT_TURN_TRACES_TABLE_NAME: z.string().min(1).optional(),
   TASKS_TABLE_NAME: requiredString,
   TASK_EVENTS_TABLE_NAME: requiredString,
   RECURRING_TASKS_TABLE_NAME: requiredString,

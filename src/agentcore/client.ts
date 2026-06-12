@@ -52,6 +52,8 @@ export class AgentCoreRuntimeClient {
       recurringTaskIds: parsed.recurringTaskIds,
       savedMemoryIds: parsed.savedMemoryIds,
       calendarDraftIds: parsed.calendarDraftIds,
+      traceId: parsed.traceId,
+      turnId: parsed.turnId,
     };
   }
 }
@@ -80,6 +82,8 @@ function parseRuntimeResponse(raw: string) {
       recurringTaskIds: Array.isArray(metadata?.recurringTaskIds) ? metadata.recurringTaskIds : [],
       savedMemoryIds: Array.isArray(metadata?.savedMemoryIds) ? metadata.savedMemoryIds : [],
       calendarDraftIds: Array.isArray(metadata?.calendarDraftIds) ? metadata.calendarDraftIds : [],
+      traceId: typeof metadata?.traceId === "string" ? metadata.traceId : undefined,
+      turnId: typeof metadata?.turnId === "string" ? metadata.turnId : undefined,
     });
   }
 

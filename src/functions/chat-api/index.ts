@@ -82,6 +82,9 @@ async function postMessage(
         source: "direct_chat_api",
         workspaceId: input.workspaceId,
         userId: input.userId,
+        traceId: event.requestContext.requestId,
+        turnId: event.requestContext.requestId,
+        correlationId: event.requestContext.requestId,
       },
       resources: buildAgentRuntimeResources(env),
       toolContext: {

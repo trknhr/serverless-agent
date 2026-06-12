@@ -93,7 +93,11 @@ beforeEach(() => {
   mocks.conversationSessionFindByConversation.mockResolvedValue(null);
   mocks.conversationSessionSave.mockResolvedValue(undefined);
   mocks.conversationTurnsListRecent.mockResolvedValue([]);
-  mocks.conversationTurnsSave.mockResolvedValue(undefined);
+  mocks.conversationTurnsSave.mockImplementation(async (turn: Record<string, unknown>) => ({
+    ...turn,
+    turnId: "turn-test-1",
+    createdAt: "2026-06-12T00:00:00.000Z",
+  }));
   mocks.getSecretString.mockResolvedValue("line-token");
   mocks.linePushText.mockResolvedValue(undefined);
 });

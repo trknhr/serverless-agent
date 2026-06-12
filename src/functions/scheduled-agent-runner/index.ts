@@ -4,7 +4,9 @@ import { AgentCoreRuntimeClient } from "../../agentcore/client";
 import { buildAgentRuntimeResources } from "../../agentcore/contracts";
 import { SecretsProvider } from "../../aws/secretsProvider";
 import { loadSchedulerEnv } from "../../config/env";
+import { AgentTurnDisplayedOutput, hashTraceIdentifier } from "../../eval/agentTurnTrace";
 import { LineMessagingClient } from "../../line/postMessage";
+import { AgentTurnTraceRepository } from "../../repo/agentTurnTraceRepository";
 import { ConversationSessionRepository } from "../../repo/conversationSessionRepository";
 import { ConversationTurnRepository } from "../../repo/conversationTurnRepository";
 import { DailyLimitRepository } from "../../repo/dailyLimitRepository";
@@ -66,6 +68,9 @@ const sessionRepository = new SessionRepository(env.SESSION_TABLE_NAME);
 const conversationSessionRepository = new ConversationSessionRepository(env.CONVERSATION_SESSIONS_TABLE_NAME);
 const conversationTurnRepository = new ConversationTurnRepository(env.CONVERSATION_TURNS_TABLE_NAME);
 const dailyLimitRepository = new DailyLimitRepository(env.PROCESSED_EVENTS_TABLE_NAME);
+const agentTurnTraceRepository = env.AGENT_TURN_TRACES_TABLE_NAME
+  ? new AgentTurnTraceRepository(env.AGENT_TURN_TRACES_TABLE_NAME)
+  : null;
 
 export async function handler(
   event: EventBridgeEvent<string, SchedulerPayload> | SchedulerPayload,
@@ -106,6 +111,8 @@ export async function handler(
   const reusableSessionRecord = task.reuseSession
     ? await sessionRepository.findByThread(task.workspaceId, outputTarget.channelId, task.taskId)
     : null;
+  const traceId = buildScheduledTraceId(task.workspaceId, task.taskId, scheduledAtIso);
+  const turnId = `scheduled:${task.taskId}:${scheduledAtIso}`;
   const completion = await agentClient.invoke({
     sessionId: reusableSessionRecord?.sessionId,
     request: {
@@ -125,6 +132,8 @@ export async function handler(
         source: "scheduler",
         workspaceId: task.workspaceId,
         taskId: task.taskId,
+        traceId,
+        turnId,
       },
       resources: buildAgentRuntimeResources(env),
       toolContext: {
@@ -134,6 +143,14 @@ export async function handler(
   });
 
   const postedMessage = await postScheduledMessage(outputTarget, task, completion.text);
+  await updateScheduledDisplayedOutputTrace({
+    traceId: completion.traceId ?? traceId,
+    turnId: completion.turnId ?? turnId,
+    channelId: postedMessage.channelId,
+    messageTs: postedMessage.provider === "slack" ? postedMessage.messageTs : undefined,
+    text: postedMessage.text,
+    log,
+  });
   if (postedMessage.provider === "slack" && postedMessage.messageTs) {
     try {
       await persistScheduledSlackThreadContext({
@@ -613,6 +630,55 @@ async function postScheduledMessage(
     messageTs: message?.ts,
     text: messageText,
   };
+}
+
+function buildScheduledTraceId(workspaceId: string, taskId: string, scheduledAtIso: string): string {
+  const hash = createHash("sha256")
+    .update(`${workspaceId}:${taskId}:${scheduledAtIso}`, "utf8")
+    .digest("hex")
+    .slice(0, 24);
+  return `scheduled_${hash}`;
+}
+
+async function updateScheduledDisplayedOutputTrace(input: {
+  traceId: string;
+  turnId: string;
+  channelId: string;
+  messageTs?: string;
+  text: string;
+  log: ReturnType<typeof logger.child>;
+}): Promise<void> {
+  if (!agentTurnTraceRepository) {
+    return;
+  }
+
+  const displayedOutput: AgentTurnDisplayedOutput = {
+    surface: "scheduler",
+    text: input.text,
+    messageTs: input.messageTs,
+    channelIdHash: hashTraceIdentifier(input.channelId),
+    postedAt: new Date().toISOString(),
+  };
+
+  try {
+    const updated = await agentTurnTraceRepository.updateDisplayedOutput({
+      traceId: input.traceId,
+      turnId: input.turnId,
+      displayedOutput,
+    });
+    if (!updated) {
+      input.log.warn("Scheduled agent trace was not found for displayed output update", {
+        traceId: input.traceId,
+        turnId: input.turnId,
+      });
+    }
+  } catch (error) {
+    input.log.warn("Failed to update scheduled displayed output trace", {
+      traceId: input.traceId,
+      turnId: input.turnId,
+      error: error instanceof Error ? error.message : "Unknown trace update error",
+    });
+  }
 }
 
 async function persistScheduledSlackThreadContext(input: {

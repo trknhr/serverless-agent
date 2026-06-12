@@ -34,6 +34,10 @@ defaults and examples use `serverless-agent`.
 - Google Calendar OAuth and draft-then-apply calendar tools
 - optional public web search and URL extraction tools with pluggable search
   providers and Readability-based page extraction
+- opt-in agent turn traces for offline evaluation: set
+  `ENABLE_AGENT_TURN_TRACES=true` (or `-c enableAgentTurnTraces=true`) to
+  record each turn's masked input, tool calls, model output, and per-surface
+  displayed output to a DynamoDB table with a 90-day TTL
 
 Planned adapter direction:
 

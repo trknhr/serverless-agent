@@ -7,6 +7,7 @@ import {
 } from "./contracts";
 import { parseSystemPromptMode } from "./instructions";
 import { parseBedrockServiceTier, runAgentTurn } from "./runAgentTurn";
+import { AgentTurnTraceRepository } from "../repo/agentTurnTraceRepository";
 import { CalendarDraftRepository } from "../repo/calendarDraftRepository";
 import { ChannelMemoryRepository } from "../repo/channelMemoryRepository";
 import { GoogleOAuthConnectionRepository } from "../repo/googleOAuthConnectionRepository";
@@ -87,6 +88,9 @@ async function main(): Promise<void> {
               modelProvider: bedrock,
             }),
           createSkillRegistry,
+          bedrockRegion: region,
+          runtimeSessionId: context.sessionId,
+          saveTurnTrace: createTurnTraceSaver(request),
         })) {
           yield event;
         }
@@ -95,6 +99,17 @@ async function main(): Promise<void> {
   });
 
   app.run();
+}
+
+function createTurnTraceSaver(
+  request: AgentRuntimeRequest,
+): ((record: Parameters<AgentTurnTraceRepository["save"]>[0]) => Promise<void>) | undefined {
+  const tableName = request.resources?.agentTurnTracesTableName;
+  if (!tableName) {
+    return undefined;
+  }
+  const repository = new AgentTurnTraceRepository(tableName);
+  return (record) => repository.save(record);
 }
 
 function createToolExecutor(

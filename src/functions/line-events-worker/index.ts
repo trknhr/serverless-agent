@@ -5,7 +5,9 @@ import { SecretsProvider } from "../../aws/secretsProvider";
 import { buildLineContextBlocks } from "../../conversations/buildLineContextBlocks";
 import { loadLineWorkerEnv } from "../../config/env";
 import { LineAttachmentArchiveService } from "../../line/lineAttachmentArchiveService";
+import { AgentTurnDisplayedOutput, hashTraceIdentifier } from "../../eval/agentTurnTrace";
 import { LineMessagingClient } from "../../line/postMessage";
+import { AgentTurnTraceRepository } from "../../repo/agentTurnTraceRepository";
 import { ConversationSessionRepository } from "../../repo/conversationSessionRepository";
 import { ConversationTurnRepository } from "../../repo/conversationTurnRepository";
 import { SourceDocumentRepository } from "../../repo/sourceDocumentRepository";
@@ -24,6 +26,9 @@ const lineClient = new LineMessagingClient(() =>
 );
 const conversationSessionRepository = new ConversationSessionRepository(env.CONVERSATION_SESSIONS_TABLE_NAME);
 const conversationTurnRepository = new ConversationTurnRepository(env.CONVERSATION_TURNS_TABLE_NAME);
+const agentTurnTraceRepository = env.AGENT_TURN_TRACES_TABLE_NAME
+  ? new AgentTurnTraceRepository(env.AGENT_TURN_TRACES_TABLE_NAME)
+  : null;
 const sourceDocumentRepository = new SourceDocumentRepository(env.SOURCE_DOCUMENTS_TABLE_NAME);
 const attachmentArchiveService = new LineAttachmentArchiveService(
   env.LINE_ATTACHMENT_ARCHIVE_BUCKET_NAME,
@@ -78,7 +83,7 @@ export async function handler(event: SQSEvent): Promise<void> {
       env.TOP_LEVEL_CONTEXT_TURN_LIMIT,
     );
 
-    await conversationTurnRepository.save({
+    const userTurn = await conversationTurnRepository.save({
       workspaceId: queueMessage.workspaceId,
       channelId: queueMessage.channelId,
       conversationTs: queueMessage.conversationTs,
@@ -109,6 +114,9 @@ export async function handler(event: SQSEvent): Promise<void> {
           userId: queueMessage.userId,
           channelId: queueMessage.channelId,
           conversationTs: queueMessage.conversationTs,
+          traceId: queueMessage.correlationId,
+          turnId: userTurn.turnId,
+          correlationId: queueMessage.correlationId,
         },
         resources: buildAgentRuntimeResources(env),
         toolContext: {
@@ -142,6 +150,15 @@ export async function handler(event: SQSEvent): Promise<void> {
       text: completionText,
     });
 
+    await updateLineDisplayedOutputTrace({
+      traceId: completion.traceId ?? queueMessage.correlationId,
+      turnId: completion.turnId ?? userTurn.turnId,
+      channelId: queueMessage.channelId,
+      messageTs: assistantMessageTs,
+      text: completionText,
+      log,
+    });
+
     await conversationSessionRepository.save({
       ...sessionRecord,
       agentRuntimeSessionId: completion.sessionId ?? sessionRecord.agentRuntimeSessionId,
@@ -153,6 +170,47 @@ export async function handler(event: SQSEvent): Promise<void> {
       conversationTs: queueMessage.conversationTs,
       status: completion.status,
       responseTargetType: queueMessage.responseTargetType,
+    });
+  }
+}
+
+async function updateLineDisplayedOutputTrace(input: {
+  traceId: string;
+  turnId: string;
+  channelId: string;
+  messageTs?: string;
+  text: string;
+  log: ReturnType<typeof logger.child>;
+}): Promise<void> {
+  if (!agentTurnTraceRepository) {
+    return;
+  }
+
+  const displayedOutput: AgentTurnDisplayedOutput = {
+    surface: "line",
+    text: input.text,
+    messageTs: input.messageTs,
+    channelIdHash: hashTraceIdentifier(input.channelId),
+    postedAt: new Date().toISOString(),
+  };
+
+  try {
+    const updated = await agentTurnTraceRepository.updateDisplayedOutput({
+      traceId: input.traceId,
+      turnId: input.turnId,
+      displayedOutput,
+    });
+    if (!updated) {
+      input.log.warn("Agent turn trace was not found for LINE displayed output update", {
+        traceId: input.traceId,
+        turnId: input.turnId,
+      });
+    }
+  } catch (error) {
+    input.log.warn("Failed to update LINE displayed output trace", {
+      traceId: input.traceId,
+      turnId: input.turnId,
+      error: error instanceof Error ? error.message : "Unknown trace update error",
     });
   }
 }
