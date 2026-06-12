@@ -8,6 +8,7 @@ import {
   ListActiveWorkSessionsInput,
   WorkSessionLifecycleInput,
 } from "../repo/workSessionRepository";
+import { matchesTaskSearch, normalizeSearchText } from "../repo/taskStateRepository";
 import { BuiltinSkillOverride, GeneratedSkillRecord, SkillRepository } from "../skills/types";
 import { WorkSessionKind, WorkSessionRecord, WorkSessionStatus } from "../shared/contracts";
 import { RecurringTask } from "../tasks/recurringTask";
@@ -241,6 +242,64 @@ export class LocalTaskStateRepository {
         return dueA.localeCompare(dueB) || b.updatedAt.localeCompare(a.updatedAt);
       })
       .slice(0, Math.min(Math.max(input.limit ?? 10, 1), 50));
+  }
+
+  async search(input: {
+    workspaceId: string;
+    query: string;
+    statuses?: TaskStatus[];
+    limit?: number;
+    dueBefore?: string;
+    ownerUserId?: string;
+  }): Promise<TaskState[]> {
+    const query = input.query.trim();
+    if (!query) {
+      return [];
+    }
+
+    const statuses =
+      input.statuses && input.statuses.length > 0
+        ? input.statuses
+        : (["open", "in_progress", "done", "cancelled"] as TaskStatus[]);
+    const candidates = await this.list({
+      workspaceId: input.workspaceId,
+      statuses,
+      dueBefore: input.dueBefore,
+      ownerUserId: input.ownerUserId,
+      limit: 50,
+    });
+    const terms = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+    const limit = Math.min(Math.max(input.limit ?? 10, 1), 50);
+
+    return candidates
+      .filter((task) => matchesTaskSearch(task, terms))
+      .slice(0, limit);
+  }
+
+  async patch(input: {
+    workspaceId: string;
+    taskId: string;
+    expectedUpdatedAt?: string;
+    patch: Partial<Pick<
+      TaskState,
+      "title" | "description" | "status" | "dueAt" | "priority" | "calendarEventId" | "sourceType" | "sourceRef" | "metadata"
+    >>;
+  }): Promise<TaskState> {
+    const existing = await this.get(input.workspaceId, input.taskId);
+    if (!existing) {
+      throw new Error(`Task ${input.taskId} was not found`);
+    }
+    if (input.expectedUpdatedAt && existing.updatedAt !== input.expectedUpdatedAt) {
+      throw new Error(`Task ${input.taskId} changed since it was loaded`);
+    }
+
+    const patch = Object.fromEntries(
+      Object.entries(input.patch).filter(([, value]) => value !== undefined),
+    ) as Partial<TaskState>;
+    return this.upsert({
+      ...existing,
+      ...patch,
+    });
   }
 
   async markDone(input: {

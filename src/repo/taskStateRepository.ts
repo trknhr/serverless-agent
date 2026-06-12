@@ -246,7 +246,7 @@ function stripUndefined<T extends Record<string, unknown>>(record: T): Partial<T
   ) as Partial<T>;
 }
 
-function matchesTaskSearch(task: TaskState, terms: string[]): boolean {
+export function matchesTaskSearch(task: TaskState, terms: string[]): boolean {
   const haystack = normalizeSearchText(
     [
       task.taskId,
@@ -263,7 +263,7 @@ function matchesTaskSearch(task: TaskState, terms: string[]): boolean {
   return terms.every((term) => haystack.includes(term));
 }
 
-function normalizeSearchText(value: string): string {
+export function normalizeSearchText(value: string): string {
   return value.toLocaleLowerCase();
 }
 
