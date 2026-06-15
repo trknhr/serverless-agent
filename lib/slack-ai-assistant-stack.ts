@@ -163,12 +163,6 @@ export class SlackAiAssistantStack extends Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    const userMemoryTable = new dynamodb.Table(this, "UserMemoriesTable", {
-      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
-    });
-
     const memoryItemsTable = new dynamodb.Table(this, "MemoryItemsTable", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
@@ -333,7 +327,6 @@ export class SlackAiAssistantStack extends Stack {
       CONVERSATION_SESSIONS_TABLE_NAME: conversationSessionsTable.tableName,
       WORK_SESSIONS_TABLE_NAME: workSessionsTable.tableName,
       CONVERSATION_TURNS_TABLE_NAME: conversationTurnsTable.tableName,
-      USER_MEMORY_TABLE_NAME: userMemoryTable.tableName,
       MEMORY_ITEMS_TABLE_NAME: memoryItemsTable.tableName,
       ...(agentTurnTracesTable ? { AGENT_TURN_TRACES_TABLE_NAME: agentTurnTracesTable.tableName } : {}),
       TASKS_TABLE_NAME: tasksTable.tableName,
@@ -524,8 +517,6 @@ export class SlackAiAssistantStack extends Stack {
     conversationTurnsTable.grantReadWriteData(worker);
     conversationTurnsTable.grantReadWriteData(lineWorker);
     conversationTurnsTable.grantReadWriteData(scheduledRunner);
-    userMemoryTable.grantReadWriteData(worker);
-    userMemoryTable.grantReadWriteData(scheduledRunner);
     memoryItemsTable.grantReadWriteData(worker);
     memoryItemsTable.grantReadWriteData(scheduledRunner);
     memoryItemsTable.grantReadWriteData(documentImportWorker);
@@ -563,7 +554,6 @@ export class SlackAiAssistantStack extends Stack {
     recurringTasksTable.grantReadWriteData(scheduledRunner);
     providerBindingsTable.grantReadData(ingress);
     providerBindingsTable.grantReadData(lineIngress);
-    userMemoryTable.grantReadWriteData(chatApi);
     memoryItemsTable.grantReadWriteData(slackInteractions);
     workSessionsTable.grantReadWriteData(slackAgentRuntime.role);
     attachmentArchiveBucket.grantPut(worker, "raw/private/slack/*");

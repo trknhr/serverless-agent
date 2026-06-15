@@ -14,7 +14,6 @@ import { SourceDocumentRepository } from "../src/repo/sourceDocumentRepository";
 import { TaskEventRepository } from "../src/repo/taskEventRepository";
 import { TaskRepository } from "../src/repo/taskRepository";
 import { TaskStateRepository } from "../src/repo/taskStateRepository";
-import { UserMemoryRepository } from "../src/repo/userMemoryRepository";
 import { UserPreferenceRepository } from "../src/repo/userPreferenceRepository";
 import { WorkSessionRepository } from "../src/repo/workSessionRepository";
 
@@ -305,46 +304,6 @@ describe("basic DynamoDB repositories", () => {
       workspaceId: "line:group:G1",
       source: "fallback",
     });
-  });
-
-  it("finds and saves user memory records", async () => {
-    const repo = new UserMemoryRepository("memory");
-    sendMock.mockResolvedValueOnce({
-      Item: {
-        memory_store_id: "store",
-        profile_summary: "summary",
-        created_at: "created",
-        updated_at: "updated",
-      },
-    });
-
-    await expect(repo.find("T1", "U1")).resolves.toEqual({
-      workspaceId: "T1",
-      userId: "U1",
-      memoryStoreId: "store",
-      profileSummary: "summary",
-      createdAt: "created",
-      updatedAt: "updated",
-    });
-
-    sendMock.mockResolvedValueOnce({});
-    await repo.save({
-      workspaceId: "T1",
-      userId: "U1",
-      memoryStoreId: "store",
-      profileSummary: "summary",
-      createdAt: "created",
-      updatedAt: "updated",
-    });
-    expect(commandInput(1)).toMatchObject({
-      Item: {
-        pk: "WORKSPACE#T1#USER#U1",
-        memory_store_id: "store",
-      },
-    });
-
-    sendMock.mockResolvedValueOnce({});
-    await expect(repo.find("T1", "U2")).resolves.toBeNull();
   });
 
   it("creates, lists, and expires owner-scoped work sessions", async () => {

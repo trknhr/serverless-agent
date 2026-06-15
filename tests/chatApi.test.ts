@@ -29,7 +29,6 @@ function chatApiEnv(): NodeJS.ProcessEnv {
     CONVERSATION_SESSIONS_TABLE_NAME: "conversation-sessions",
     WORK_SESSIONS_TABLE_NAME: "work-sessions",
     CONVERSATION_TURNS_TABLE_NAME: "conversation-turns",
-    USER_MEMORY_TABLE_NAME: "user-memory",
     MEMORY_ITEMS_TABLE_NAME: "memory-items",
     TASKS_TABLE_NAME: "tasks",
     TASK_EVENTS_TABLE_NAME: "task-events",

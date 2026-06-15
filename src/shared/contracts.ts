@@ -126,12 +126,3 @@ export interface ThreadSessionRecord {
   createdAt: string;
   lastUsedAt: string;
 }
-
-export interface UserMemoryRecord {
-  workspaceId: string;
-  userId: string;
-  memoryStoreId: string;
-  profileSummary?: string;
-  createdAt: string;
-  updatedAt: string;
-}

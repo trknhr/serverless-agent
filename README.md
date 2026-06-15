@@ -133,7 +133,6 @@ The stack creates these DynamoDB tables:
 - `RecurringTasksTable`: recurring task rules materialized by the scheduler
 - `ProviderBindingsTable`: Slack/LINE provider account and conversation bindings
   to internal workspaces
-- `UserMemoriesTable`: legacy table retained to avoid destructive stack changes
 - `MemoryItemsTable`: workspace-scoped durable memory
 - `TasksTable`: current task state
 - `TaskEventsTable`: task history

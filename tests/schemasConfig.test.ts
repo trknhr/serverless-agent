@@ -70,7 +70,6 @@ function baseEnv(overrides: Record<string, string> = {}): Record<string, string>
     CONVERSATION_SESSIONS_TABLE_NAME: "conversation-sessions",
     WORK_SESSIONS_TABLE_NAME: "work-sessions",
     CONVERSATION_TURNS_TABLE_NAME: "conversation-turns",
-    USER_MEMORY_TABLE_NAME: "user-memory",
     MEMORY_ITEMS_TABLE_NAME: "memory-items",
     TASKS_TABLE_NAME: "tasks",
     TASK_EVENTS_TABLE_NAME: "task-events",
@@ -556,6 +555,21 @@ describe("environment loaders", () => {
     expect(loadSlackInteractionsEnv()).toMatchObject({
       GOOGLE_OAUTH_START_URL: "https://oauth/start",
     });
+  });
+
+  it("does not expose the legacy user memory table env var", () => {
+    const legacyUserMemoryTableEnv = ["USER", "MEMORY", "TABLE", "NAME"].join("_");
+
+    withEnv(baseEnv({ SLACK_QUEUE_URL: "https://sqs.local/slack" }));
+
+    expect(loadIngressEnv()).not.toHaveProperty(legacyUserMemoryTableEnv);
+
+    withEnv(toolRuntimeEnv({
+      LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: "line-token",
+    }));
+
+    expect(loadWorkerEnv()).not.toHaveProperty(legacyUserMemoryTableEnv);
+    expect(loadChatApiEnv()).not.toHaveProperty(legacyUserMemoryTableEnv);
   });
 
   it("loads import api and google oauth env variants", () => {
