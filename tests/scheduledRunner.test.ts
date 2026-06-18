@@ -129,6 +129,58 @@ describe("scheduled agent runner", () => {
     expect(mocks.linePushText).not.toHaveBeenCalled();
   });
 
+  it("passes the scheduled reminder creator as the agent user context", async () => {
+    mocks.documentSend
+      .mockResolvedValueOnce({
+        Item: {
+          taskId: "morning",
+          name: "Morning Reminder",
+          prompt: "Post today's reminder.",
+          workspaceId: "T1",
+          outputChannelId: "C1",
+          enabled: true,
+          createdByUserId: "UCREATOR",
+          updatedByUserId: "UCREATOR",
+          reuseSession: false,
+          createdAt: "2026-05-29T00:00:00.000Z",
+          updatedAt: "2026-05-29T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({});
+    mocks.agentInvoke.mockResolvedValueOnce({
+      text: "Today's reminder.",
+      sessionId: "agent-session",
+      status: "completed",
+      taskIds: [],
+      recurringTaskIds: [],
+      savedMemoryIds: [],
+      calendarDraftIds: [],
+    });
+
+    const { handler } = await import("../src/functions/scheduled-agent-runner");
+
+    await handler({
+      taskId: "morning",
+      workspaceId: "T1",
+    });
+
+    expect(mocks.agentInvoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeUserId: "UCREATOR",
+        request: expect.objectContaining({
+          context: expect.objectContaining({
+            userId: "UCREATOR",
+          }),
+          toolContext: expect.objectContaining({
+            userId: "UCREATOR",
+          }),
+        }),
+      }),
+    );
+  });
+
   it("stores scheduled Slack reminders as thread context for follow-up replies", async () => {
     mocks.documentSend
       .mockResolvedValueOnce({

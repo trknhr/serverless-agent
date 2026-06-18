@@ -113,8 +113,10 @@ export async function handler(
     : null;
   const traceId = buildScheduledTraceId(task.workspaceId, task.taskId, scheduledAtIso);
   const turnId = `scheduled:${task.taskId}:${scheduledAtIso}`;
+  const scheduledUserId = task.createdByUserId ?? task.updatedByUserId;
   const completion = await agentClient.invoke({
     sessionId: reusableSessionRecord?.sessionId,
+    runtimeUserId: scheduledUserId,
     request: {
       content: [
         {
@@ -131,6 +133,7 @@ export async function handler(
       context: {
         source: "scheduler",
         workspaceId: task.workspaceId,
+        userId: scheduledUserId,
         taskId: task.taskId,
         traceId,
         turnId,
@@ -138,6 +141,7 @@ export async function handler(
       resources: buildAgentRuntimeResources(env),
       toolContext: {
         workspaceId: task.workspaceId,
+        userId: scheduledUserId,
       },
     },
   });
