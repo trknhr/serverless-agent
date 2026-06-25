@@ -4,10 +4,11 @@ Serverless AI agent runtime for chat workspaces, built on AWS Lambda,
 API Gateway, SQS, DynamoDB, S3, EventBridge Scheduler, and Amazon Bedrock
 AgentCore.
 
-The current `v0.1.0` implementation ships a Slack adapter. The next adapter is
-an experimental LINE text-message webhook path. The longer-term direction is a
-shared serverless assistant core with first-class Slack and LINE adapters, plus
-an optional Discord adapter.
+The current `v0.2.0` implementation ships a Slack adapter, experimental LINE
+text-message support, and a shared assistant core for memory, tasks, calendar
+drafts, web tools, browser tools, and evaluation traces. The longer-term
+direction is first-class Slack and LINE adapters, plus an optional Discord
+adapter.
 
 The assistant keeps model reasoning, tool execution, and runtime isolation inside
 AgentCore while AWS handles webhooks, queues, state, scheduled jobs, document
@@ -22,7 +23,8 @@ defaults and examples use `serverless-agent`.
 
 ## Status
 
-`v0.1.0` focuses on a working Slack-based assistant:
+`v0.2.0` focuses on a working Slack-based assistant plus the first shared
+multi-adapter assistant core:
 
 - Slack app mentions, DMs, thread replies, and interactive actions
 - AgentCore Runtime container for model calls and custom tool loops
@@ -41,7 +43,7 @@ defaults and examples use `serverless-agent`.
 
 Planned adapter direction:
 
-- Slack: implemented in `v0.1.0`
+- Slack: implemented
 - LINE: experimental text-message webhook adapter in progress
 - Discord: optional adapter after Slack/LINE patterns are clear
 
@@ -682,7 +684,7 @@ and lines.
 
 ## Roadmap
 
-Near-term post-`v0.1.0` work:
+Near-term post-`v0.2.0` work:
 
 - LINE adapter hardening beyond basic text webhook support
 - admin page for channel-level workspace memory promotion policies
