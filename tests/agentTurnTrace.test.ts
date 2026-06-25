@@ -9,7 +9,7 @@ describe("agent turn trace helpers", () => {
   it("sanitizes tool payloads while preserving ordinary string fields", () => {
     expect(
       sanitizeTraceValue({
-        query: "central park",
+        query: "synthetic park",
         apiKey: "sk-secret12345678901234567890",
         nested: {
           authorization: "Bearer token",
@@ -17,7 +17,7 @@ describe("agent turn trace helpers", () => {
         },
       }),
     ).toEqual({
-      query: "central park",
+      query: "synthetic park",
       apiKey: "[redacted]",
       nested: {
         authorization: "[redacted]",

@@ -29,8 +29,8 @@ describe("weather helpers", () => {
   });
 
   it("builds fallback location queries for Japanese administrative names", () => {
-    expect(buildWeatherLocationQueries("福岡県福岡市")).toEqual(["福岡県福岡市", "福岡市"]);
-    expect(buildWeatherLocationQueries("福岡")).toEqual(["福岡", "福岡市"]);
+    expect(buildWeatherLocationQueries("合成県合成市")).toEqual(["合成県合成市", "合成市"]);
+    expect(buildWeatherLocationQueries("合成")).toEqual(["合成", "合成市"]);
   });
 
   it("falls back to a city query when the full Japanese location is not found", async () => {
@@ -41,10 +41,10 @@ describe("weather helpers", () => {
       .mockResolvedValueOnce(jsonResponse({
         results: [
           {
-            name: "福岡市",
-            country: "日本",
-            country_code: "JP",
-            admin1: "福岡県",
+            name: "合成市",
+            country: "Example Country",
+            country_code: "ZZ",
+            admin1: "合成県",
             latitude: 33.6,
             longitude: 130.41667,
             timezone: "Asia/Tokyo",
@@ -66,17 +66,17 @@ describe("weather helpers", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const forecast = await new OpenMeteoWeatherProvider().getForecast({
-      location: "福岡県福岡市",
+      location: "合成県合成市",
       date: "2026-05-26",
       timezone: "Asia/Tokyo",
     });
 
-    expect(forecast.locationName).toBe("福岡市");
-    expect(forecast.admin1).toBe("福岡県");
+    expect(forecast.locationName).toBe("合成市");
+    expect(forecast.admin1).toBe("合成県");
     expect(forecast.summary).toContain("雨");
     expect(forecast.summary).toContain("降水確率62%");
-    expect(new URL(String(fetchMock.mock.calls[0][0])).searchParams.get("name")).toBe("福岡県福岡市");
-    expect(new URL(String(fetchMock.mock.calls[1][0])).searchParams.get("name")).toBe("福岡市");
+    expect(new URL(String(fetchMock.mock.calls[0][0])).searchParams.get("name")).toBe("合成県合成市");
+    expect(new URL(String(fetchMock.mock.calls[1][0])).searchParams.get("name")).toBe("合成市");
   });
 });
 

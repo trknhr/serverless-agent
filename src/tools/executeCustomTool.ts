@@ -23,7 +23,7 @@ import {
   extractDailyCronTime,
 } from "../scheduler/scheduledReminder";
 import { Logger } from "../shared/logger";
-import { RecurringTaskRecurrence, recurringTaskWeekdaySchema } from "../tasks/recurringTask";
+import { RecurringTask, RecurringTaskRecurrence, recurringTaskWeekdaySchema } from "../tasks/recurringTask";
 import { normalizeScheduledOutputFields } from "../tasks/scheduledOutput";
 import { ScheduledTask, scheduledOutputProviderSchema } from "../tasks/taskDefinition";
 import { TaskState, TaskStatus } from "../tasks/taskState";
@@ -87,6 +87,7 @@ const searchMemoriesSchema = z.object({
 
 const searchContextSchema = z.object({
   query: z.string().min(1).max(400),
+  queries: z.array(z.string().min(1).max(400)).max(5).optional(),
   limit: z.number().int().min(1).max(20).optional(),
   include_web: z.boolean().optional(),
   country: z.string().regex(/^[A-Za-z]{2}$/).optional(),
@@ -450,6 +451,7 @@ const CALENDAR_TOOL_NAMES = new Set([
 ]);
 
 export interface ToolExecutionContext {
+  source?: string;
   workspaceId: string;
   userId?: string;
   channelId?: string;
@@ -782,18 +784,48 @@ export class CustomToolExecutor {
 
   private async searchContext(input: Record<string, unknown>): Promise<ToolExecutionResult> {
     const parsed = searchContextSchema.parse(input);
-    const [taskResult, memoryResult] = await Promise.all([
-      this.searchTasks({
-        query: parsed.query,
-        limit: parsed.limit,
+    const taskResultsById = new Map<string, Record<string, unknown>>();
+    const memoryResultsById = new Map<string, Record<string, unknown>>();
+    const recurringTaskResultsById = new Map<string, Record<string, unknown>>();
+    const searchedQueries = buildContextSearchQueries(parsed.query, parsed.queries);
+
+    await Promise.all(
+      searchedQueries.map(async (query) => {
+        const [taskResult, memoryResult, recurringTaskResults] = await Promise.all([
+          this.searchTasks({
+            query,
+            limit: parsed.limit,
+          }),
+          this.searchMemories({
+            query,
+            limit: parsed.limit,
+          }),
+          this.searchRecurringTasks({
+            query,
+            limit: parsed.limit,
+          }),
+        ]);
+        const taskPayload = parseJsonToolResult(taskResult);
+        const memoryPayload = parseJsonToolResult(memoryResult);
+
+        addUniqueSearchRecords(
+          taskResultsById,
+          Array.isArray(taskPayload.tasks) ? taskPayload.tasks : [],
+          (task) => stringRecordValue(task, "task_id"),
+        );
+        addUniqueSearchRecords(
+          memoryResultsById,
+          Array.isArray(memoryPayload.memories) ? memoryPayload.memories : [],
+          (memory) => `${stringRecordValue(memory, "scope")}:${stringRecordValue(memory, "memory_id")}`,
+        );
+        addUniqueSearchRecords(
+          recurringTaskResultsById,
+          recurringTaskResults,
+          (task) => stringRecordValue(task, "recurring_task_id"),
+        );
       }),
-      this.searchMemories({
-        query: parsed.query,
-        limit: parsed.limit,
-      }),
-    ]);
-    const taskPayload = parseJsonToolResult(taskResult);
-    const memoryPayload = parseJsonToolResult(memoryResult);
+    );
+
     let webPayload: Record<string, unknown> | undefined;
     let webError: string | undefined;
 
@@ -814,24 +846,29 @@ export class CustomToolExecutor {
       }
     }
 
-    const tasks = Array.isArray(taskPayload.tasks) ? taskPayload.tasks : [];
-    const memories = Array.isArray(memoryPayload.memories) ? memoryPayload.memories : [];
+    const tasks = [...taskResultsById.values()];
+    const memories = [...memoryResultsById.values()];
+    const recurringTasks = [...recurringTaskResultsById.values()];
     const webResults =
       webPayload && Array.isArray(webPayload.results) ? webPayload.results : [];
 
     this.context.logger.info("Unified search completed", {
       query: parsed.query,
+      searchedQueries,
       taskCount: tasks.length,
       memoryCount: memories.length,
+      recurringTaskCount: recurringTasks.length,
       webCount: webResults.length,
       includeWeb: parsed.include_web ?? false,
     });
 
     return jsonResult({
       query: parsed.query,
-      count: tasks.length + memories.length + webResults.length,
+      searched_queries: searchedQueries,
+      count: tasks.length + memories.length + recurringTasks.length + webResults.length,
       tasks,
       memories,
+      recurring_tasks: recurringTasks,
       web: webPayload
         ? {
             provider: webPayload.provider,
@@ -841,6 +878,29 @@ export class CustomToolExecutor {
         : undefined,
       web_error: webError,
     });
+  }
+
+  private async searchRecurringTasks(input: { query: string; limit?: number }): Promise<Record<string, unknown>[]> {
+    if (!this.repositories.recurringTasks) {
+      return [];
+    }
+
+    const terms = buildSearchTerms(input.query);
+    if (terms.length === 0) {
+      return [];
+    }
+
+    const limit = Math.min(Math.max(input.limit ?? 10, 1), 50);
+    const tasks = await this.repositories.recurringTasks.list({
+      workspaceId: this.context.workspaceId,
+      limit: 100,
+    });
+
+    return tasks
+      .filter((task) => matchesContextSearch(buildRecurringTaskSearchText(task), terms))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, limit)
+      .map(serializeRecurringTaskSearchResult);
   }
 
   private async searchMemories(input: Record<string, unknown>): Promise<ToolExecutionResult> {
@@ -1273,7 +1333,7 @@ export class CustomToolExecutor {
       statuses: parsed.statuses as TaskStatus[] | undefined,
       dueBefore: parsed.due_before,
       limit: parsed.limit,
-      ownerUserId: this.context.userId,
+      ownerUserId: shouldFilterTaskOwner(this.context) ? this.context.userId : undefined,
     });
 
     return jsonResult({
@@ -2341,6 +2401,88 @@ function normalizeTags(tags?: string[]): string[] | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
+function buildContextSearchQueries(query: string, additionalQueries?: string[]): string[] {
+  const queries: string[] = [query, ...(additionalQueries ?? [])];
+  const seen = new Set<string>();
+
+  return queries
+    .map((candidate) => candidate.trim().replace(/\s+/g, " "))
+    .filter((candidate) => {
+      if (!candidate || seen.has(candidate)) {
+        return false;
+      }
+      seen.add(candidate);
+      return true;
+    });
+}
+
+function addUniqueSearchRecords(
+  target: Map<string, Record<string, unknown>>,
+  records: unknown[],
+  getKey: (record: Record<string, unknown>) => string,
+): void {
+  for (const record of records) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) {
+      continue;
+    }
+    const typedRecord = record as Record<string, unknown>;
+    const key = getKey(typedRecord);
+    if (key && !target.has(key)) {
+      target.set(key, typedRecord);
+    }
+  }
+}
+
+function stringRecordValue(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
+}
+
+function buildSearchTerms(query: string): string[] {
+  return normalizeContextSearchText(query).split(/\s+/).filter(Boolean);
+}
+
+function matchesContextSearch(searchText: string, terms: string[]): boolean {
+  return terms.length === 0 || terms.every((term) => searchText.includes(term));
+}
+
+function buildRecurringTaskSearchText(task: RecurringTask): string {
+  return normalizeContextSearchText(
+    [
+      task.recurringTaskId,
+      task.title,
+      task.description,
+      task.sourceType,
+      task.sourceRef,
+      JSON.stringify(task.recurrence),
+      task.metadata ? JSON.stringify(task.metadata) : undefined,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
+function serializeRecurringTaskSearchResult(task: RecurringTask): Record<string, unknown> {
+  return {
+    recurring_task_id: task.recurringTaskId,
+    title: task.title,
+    description: task.description,
+    recurrence: serializeRecurringTaskRecurrence(task.recurrence),
+    due_time: task.dueTime,
+    timezone: task.timezone,
+    enabled: task.enabled,
+    owner_user_id: task.ownerUserId,
+    priority: task.priority,
+    source_type: task.sourceType,
+    source_ref: task.sourceRef,
+    updated_at: task.updatedAt,
+  };
+}
+
+function normalizeContextSearchText(value: string): string {
+  return value.trim().toLocaleLowerCase();
+}
+
 function inferSearchScope(context: ToolExecutionContext): "all" | "workspace" {
   if (context.channelId || context.userId) {
     return "all";
@@ -2358,6 +2500,10 @@ function inferSaveScope(context: ToolExecutionContext): "channel" | "user_prefer
   }
 
   return "workspace";
+}
+
+function shouldFilterTaskOwner(context: ToolExecutionContext): boolean {
+  return context.source !== "scheduler";
 }
 
 function serializeGoogleCalendarListEntry(entry: GoogleCalendarListEntry): Record<string, unknown> {
@@ -2715,7 +2861,8 @@ function extractTaskKeywordSearchQuery(text: string | undefined): string | undef
     /[「『"']([^」』"']{1,80})[」』"'].*(?:タスク|検索|探|確認|見つけ|調べ|ある|存在)/i,
     /タスク(?:から|で|の中から|の中で|に)\s*[「『"']?(.{1,80}?)[」』"']?\s*(?:を|について|に関して)?\s*(?:検索|探|確認|見つけ|調べ|ある|存在)/i,
     /[「『"']?(.{1,80}?)[」』"']?\s*(?:を|について|に関して)?\s*タスク(?:から|で|の中から|の中で|に).*(?:検索|探|確認|見つけ|調べ|ある|存在)/i,
-    /(?:find|search|look up|lookup|check).{0,40}(?:tasks?|todos?).{0,40}(?:for|named|about)?\s*["']?([^"'?.!,]{1,80})["']?/i,
+    /(?:find|search|look up|lookup|check)\s+(?:tasks?|todos?)(?:\s+(?:for|named|about))?\s+["']?([^"'?.!,]{1,80})["']?/i,
+    /(?:find|search|look up|lookup|check)\s+(?:for\s+)?["']?([^"'?.!,]{1,80})["']?\s+(?:in|from|among)\s+(?:tasks?|todos?)/i,
   ];
 
   for (const pattern of patterns) {

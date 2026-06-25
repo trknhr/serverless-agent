@@ -18,7 +18,7 @@ describe("ModelAttachmentImageAnalyzer", () => {
       ]),
     };
     const ai = {
-      generateText: vi.fn().mockResolvedValue({ text: "The image contains a school newsletter." }),
+      generateText: vi.fn().mockResolvedValue({ text: "The image contains a synthetic notice." }),
     };
     const modelProvider = vi.fn((modelId: string) => ({ modelId }));
     const analyzer = new ModelAttachmentImageAnalyzer({
@@ -36,7 +36,7 @@ describe("ModelAttachmentImageAnalyzer", () => {
         sourceId: "src_1",
         question: "Can you read this image?",
       }),
-    ).resolves.toBe("The image contains a school newsletter.");
+    ).resolves.toBe("The image contains a synthetic notice.");
 
     expect(reader.readImage).toHaveBeenCalledWith({
       workspaceId: "line:group:G1",

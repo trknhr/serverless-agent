@@ -164,7 +164,7 @@ export const customToolDefinitions = [
   {
     name: "search_context",
     description:
-      "Unified read-only search for answering user questions before choosing a domain-specific tool. Use this first for definitions, short-term references, past-context questions, task keyword searches, and general lookup requests. It searches saved memories and tracked tasks together by default; set include_web=true only when the answer likely depends on current or public web information. Use the returned task_id or memory_id with specialized tools only when a follow-up update is needed.",
+      "Unified read-only search for answering user questions before choosing a domain-specific tool. Use this first for definitions, short-term references, past-context questions, task keyword searches, and general lookup requests. It searches saved memories and tracked tasks together by default, plus recurring task definitions when available. For uncertain private-context lookups, provide 2-5 agent-chosen alternate queries in queries or call search_context again before concluding the context is unknown. Set include_web=true only when the answer likely depends on current or public web information. Use the returned task_id, recurring_task_id, or memory_id with specialized tools only when a follow-up update is needed.",
     input_schema: {
       type: "object",
       properties: {
@@ -172,6 +172,13 @@ export const customToolDefinitions = [
           type: "string",
           maxLength: 400,
           description: "The exact term, noun phrase, or question to search for.",
+        },
+        queries: {
+          type: "array",
+          items: { type: "string", maxLength: 400 },
+          maxItems: 5,
+          description:
+            "Optional agent-chosen alternate private-context queries to run in the same tool call. Do not rely on the tool to generate synonyms or spelling variants.",
         },
         limit: {
           type: "integer",

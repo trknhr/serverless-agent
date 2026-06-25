@@ -145,6 +145,7 @@ function createToolExecutor(
       workSessions: new WorkSessionRepository(resources.workSessionsTableName),
     },
     {
+      source: request.context.source,
       workspaceId: request.toolContext.workspaceId,
       userId: request.toolContext.userId,
       channelId: request.toolContext.channelId,

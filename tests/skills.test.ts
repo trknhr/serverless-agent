@@ -935,10 +935,10 @@ describe("load_skill tool", () => {
         workspaceId: "T1",
         channelId: "C1",
         memoryId: "chanmem_1",
-        text: "長男のわいわい広場は11:00までにアプリ申請する",
-        entityKey: "place:waiwai",
+        text: "Synthetic reference note must be reviewed by 11:00.",
+        entityKey: "topic:synthetic-reference",
         attributes: { source: "image" },
-        tags: ["school"],
+        tags: ["synthetic"],
         importance: 0.8,
         status: "candidate",
         origin: "inferred",
@@ -950,9 +950,9 @@ describe("load_skill tool", () => {
       save: vi.fn().mockResolvedValue({
         workspaceId: "T1",
         memoryId: "mem_1",
-        text: "長男のわいわい広場は11:00までにアプリ申請する",
-        entityKey: "place:nagao-waiwai",
-        tags: ["school", "promoted"],
+        text: "Synthetic reference note must be reviewed by 11:00.",
+        entityKey: "topic:synthetic-reference",
+        tags: ["synthetic", "promoted"],
         attributes: {},
         importance: 0.8,
         sourceType: "channel_memory_promotion",
@@ -981,7 +981,7 @@ describe("load_skill tool", () => {
       name: "promote_memory_to_workspace",
       input: {
         memory_id: "chanmem_1",
-        entity_key: "place:nagao-waiwai",
+        entity_key: "topic:synthetic-reference",
       },
     });
 
@@ -989,9 +989,9 @@ describe("load_skill tool", () => {
     expect(memoryItems.save).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceId: "T1",
-        entityKey: "place:nagao-waiwai",
-        text: "長男のわいわい広場は11:00までにアプリ申請する",
-        tags: ["school", "promoted"],
+        entityKey: "topic:synthetic-reference",
+        text: "Synthetic reference note must be reviewed by 11:00.",
+        tags: ["synthetic", "promoted"],
         sourceType: "channel_memory_promotion",
         sourceRef: "channel:C1/memory:chanmem_1",
         createdByUserId: "U1",
@@ -1203,7 +1203,7 @@ describe("load_skill tool", () => {
 describe("read_attachment_image tool", () => {
   it("analyzes archived attachment images through the attachment image analyzer integration", async () => {
     const attachmentImageAnalyzer = {
-      analyzeImage: vi.fn().mockResolvedValue("The image shows a school newsletter."),
+      analyzeImage: vi.fn().mockResolvedValue("The image shows a synthetic notice."),
     };
     const executor = new CustomToolExecutor(
       {} as never,
@@ -1229,7 +1229,7 @@ describe("read_attachment_image tool", () => {
       content: [
         {
           type: "text",
-          text: "The image shows a school newsletter.",
+          text: "The image shows a synthetic notice.",
         },
       ],
     });

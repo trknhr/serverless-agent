@@ -15,9 +15,9 @@ describe("search_context tool", () => {
       search: vi.fn().mockResolvedValue([
         {
           workspaceId: "T1",
-          taskId: "task_pool_card",
-          title: "Submit swimming form",
-          description: "Prepare the pool card before the swimming lesson.",
+          taskId: "task_synthetic_card",
+          title: "Submit synthetic card",
+          description: "Prepare the synthetic reference card.",
           status: "open",
           dueAt: "2026-06-05T23:59:00+09:00",
           updatedAt: "2026-06-05T00:05:00.000Z",
@@ -34,7 +34,7 @@ describe("search_context tool", () => {
         workspaceId: "T1",
         userId: "U1",
         logger: new Logger({ test: "list-tasks-search-fallback" }),
-        currentRequestText: "タスクからプールカードを検索できる？",
+        currentRequestText: "Search tasks for synthetic reference card.",
       },
     );
 
@@ -47,7 +47,7 @@ describe("search_context tool", () => {
 
     expect(tasks.search).toHaveBeenCalledWith({
       workspaceId: "T1",
-      query: "プールカード",
+      query: "synthetic reference card",
       statuses: undefined,
       dueBefore: undefined,
       limit: undefined,
@@ -55,13 +55,81 @@ describe("search_context tool", () => {
     expect(tasks.list).not.toHaveBeenCalled();
     expect(toolPayload(result)).toMatchObject({
       mode: "keyword_search",
-      query: "プールカード",
+      query: "synthetic reference card",
       count: 1,
       tasks: [
         {
-          task_id: "task_pool_card",
-          title: "Submit swimming form",
+          task_id: "task_synthetic_card",
+          title: "Submit synthetic card",
           status: "open",
+        },
+      ],
+    });
+  });
+
+  it("does not owner-filter task lists for scheduled reminders", async () => {
+    const tasks = {
+      list: vi.fn().mockResolvedValue([
+        {
+          workspaceId: "T1",
+          taskId: "task_imported",
+          title: "Imported shared reminder",
+          description: "Synthetic imported reminder",
+          status: "open",
+          dueAt: "2026-06-24T23:59:00+09:00",
+          ownerUserId: "imported-owner",
+          updatedAt: "2026-06-16T23:00:18.653Z",
+        },
+        {
+          workspaceId: "T1",
+          taskId: "task_user_owned",
+          title: "User-owned weekend reminder",
+          description: "Synthetic user-owned reminder",
+          status: "open",
+          dueAt: "2026-06-28T09:50:00+09:00",
+          ownerUserId: "U1",
+          updatedAt: "2026-06-20T23:00:18.360Z",
+        },
+      ]),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        tasks,
+        taskEvents: {},
+        memoryItems: {},
+      } as never,
+      {
+        source: "scheduler",
+        workspaceId: "T1",
+        userId: "U1",
+        logger: new Logger({ test: "scheduled-list-tasks-owner-filter" }),
+      } as never,
+    );
+
+    const result = await executor.execute({
+      id: "tool-list-tasks-scheduled",
+      type: "agent.tool_use",
+      name: "list_tasks",
+      input: { statuses: ["open", "in_progress"] },
+    });
+
+    expect(tasks.list).toHaveBeenCalledWith({
+      workspaceId: "T1",
+      statuses: ["open", "in_progress"],
+      dueBefore: undefined,
+      limit: undefined,
+      ownerUserId: undefined,
+    });
+    expect(toolPayload(result)).toMatchObject({
+      count: 2,
+      tasks: [
+        {
+          task_id: "task_imported",
+          title: "Imported shared reminder",
+        },
+        {
+          task_id: "task_user_owned",
+          title: "User-owned weekend reminder",
         },
       ],
     });
@@ -150,6 +218,113 @@ describe("search_context tool", () => {
           scope: "workspace",
           memory_id: "mem_synthetic",
           text: "Synthetic reference details live in durable memory.",
+        },
+      ],
+    });
+  });
+
+  it("runs agent-provided context queries without generating variants", async () => {
+    const memoryItems = {
+      search: vi.fn(async (input: { query: string }) =>
+        input.query === "alpha-card"
+          ? [
+              {
+                memoryId: "mem_alpha_card",
+                entityKey: "topic:alpha-card",
+                text: "Synthetic alpha-card reference is scheduled on the second Friday.",
+                tags: ["synthetic", "reference"],
+                importance: 0.8,
+                updatedAt: "2026-04-17T05:51:07.963Z",
+              },
+            ]
+          : [],
+      ),
+    };
+    const tasks = {
+      search: vi.fn().mockResolvedValue([]),
+    };
+    const recurringTasks = {
+      list: vi.fn().mockResolvedValue([
+        {
+          recurringTaskId: "rt_alpha_card",
+          workspaceId: "T1",
+          title: "Alpha-card recurring reminder",
+          description: "Synthetic recurring reminder for alpha-card",
+          recurrence: {
+            frequency: "monthly",
+            interval: 1,
+            daysOfWeek: ["friday"],
+            weekOfMonth: 2,
+          },
+          dueTime: "23:59",
+          timezone: "Asia/Tokyo",
+          enabled: true,
+          ownerUserId: "U1",
+          priority: "medium",
+          sourceType: "agent",
+          updatedAt: "2026-05-11T13:30:28.010Z",
+        },
+      ]),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        memoryItems,
+        tasks,
+        taskEvents: {},
+        recurringTasks,
+      } as never,
+      {
+        workspaceId: "T1",
+        userId: "U1",
+        logger: new Logger({ test: "search-context-recurring-fallback" }),
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-search-context-alpha-card",
+      type: "agent.tool_use",
+      name: "search_context",
+      input: {
+        query: "registered alpha-card reference",
+        queries: ["alpha-card"],
+        limit: 5,
+      },
+    });
+
+    expect(memoryItems.search).toHaveBeenCalledTimes(2);
+    expect(memoryItems.search).toHaveBeenCalledWith({
+      workspaceId: "T1",
+      query: "registered alpha-card reference",
+      entityKey: undefined,
+      limit: 5,
+    });
+    expect(memoryItems.search).toHaveBeenCalledWith({
+      workspaceId: "T1",
+      query: "alpha-card",
+      entityKey: undefined,
+      limit: 5,
+    });
+    expect(toolPayload(result)).toMatchObject({
+      query: "registered alpha-card reference",
+      searched_queries: ["registered alpha-card reference", "alpha-card"],
+      count: 2,
+      memories: [
+        {
+          scope: "workspace",
+          memory_id: "mem_alpha_card",
+          text: "Synthetic alpha-card reference is scheduled on the second Friday.",
+        },
+      ],
+      recurring_tasks: [
+        {
+          recurring_task_id: "rt_alpha_card",
+          title: "Alpha-card recurring reminder",
+          recurrence: {
+            frequency: "monthly",
+            interval: 1,
+            days_of_week: ["friday"],
+            week_of_month: 2,
+          },
         },
       ],
     });
