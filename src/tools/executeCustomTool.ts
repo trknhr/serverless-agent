@@ -85,16 +85,39 @@ const searchMemoriesSchema = z.object({
   scope: z.enum(["all", "channel", "user_preference", "workspace"]).optional(),
 });
 
-const searchContextSchema = z.object({
-  query: z.string().min(1).max(400),
-  queries: z.array(z.string().min(1).max(400)).max(5).optional(),
-  limit: z.number().int().min(1).max(20).optional(),
-  include_web: z.boolean().optional(),
-  country: z.string().regex(/^[A-Za-z]{2}$/).optional(),
-  language: z.string().regex(/^[A-Za-z]{2,3}$/).optional(),
-  freshness: z.enum(["day", "week", "month", "year"]).optional(),
-  domains: z.array(z.string().min(1)).max(5).optional(),
-});
+const searchContextSchema = z
+  .object({
+    query: z.string().min(1).max(400).optional(),
+    queries: z.array(z.string().min(1).max(400)).max(5).optional(),
+    task_statuses: z.array(z.enum(["open", "in_progress", "done", "cancelled"])).optional(),
+    task_due_before: z.string().min(1).optional(),
+    limit: z.number().int().min(1).max(20).optional(),
+    include_web: z.boolean().optional(),
+    country: z.string().regex(/^[A-Za-z]{2}$/).optional(),
+    language: z.string().regex(/^[A-Za-z]{2,3}$/).optional(),
+    freshness: z.enum(["day", "week", "month", "year"]).optional(),
+    domains: z.array(z.string().min(1)).max(5).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const hasQuery = Boolean(value.query) || Boolean(value.queries?.length);
+    const hasTaskListFilter = Boolean(value.task_statuses?.length) || Boolean(value.task_due_before);
+
+    if (!hasQuery && !hasTaskListFilter) {
+      ctx.addIssue({
+        code: "custom",
+        message: "search_context requires query, queries, task_statuses, or task_due_before",
+        path: ["query"],
+      });
+    }
+
+    if (value.include_web && !hasQuery) {
+      ctx.addIssue({
+        code: "custom",
+        message: "include_web requires query or queries",
+        path: ["include_web"],
+      });
+    }
+  });
 
 const saveMemorySchema = z.object({
   text: z.string().min(1),
@@ -156,13 +179,13 @@ const browserCloseSchema = z.object({
   browser_session_id: z.string().min(1).optional(),
 });
 
-const listTasksSchema = z.object({
+const taskFilterSchema = z.object({
   statuses: z.array(z.enum(["open", "in_progress", "done", "cancelled"])).optional(),
   due_before: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(50).optional(),
 });
 
-const searchTasksSchema = listTasksSchema.extend({
+const searchTasksSchema = taskFilterSchema.extend({
   query: z.string().min(1),
 });
 
@@ -569,8 +592,6 @@ export class CustomToolExecutor {
           return await this.browserExtract(input);
         case "browser_close":
           return await this.browserClose(input);
-        case "list_tasks":
-          return await this.listTasks(input);
         case "search_tasks":
           return await this.searchTasks(input);
         case "upsert_task":
@@ -794,6 +815,8 @@ export class CustomToolExecutor {
         const [taskResult, memoryResult, recurringTaskResults] = await Promise.all([
           this.searchTasks({
             query,
+            statuses: parsed.task_statuses,
+            due_before: parsed.task_due_before,
             limit: parsed.limit,
           }),
           this.searchMemories({
@@ -826,6 +849,21 @@ export class CustomToolExecutor {
       }),
     );
 
+    if (searchedQueries.length === 0 && hasTaskListFilters(parsed)) {
+      const tasks = await this.repositories.tasks.list({
+        workspaceId: this.context.workspaceId,
+        statuses: parsed.task_statuses as TaskStatus[] | undefined,
+        dueBefore: parsed.task_due_before,
+        limit: parsed.limit,
+        ownerUserId: shouldFilterTaskOwner(this.context) ? this.context.userId : undefined,
+      });
+      addUniqueSearchRecords(
+        taskResultsById,
+        tasks.map((task) => serializeTaskState(task)),
+        (task) => stringRecordValue(task, "task_id"),
+      );
+    }
+
     let webPayload: Record<string, unknown> | undefined;
     let webError: string | undefined;
 
@@ -833,7 +871,7 @@ export class CustomToolExecutor {
       try {
         webPayload = parseJsonToolResult(
           await this.webSearch({
-            query: parsed.query,
+            query: searchedQueries[0],
             limit: Math.min(parsed.limit ?? 5, 10),
             country: parsed.country,
             language: parsed.language,
@@ -1305,40 +1343,6 @@ export class CustomToolExecutor {
     return jsonResult({
       browser_session_id: session.workSessionId,
       closed: true,
-    });
-  }
-
-  private async listTasks(input: Record<string, unknown>): Promise<ToolExecutionResult> {
-    const parsed = listTasksSchema.parse(input);
-    const fallbackQuery = extractTaskKeywordSearchQuery(this.context.currentRequestText);
-    if (fallbackQuery) {
-      const tasks = await this.repositories.tasks.search({
-        workspaceId: this.context.workspaceId,
-        query: fallbackQuery,
-        statuses: parsed.statuses as TaskStatus[] | undefined,
-        dueBefore: parsed.due_before,
-        limit: parsed.limit,
-      });
-
-      return jsonResult({
-        mode: "keyword_search",
-        query: fallbackQuery,
-        count: tasks.length,
-        tasks: tasks.map((task) => serializeTaskState(task)),
-      });
-    }
-
-    const tasks = await this.repositories.tasks.list({
-      workspaceId: this.context.workspaceId,
-      statuses: parsed.statuses as TaskStatus[] | undefined,
-      dueBefore: parsed.due_before,
-      limit: parsed.limit,
-      ownerUserId: shouldFilterTaskOwner(this.context) ? this.context.userId : undefined,
-    });
-
-    return jsonResult({
-      count: tasks.length,
-      tasks: tasks.map((task) => serializeTaskState(task)),
     });
   }
 
@@ -2401,8 +2405,12 @@ function normalizeTags(tags?: string[]): string[] | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function buildContextSearchQueries(query: string, additionalQueries?: string[]): string[] {
-  const queries: string[] = [query, ...(additionalQueries ?? [])];
+function hasTaskListFilters(input: { task_statuses?: unknown[]; task_due_before?: string }): boolean {
+  return Boolean(input.task_statuses?.length) || Boolean(input.task_due_before);
+}
+
+function buildContextSearchQueries(query?: string, additionalQueries?: string[]): string[] {
+  const queries: string[] = [...(query ? [query] : []), ...(additionalQueries ?? [])];
   const seen = new Set<string>();
 
   return queries
@@ -2849,47 +2857,6 @@ function serializeGeneratedSkill(skill: GeneratedSkillRecord): Record<string, un
     created_at: skill.createdAt,
     updated_at: skill.updatedAt,
   };
-}
-
-function extractTaskKeywordSearchQuery(text: string | undefined): string | undefined {
-  if (!text) {
-    return undefined;
-  }
-
-  const normalized = text.replace(/<@[^>]+>/g, " ").trim();
-  const patterns = [
-    /[「『"']([^」』"']{1,80})[」』"'].*(?:タスク|検索|探|確認|見つけ|調べ|ある|存在)/i,
-    /タスク(?:から|で|の中から|の中で|に)\s*[「『"']?(.{1,80}?)[」』"']?\s*(?:を|について|に関して)?\s*(?:検索|探|確認|見つけ|調べ|ある|存在)/i,
-    /[「『"']?(.{1,80}?)[」』"']?\s*(?:を|について|に関して)?\s*タスク(?:から|で|の中から|の中で|に).*(?:検索|探|確認|見つけ|調べ|ある|存在)/i,
-    /(?:find|search|look up|lookup|check)\s+(?:tasks?|todos?)(?:\s+(?:for|named|about))?\s+["']?([^"'?.!,]{1,80})["']?/i,
-    /(?:find|search|look up|lookup|check)\s+(?:for\s+)?["']?([^"'?.!,]{1,80})["']?\s+(?:in|from|among)\s+(?:tasks?|todos?)/i,
-  ];
-
-  for (const pattern of patterns) {
-    const candidate = cleanTaskKeywordSearchQuery(normalized.match(pattern)?.[1]);
-    if (candidate) {
-      return candidate;
-    }
-  }
-
-  return undefined;
-}
-
-function cleanTaskKeywordSearchQuery(value: string | undefined): string | undefined {
-  const candidate = value
-    ?.replace(/^[\s:：、。,.?？!！"'「『]+|[\s:：、。,.?？!！"'」』]+$/g, "")
-    .replace(/^(?:から|で|を|について|に関して)\s*/i, "")
-    .replace(/\s*(?:を|について|に関して|検索|探|確認|見つけ|調べ|ある|存在).*$/i, "")
-    .trim();
-
-  if (!candidate || candidate.length < 2) {
-    return undefined;
-  }
-  if (/^(?:タスク|tasks?|todos?|検索|探す|確認|find|search|lookup)$/i.test(candidate)) {
-    return undefined;
-  }
-
-  return candidate;
 }
 
 function normalizeRecurringTaskRecurrence(

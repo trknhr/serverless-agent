@@ -1505,8 +1505,8 @@ describe("agent turn trace repository", () => {
       toolCalls: [
         {
           toolCallId: "tool-1",
-          name: "list_tasks",
-          input: {},
+          name: "search_context",
+          input: { task_statuses: ["open"] },
           output: { count: 0 },
           isError: false,
           startedAt: "2026-05-26T00:00:00.100Z",
@@ -1535,7 +1535,7 @@ describe("agent turn trace repository", () => {
         expires_at: 1787529600,
         model_output: { text: "hi" },
         displayed_output: expect.objectContaining({ surface: "slack", messageTs: "100.1" }),
-        tool_calls: [expect.objectContaining({ name: "list_tasks" })],
+        tool_calls: [expect.objectContaining({ name: "search_context" })],
       },
     });
 

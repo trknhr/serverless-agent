@@ -164,7 +164,7 @@ export const customToolDefinitions = [
   {
     name: "search_context",
     description:
-      "Unified read-only search for answering user questions before choosing a domain-specific tool. Use this first for definitions, short-term references, past-context questions, task keyword searches, and general lookup requests. It searches saved memories and tracked tasks together by default, plus recurring task definitions when available. For uncertain private-context lookups, provide 2-5 agent-chosen alternate queries in queries or call search_context again before concluding the context is unknown. Set include_web=true only when the answer likely depends on current or public web information. Use the returned task_id, recurring_task_id, or memory_id with specialized tools only when a follow-up update is needed.",
+      "Unified read-only search for answering user questions before choosing a domain-specific tool. Use this first for definitions, short-term references, past-context questions, task keyword searches, current task lists, and general lookup requests. It searches saved memories and tracked tasks together by default, plus recurring task definitions when available. For current task lists, omit query and pass task_statuses or task_due_before. For uncertain private-context lookups, provide 2-5 agent-chosen alternate queries in queries or call search_context again before concluding the context is unknown. Set include_web=true only when the answer likely depends on current or public web information. Use the returned task_id, recurring_task_id, or memory_id with specialized tools only when a follow-up update is needed.",
     input_schema: {
       type: "object",
       properties: {
@@ -179,6 +179,15 @@ export const customToolDefinitions = [
           maxItems: 5,
           description:
             "Optional agent-chosen alternate private-context queries to run in the same tool call. Do not rely on the tool to generate synonyms or spelling variants.",
+        },
+        task_statuses: {
+          type: "array",
+          items: { type: "string", enum: ["open", "in_progress", "done", "cancelled"] },
+          description: "Optional task statuses for current task lists or filtered task search.",
+        },
+        task_due_before: {
+          type: "string",
+          description: "Optional RFC3339 timestamp upper bound for current task lists or filtered task search.",
         },
         limit: {
           type: "integer",
@@ -211,7 +220,6 @@ export const customToolDefinitions = [
           description: "Optional public web domains to restrict with site: filters.",
         },
       },
-      required: ["query"],
     },
   },
   {
@@ -427,22 +435,6 @@ export const customToolDefinitions = [
     },
   },
   {
-    name: "list_tasks",
-    description:
-      "List current tasks with filters for status and due date. Do not use this to find a task by name or keyword; use search_context with the exact task term instead.",
-    input_schema: {
-      type: "object",
-      properties: {
-        statuses: {
-          type: "array",
-          items: { type: "string", enum: ["open", "in_progress", "done", "cancelled"] },
-        },
-        due_before: { type: "string", description: "RFC3339 timestamp upper bound for due date." },
-        limit: { type: "integer", minimum: 1, maximum: 50 },
-      },
-    },
-  },
-  {
     name: "upsert_task",
     description:
       "Create or update a one-off task, dated event, or checklist item after reasoning about future work or calendar events. Use this, not create_scheduled_reminder, for content that should appear inside an existing daily reminder.",
@@ -466,14 +458,14 @@ export const customToolDefinitions = [
   {
     name: "patch_task",
     description:
-      "Safely apply a partial update to an existing tracked task while preserving fields that are not provided. Use search_context first when the user describes the task but does not provide a task_id. Pass expected_updated_at from search_context or list_tasks when available to avoid overwriting a task that changed after it was loaded.",
+      "Safely apply a partial update to an existing tracked task while preserving fields that are not provided. Use search_context first when the user describes the task but does not provide a task_id. Pass expected_updated_at from search_context when available to avoid overwriting a task that changed after it was loaded.",
     input_schema: {
       type: "object",
       properties: {
         task_id: { type: "string" },
         expected_updated_at: {
           type: "string",
-          description: "Optional updated_at value returned by search_context/list_tasks for optimistic conflict checks.",
+          description: "Optional updated_at value returned by search_context for optimistic conflict checks.",
         },
         title: { type: "string" },
         description: { type: "string" },

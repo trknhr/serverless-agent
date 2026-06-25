@@ -18,8 +18,9 @@ describe("Agent runtime instructions", () => {
     expect(prompt).toContain("short-term references");
     expect(prompt).toContain("past-context questions");
     expect(prompt).toContain("task keyword searches");
+    expect(prompt).toContain("current task lists");
     expect(prompt).toContain("named task exists");
-    expect(prompt).toContain("Do not use list_tasks as a substitute for keyword search");
+    expect(prompt).not.toContain("list_tasks");
     expect(prompt).toContain("exact term or question");
     expect(prompt).toContain("returned task_id, recurring_task_id, or memory_id");
     expect(prompt).toContain("include_web=true");

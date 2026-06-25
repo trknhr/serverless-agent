@@ -25,8 +25,8 @@ describe("tool definitions", () => {
     expect(toolDescription("search_context")).toContain("Unified read-only search");
     expect(toolDescription("search_context")).toContain("saved memories and tracked tasks");
     expect(toolDescription("search_context")).toContain("task keyword searches");
+    expect(toolDescription("search_context")).toContain("current task lists");
     expect(toolDescription("search_context")).toContain("include_web=true");
-    expect(toolDescription("list_tasks")).toContain("Do not use this to find a task by name or keyword");
     expect(toolDescription("patch_task")).toContain("partial update");
     expect(toolDescription("patch_task")).toContain("search_context");
     expect(toolDescription("create_scheduled_reminder")).toContain("explicitly asks for an individual reminder");
@@ -34,7 +34,7 @@ describe("tool definitions", () => {
     expect(toolDescription("update_scheduled_reminder")).toContain("explicit changes to a separate notification schedule");
     expect(toolDescription("list_scheduled_reminders")).toContain("included in the daily reminder instead");
     expect(toolDescription("delete_scheduled_reminder")).toContain("accidental individual reminder");
-    expect(toolDefinition("search_context").input_schema.required).toEqual(["query"]);
+    expect(toolDefinition("search_context").input_schema.required).toBeUndefined();
     expect(toolDefinition("patch_task").input_schema.required).toEqual(["task_id"]);
   });
 
@@ -42,6 +42,7 @@ describe("tool definitions", () => {
     const toolNames = customToolDefinitions.map((tool) => tool.name);
 
     expect(toolNames).toContain("search_context");
+    expect(toolNames).not.toContain("list_tasks");
     expect(toolNames).not.toContain("search_memories");
     expect(toolNames).not.toContain("search_tasks");
     expect(toolNames).not.toContain("web_search");

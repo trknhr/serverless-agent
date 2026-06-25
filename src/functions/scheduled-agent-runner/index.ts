@@ -574,7 +574,7 @@ function buildScheduledPrompt(
 
   if (materializedRecurringTasks.length > 0) {
     promptParts.push(
-      "- The system already created current upcoming task instances from recurring task definitions. list_tasks includes them.",
+      "- The system already created current upcoming task instances from recurring task definitions. search_context task list results include them.",
     );
   }
 

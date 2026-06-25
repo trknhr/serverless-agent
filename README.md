@@ -335,7 +335,7 @@ Tool groups available inside AgentCore:
 - durable memory: `search_memories`, `save_memory`,
   `promote_memory_to_workspace`
 - web research: `web_search`, `web_extract`
-- one-off tasks: `list_tasks`, `upsert_task`, `mark_task_done`
+- one-off tasks: `search_context`, `upsert_task`, `mark_task_done`
 - recurring tasks: `list_recurring_tasks`, `upsert_recurring_task`,
   `disable_recurring_task`
 - Google Calendar drafts: `list_google_calendars`, `list_calendar_events`,

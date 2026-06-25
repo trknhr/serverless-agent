@@ -9,15 +9,14 @@ function toolPayload(result: Awaited<ReturnType<CustomToolExecutor["execute"]>>)
 }
 
 describe("search_context tool", () => {
-  it("falls back to task keyword search when list_tasks is selected for a search request", async () => {
+  it("lists filtered tasks through search_context without a keyword query", async () => {
     const tasks = {
-      list: vi.fn(),
-      search: vi.fn().mockResolvedValue([
+      list: vi.fn().mockResolvedValue([
         {
           workspaceId: "T1",
-          taskId: "task_synthetic_card",
-          title: "Submit synthetic card",
-          description: "Prepare the synthetic reference card.",
+          taskId: "task_synthetic_followup",
+          title: "Synthetic follow-up",
+          description: "Review the synthetic follow-up.",
           status: "open",
           dueAt: "2026-06-05T23:59:00+09:00",
           updatedAt: "2026-06-05T00:05:00.000Z",
@@ -33,34 +32,34 @@ describe("search_context tool", () => {
       {
         workspaceId: "T1",
         userId: "U1",
-        logger: new Logger({ test: "list-tasks-search-fallback" }),
-        currentRequestText: "Search tasks for synthetic reference card.",
+        logger: new Logger({ test: "search-context-task-list" }),
       },
     );
 
     const result = await executor.execute({
-      id: "tool-list-tasks",
+      id: "tool-search-context-task-list",
       type: "agent.tool_use",
-      name: "list_tasks",
-      input: {},
+      name: "search_context",
+      input: {
+        task_statuses: ["open", "in_progress"],
+        task_due_before: "2026-06-06T00:00:00+09:00",
+        limit: 10,
+      },
     });
 
-    expect(tasks.search).toHaveBeenCalledWith({
+    expect(tasks.list).toHaveBeenCalledWith({
       workspaceId: "T1",
-      query: "synthetic reference card",
-      statuses: undefined,
-      dueBefore: undefined,
-      limit: undefined,
+      statuses: ["open", "in_progress"],
+      dueBefore: "2026-06-06T00:00:00+09:00",
+      limit: 10,
+      ownerUserId: "U1",
     });
-    expect(tasks.list).not.toHaveBeenCalled();
     expect(toolPayload(result)).toMatchObject({
-      mode: "keyword_search",
-      query: "synthetic reference card",
       count: 1,
       tasks: [
         {
-          task_id: "task_synthetic_card",
-          title: "Submit synthetic card",
+          task_id: "task_synthetic_followup",
+          title: "Synthetic follow-up",
           status: "open",
         },
       ],
@@ -109,8 +108,8 @@ describe("search_context tool", () => {
     const result = await executor.execute({
       id: "tool-list-tasks-scheduled",
       type: "agent.tool_use",
-      name: "list_tasks",
-      input: { statuses: ["open", "in_progress"] },
+      name: "search_context",
+      input: { task_statuses: ["open", "in_progress"] },
     });
 
     expect(tasks.list).toHaveBeenCalledWith({
