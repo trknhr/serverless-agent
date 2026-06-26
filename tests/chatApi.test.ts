@@ -88,8 +88,80 @@ async function loadHandler() {
 afterEach(() => {
   sendMock.mockReset();
   invokeMock.mockReset();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   process.env = { ...originalEnv };
+});
+
+describe("chat messages API", () => {
+  it("returns agent metadata for direct chat tracing", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T15:00:00.000Z"));
+    const { handler } = await loadHandler();
+    invokeMock.mockResolvedValueOnce({
+      sessionId: "sess-1",
+      text: "ok",
+      taskIds: ["task-1"],
+      recurringTaskIds: ["recurring-1"],
+      savedMemoryIds: ["memory-1"],
+      calendarDraftIds: ["draft-1"],
+      traceId: "trace-runtime",
+      turnId: "turn-runtime",
+    });
+
+    const response = await handler(
+      baseEvent({
+        httpMethod: "POST",
+        resource: "/chat/messages",
+        body: JSON.stringify({
+          workspaceId: "T1",
+          userId: "U1",
+          text: "hello",
+          sessionId: "sess-input",
+        }),
+      }),
+    );
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "sess-input",
+        runtimeUserId: "T1:U1",
+        request: expect.objectContaining({
+          content: [
+            {
+              type: "text",
+              text: [
+                "Current local date: 2026-06-26 (Asia/Tokyo)",
+                "Use this date for relative dates such as today, tomorrow, yesterday, and this week.",
+                "Current user message:",
+                "hello",
+              ].join("\n"),
+            },
+          ],
+          context: expect.objectContaining({
+            source: "direct_chat_api",
+            workspaceId: "T1",
+            userId: "U1",
+            traceId: "req-1",
+            turnId: "req-1",
+            correlationId: "req-1",
+          }),
+        }),
+      }),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({
+      ok: true,
+      sessionId: "sess-1",
+      text: "ok",
+      taskIds: ["task-1"],
+      recurringTaskIds: ["recurring-1"],
+      savedMemoryIds: ["memory-1"],
+      calendarDraftIds: ["draft-1"],
+      traceId: "trace-runtime",
+      turnId: "turn-runtime",
+    });
+  });
 });
 
 describe("chat admin skill API", () => {

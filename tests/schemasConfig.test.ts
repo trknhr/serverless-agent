@@ -301,6 +301,7 @@ describe("API contract schemas", () => {
       taskIds: [],
       recurringTaskIds: [],
       savedMemoryIds: [],
+      calendarDraftIds: [],
     });
   });
 

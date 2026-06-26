@@ -4,6 +4,7 @@ import { AgentCoreRuntimeClient } from "../../agentcore/client";
 import { buildAgentRuntimeResources } from "../../agentcore/contracts";
 import { chatMessageRequestSchema } from "../../chat/contracts";
 import { loadChatApiEnv } from "../../config/env";
+import { buildDirectChatContextBlocks } from "../../conversations/buildDirectChatContextBlocks";
 import { logger } from "../../shared/logger";
 import { DynamoDbSkillRepository } from "../../skills/dynamoDbSkillRepository";
 import { SkillRegistry } from "../../skills/registry";
@@ -70,14 +71,13 @@ async function postMessage(
   const input = chatMessageRequestSchema.parse(body);
   const completion = await agentClient.invoke({
     sessionId: input.sessionId,
-    runtimeUserId: input.userId,
+    runtimeUserId: buildDirectChatRuntimeUserId(input.workspaceId, input.userId),
     request: {
-      content: [
-        {
-          type: "text",
-          text: input.text,
-        },
-      ],
+      content: buildDirectChatContextBlocks({
+        currentText: input.text,
+        receivedAt: new Date().toISOString(),
+        timeZone: env.GOOGLE_CALENDAR_TIME_ZONE,
+      }),
       context: {
         source: "direct_chat_api",
         workspaceId: input.workspaceId,
@@ -101,7 +101,14 @@ async function postMessage(
     taskIds: completion.taskIds,
     recurringTaskIds: completion.recurringTaskIds,
     savedMemoryIds: completion.savedMemoryIds,
+    calendarDraftIds: completion.calendarDraftIds,
+    traceId: completion.traceId,
+    turnId: completion.turnId,
   });
+}
+
+function buildDirectChatRuntimeUserId(workspaceId: string, userId: string): string {
+  return `${workspaceId}:${userId}`;
 }
 
 async function listBuiltinSkills(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {

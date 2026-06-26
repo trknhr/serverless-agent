@@ -14,6 +14,9 @@ export const chatMessageResponseSchema = z.object({
   taskIds: z.array(z.string()).default([]),
   recurringTaskIds: z.array(z.string()).default([]),
   savedMemoryIds: z.array(z.string()).default([]),
+  calendarDraftIds: z.array(z.string()).default([]),
+  traceId: z.string().optional(),
+  turnId: z.string().optional(),
 });
 
 export type ChatMessageRequest = z.infer<typeof chatMessageRequestSchema>;
