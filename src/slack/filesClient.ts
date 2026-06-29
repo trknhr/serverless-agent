@@ -14,6 +14,8 @@ import {
   isCompressibleSlackImageMimeType,
 } from "./imageCompression";
 
+const defaultMaxCompressibleImageBytes = 25_000_000;
+
 interface SlackApiFileInfoResponse {
   ok: boolean;
   error?: string;
@@ -55,6 +57,7 @@ export class SlackFilesClient {
   constructor(
     private readonly tokenProvider: () => Promise<string>,
     private readonly maxFileBytes: number,
+    private readonly maxCompressibleImageBytes = defaultMaxCompressibleImageBytes,
   ) {}
 
   async prepareAttachments(files: SlackFileReference[]): Promise<PreparedSlackAttachment[]> {
@@ -190,7 +193,9 @@ export class SlackFilesClient {
       };
     }
 
-    if (resolved.size && resolved.size > this.maxFileBytes) {
+    const isCompressibleImage = isCompressibleSlackImageMimeType(mimeType);
+
+    if (resolved.size && resolved.size > this.maxFileBytes && !isCompressibleImage) {
       return {
         file: resolved,
         label,
@@ -200,6 +205,21 @@ export class SlackFilesClient {
           {
             type: "text",
             text: `Attachment note: ${label} was skipped because it is larger than ${this.maxFileBytes} bytes.`,
+          },
+        ],
+      };
+    }
+
+    if (resolved.size && resolved.size > this.maxCompressibleImageBytes) {
+      return {
+        file: resolved,
+        label,
+        mimeType,
+        status: "skipped_oversize",
+        contentBlocks: [
+          {
+            type: "text",
+            text: `Attachment note: ${label} was skipped because it is larger than ${this.maxCompressibleImageBytes} bytes.`,
           },
         ],
       };
@@ -237,7 +257,7 @@ export class SlackFilesClient {
     }
 
     const buffer = await this.downloadFile(downloadUrl);
-    if (buffer.byteLength > this.maxFileBytes) {
+    if (buffer.byteLength > this.maxFileBytes && !isCompressibleImage) {
       return {
         file: resolved,
         label,
@@ -247,6 +267,21 @@ export class SlackFilesClient {
           {
             type: "text",
             text: `Attachment note: ${label} exceeded the ${this.maxFileBytes} byte limit after download.`,
+          },
+        ],
+      };
+    }
+
+    if (buffer.byteLength > this.maxCompressibleImageBytes) {
+      return {
+        file: resolved,
+        label,
+        mimeType,
+        status: "skipped_oversize",
+        contentBlocks: [
+          {
+            type: "text",
+            text: `Attachment note: ${label} exceeded the ${this.maxCompressibleImageBytes} byte limit after download.`,
           },
         ],
       };

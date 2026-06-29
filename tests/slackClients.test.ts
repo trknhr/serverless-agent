@@ -1,3 +1,4 @@
+import { Jimp, JimpMime } from "jimp";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SecretsProvider } from "../src/aws/secretsProvider";
 import { SlackAuthClient, SlackApiError } from "../src/slack/authTest";
@@ -311,6 +312,38 @@ describe("SlackFilesClient", () => {
         contentBlocks: [{ type: "text", text: expect.stringContaining("Unknown attachment error") }],
       },
     ]);
+  });
+
+  it("downloads oversized static images so they can be compressed for model input", async () => {
+    const image = new Jimp({ width: 80, height: 40, color: 0x336699ff });
+    const imageBytes = Buffer.from(await image.getBuffer(JimpMime.png));
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(imageBytes, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new SlackFilesClient(async () => "token", 10);
+
+    const attachments = await client.prepareAttachments([
+      {
+        id: "F-large-image",
+        name: "large-image.png",
+        mimetype: "image/png",
+        urlPrivateDownload: "https://download/large-image",
+        size: 99,
+      },
+    ]);
+
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0]).toMatchObject({
+      label: "large-image.png",
+      mimeType: "image/png",
+      modelMimeType: "image/jpeg",
+      status: "ready",
+    });
+    expect(attachments[0].contentBytes?.byteLength).toBeGreaterThan(10);
+    expect(attachments[0].modelContentBytes?.byteLength).toBeGreaterThan(0);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://download/large-image",
+      expect.objectContaining({ method: "GET" }),
+    );
   });
 
   it("skips files that exceed the byte limit after download and uses title/id label fallbacks", async () => {
