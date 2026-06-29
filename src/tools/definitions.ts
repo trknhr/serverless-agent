@@ -164,7 +164,7 @@ export const customToolDefinitions = [
   {
     name: "search_context",
     description:
-      "Unified read-only search for answering user questions before choosing a domain-specific tool. Use this first for definitions, short-term references, past-context questions, task keyword searches, current task lists, and general lookup requests. It searches saved memories and tracked tasks together by default, plus recurring task definitions when available. For current task lists, omit query and pass task_statuses or task_due_before. For uncertain private-context lookups, provide 2-5 agent-chosen alternate queries in queries or call search_context again before concluding the context is unknown. Set include_web=true only when the answer likely depends on current or public web information. Use the returned task_id, recurring_task_id, or memory_id with specialized tools only when a follow-up update is needed.",
+      "Unified read-only search for answering user questions before choosing a domain-specific tool. Use this first for definitions, short-term references, past-context questions, task keyword searches, current task lists, and general lookup requests. It searches saved memories and tracked tasks together by default, plus recurring task definitions when available. For current task lists, omit query and pass task_statuses or task_due_before. For uncertain private-context lookups, provide 2-5 agent-chosen alternate queries in queries or call search_context again before concluding the context is unknown; include translated terms, exact IDs, and short keyword-only variants for mixed-language or noisy prompts. Set include_web=true only when the answer likely depends on current or public web information. Use the returned task_id, recurring_task_id, or memory_id with specialized tools only when a follow-up update is needed.",
     input_schema: {
       type: "object",
       properties: {
@@ -178,7 +178,7 @@ export const customToolDefinitions = [
           items: { type: "string", maxLength: 400 },
           maxItems: 5,
           description:
-            "Optional agent-chosen alternate private-context queries to run in the same tool call. Do not rely on the tool to generate synonyms or spelling variants.",
+            "Optional agent-chosen alternate private-context queries to run in the same tool call, such as translated terms, exact IDs, or short keyword-only variants. Do not rely on the tool to generate synonyms or spelling variants.",
         },
         task_statuses: {
           type: "array",

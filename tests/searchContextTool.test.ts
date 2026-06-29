@@ -329,6 +329,136 @@ describe("search_context tool", () => {
     });
   });
 
+  it("retries distinctive query tokens when an initial private search has no results", async () => {
+    const memoryItems = {
+      search: vi.fn().mockResolvedValue([]),
+    };
+    const tasks = {
+      search: vi.fn(async (input: { query: string }) =>
+        input.query === "packet"
+          ? [
+              {
+                workspaceId: "T1",
+                taskId: "task_packet",
+                title: "Submit smoke quarterly packet",
+                description: "Use packet code QUARTZ-19.",
+                status: "open",
+                priority: "high",
+                updatedAt: "2026-06-26T00:00:00.000Z",
+              },
+            ]
+          : [],
+      ),
+    };
+    const recurringTasks = {
+      list: vi.fn().mockResolvedValue([]),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        memoryItems,
+        tasks,
+        taskEvents: {},
+        recurringTasks,
+      } as never,
+      {
+        workspaceId: "T1",
+        userId: "U1",
+        logger: new Logger({ test: "search-context-token-fallback" }),
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-search-context-token-fallback",
+      type: "agent.tool_use",
+      name: "search_context",
+      input: { query: "packet タスク", limit: 5 },
+    });
+
+    expect(tasks.search).toHaveBeenCalledWith({
+      workspaceId: "T1",
+      query: "packet タスク",
+      statuses: undefined,
+      dueBefore: undefined,
+      limit: 5,
+    });
+    expect(tasks.search).toHaveBeenCalledWith({
+      workspaceId: "T1",
+      query: "packet",
+      statuses: undefined,
+      dueBefore: undefined,
+      limit: 5,
+    });
+    expect(toolPayload(result)).toMatchObject({
+      searched_queries: ["packet タスク", "packet"],
+      count: 1,
+      tasks: [
+        {
+          task_id: "task_packet",
+          title: "Submit smoke quarterly packet",
+        },
+      ],
+    });
+  });
+
+  it("returns memory results when task search fails", async () => {
+    const memoryItems = {
+      search: vi.fn().mockResolvedValue([
+        {
+          memoryId: "mem_orbit",
+          entityKey: "orbit-731",
+          text: "ORBIT-731 means prepare the blue smoke checklist before 08:10.",
+          tags: ["smoke-e2e"],
+          importance: 0.9,
+          updatedAt: "2026-06-26T00:00:00.000Z",
+        },
+      ]),
+    };
+    const tasks = {
+      search: vi.fn().mockRejectedValue(new Error("Invalid task row")),
+    };
+    const recurringTasks = {
+      list: vi.fn().mockResolvedValue([]),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        memoryItems,
+        tasks,
+        taskEvents: {},
+        recurringTasks,
+      } as never,
+      {
+        workspaceId: "T1",
+        userId: "U1",
+        logger: new Logger({ test: "search-context-partial-source-failure" }),
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-search-context-partial-source-failure",
+      type: "agent.tool_use",
+      name: "search_context",
+      input: { query: "ORBIT-731", limit: 5 },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(toolPayload(result)).toMatchObject({
+      count: 1,
+      memories: [
+        {
+          memory_id: "mem_orbit",
+          text: "ORBIT-731 means prepare the blue smoke checklist before 08:10.",
+        },
+      ],
+      errors: [
+        {
+          source: "tasks",
+          query: "ORBIT-731",
+          message: "Invalid task row",
+        },
+      ],
+    });
+  });
+
   it("adds public web results only when explicitly requested", async () => {
     const memoryItems = {
       search: vi.fn().mockResolvedValue([]),

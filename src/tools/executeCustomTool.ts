@@ -33,6 +33,7 @@ import { BrowserProvider, BrowserViewport } from "../browser/provider";
 import {
   addUniqueSearchRecords,
   buildContextSearchQueries,
+  buildFallbackContextSearchQueries,
   buildRecurringTaskSearchText,
   buildSearchTerms,
   hasTaskListFilters,
@@ -282,6 +283,12 @@ const updateScheduledReminderSchema = z.object({
 const deleteScheduledReminderSchema = z.object({
   scheduled_task_id: z.string().min(1),
 });
+
+type ContextSearchError = {
+  source: string;
+  query?: string;
+  message: string;
+};
 
 const getWeatherForecastSchema = z.object({
   location: z.string().min(1),
@@ -784,58 +791,84 @@ export class CustomToolExecutor {
     const taskResultsById = new Map<string, Record<string, unknown>>();
     const memoryResultsById = new Map<string, Record<string, unknown>>();
     const recurringTaskResultsById = new Map<string, Record<string, unknown>>();
+    const searchErrors: ContextSearchError[] = [];
     const searchedQueries = buildContextSearchQueries(parsed.query, parsed.queries);
 
-    await Promise.all(
-      searchedQueries.map(async (query) => {
-        const [taskResult, memoryResult, recurringTaskResults] = await Promise.all([
-          this.searchTasks({
-            query,
-            statuses: parsed.task_statuses,
-            due_before: parsed.task_due_before,
-            limit: parsed.limit,
-          }),
-          this.searchMemories({
-            query,
-            limit: parsed.limit,
-          }),
-          this.searchRecurringTasks({
-            query,
-            limit: parsed.limit,
-          }),
-        ]);
-        const taskPayload = parseJsonToolResult(taskResult);
-        const memoryPayload = parseJsonToolResult(memoryResult);
+    const runPrivateContextQueries = async (queries: string[]) => {
+      await Promise.all(
+        queries.map(async (query) => {
+          const [taskPayload, memoryPayload, recurringTaskResults] = await Promise.all([
+            captureContextSearchSource("tasks", query, searchErrors, async () =>
+              parseJsonToolResult(
+                await this.searchTasks({
+                  query,
+                  statuses: parsed.task_statuses,
+                  due_before: parsed.task_due_before,
+                  limit: parsed.limit,
+                }),
+              ),
+            ),
+            captureContextSearchSource("memories", query, searchErrors, async () =>
+              parseJsonToolResult(
+                await this.searchMemories({
+                  query,
+                  limit: parsed.limit,
+                }),
+              ),
+            ),
+            captureContextSearchSource("recurring_tasks", query, searchErrors, async () =>
+              this.searchRecurringTasks({
+                query,
+                limit: parsed.limit,
+              }),
+            ),
+          ]);
 
-        addUniqueSearchRecords(
-          taskResultsById,
-          Array.isArray(taskPayload.tasks) ? taskPayload.tasks : [],
-          (task) => stringRecordValue(task, "task_id"),
-        );
-        addUniqueSearchRecords(
-          memoryResultsById,
-          Array.isArray(memoryPayload.memories) ? memoryPayload.memories : [],
-          (memory) => `${stringRecordValue(memory, "scope")}:${stringRecordValue(memory, "memory_id")}`,
-        );
-        addUniqueSearchRecords(
-          recurringTaskResultsById,
-          recurringTaskResults,
-          (task) => stringRecordValue(task, "recurring_task_id"),
-        );
-      }),
-    );
+          addUniqueSearchRecords(
+            taskResultsById,
+            taskPayload && Array.isArray(taskPayload.tasks) ? taskPayload.tasks : [],
+            (task) => stringRecordValue(task, "task_id"),
+          );
+          addUniqueSearchRecords(
+            memoryResultsById,
+            memoryPayload && Array.isArray(memoryPayload.memories) ? memoryPayload.memories : [],
+            (memory) => `${stringRecordValue(memory, "scope")}:${stringRecordValue(memory, "memory_id")}`,
+          );
+          addUniqueSearchRecords(
+            recurringTaskResultsById,
+            recurringTaskResults ?? [],
+            (task) => stringRecordValue(task, "recurring_task_id"),
+          );
+        }),
+      );
+    };
+
+    await runPrivateContextQueries(searchedQueries);
+
+    if (
+      searchedQueries.length > 0 &&
+      taskResultsById.size + memoryResultsById.size + recurringTaskResultsById.size === 0
+    ) {
+      const fallbackQueries = buildFallbackContextSearchQueries(searchedQueries);
+      if (fallbackQueries.length > 0) {
+        searchedQueries.push(...fallbackQueries);
+        await runPrivateContextQueries(fallbackQueries);
+      }
+    }
 
     if (searchedQueries.length === 0 && hasTaskListFilters(parsed)) {
-      const tasks = await this.repositories.tasks.list({
-        workspaceId: this.context.workspaceId,
-        statuses: parsed.task_statuses as TaskStatus[] | undefined,
-        dueBefore: parsed.task_due_before,
-        limit: parsed.limit,
-        ownerUserId: shouldFilterTaskOwner(this.context) ? this.context.userId : undefined,
-      });
+      const tasks = await captureContextSearchSource("tasks", undefined, searchErrors, async () =>
+        this.repositories.tasks.list({
+          workspaceId: this.context.workspaceId,
+          statuses: parsed.task_statuses as TaskStatus[] | undefined,
+          dueBefore: parsed.task_due_before,
+          limit: parsed.limit,
+          ownerUserId: shouldFilterTaskOwner(this.context) ? this.context.userId : undefined,
+        }),
+      );
       addUniqueSearchRecords(
         taskResultsById,
-        tasks.map((task) => serializeTaskState(task)),
+        (tasks ?? []).map((task) => serializeTaskState(task)),
         (task) => stringRecordValue(task, "task_id"),
       );
     }
@@ -873,6 +906,7 @@ export class CustomToolExecutor {
       memoryCount: memories.length,
       recurringTaskCount: recurringTasks.length,
       webCount: webResults.length,
+      errorCount: searchErrors.length,
       includeWeb: parsed.include_web ?? false,
     });
 
@@ -891,6 +925,7 @@ export class CustomToolExecutor {
           }
         : undefined,
       web_error: webError,
+      errors: searchErrors.length > 0 ? searchErrors : undefined,
     });
   }
 
@@ -2341,6 +2376,9 @@ function calendarOperationLabel(operation: AppliedCalendarDraftEventResult["oper
 
 function parseJsonToolResult(result: ToolExecutionResult): Record<string, unknown> {
   const text = result.content?.find((block) => block.type === "text")?.text;
+  if (result.isError) {
+    throw new Error(text || "Tool returned an error");
+  }
   if (!text) {
     return {};
   }
@@ -2349,6 +2387,24 @@ function parseJsonToolResult(result: ToolExecutionResult): Record<string, unknow
   return parsed && typeof parsed === "object" && !Array.isArray(parsed)
     ? (parsed as Record<string, unknown>)
     : {};
+}
+
+async function captureContextSearchSource<T>(
+  source: string,
+  query: string | undefined,
+  errors: ContextSearchError[],
+  operation: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await operation();
+  } catch (error) {
+    errors.push({
+      source,
+      query,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
 }
 
 function errorResult(message: string): ToolExecutionResult {

@@ -46,7 +46,7 @@ export function buildContextSearchQueries(query?: string, additionalQueries?: st
   const seen = new Set<string>();
 
   return queries
-    .map((candidate) => candidate.trim().replace(/\s+/g, " "))
+    .map(normalizeContextSearchQuery)
     .filter((candidate) => {
       if (!candidate || seen.has(candidate)) {
         return false;
@@ -54,6 +54,33 @@ export function buildContextSearchQueries(query?: string, additionalQueries?: st
       seen.add(candidate);
       return true;
     });
+}
+
+export function buildFallbackContextSearchQueries(queries: string[], maxQueries = 5): string[] {
+  const existing = new Set(queries.map(normalizeContextSearchQuery));
+  const seen = new Set<string>();
+  const fallbackQueries: string[] = [];
+
+  for (const query of queries) {
+    const normalized = normalizeContextSearchText(query);
+    const matches = normalized.matchAll(/[a-z0-9][a-z0-9_-]*/g);
+
+    for (const match of matches) {
+      const token = normalizeContextSearchQuery(match[0]);
+      if (!isDistinctiveAsciiSearchToken(token) || existing.has(token) || seen.has(token)) {
+        continue;
+      }
+
+      seen.add(token);
+      fallbackQueries.push(token);
+
+      if (fallbackQueries.length >= maxQueries) {
+        return fallbackQueries;
+      }
+    }
+  }
+
+  return fallbackQueries;
 }
 
 export function addUniqueSearchRecords(
@@ -104,4 +131,12 @@ export function buildRecurringTaskSearchText(task: RecurringTask): string {
 
 function normalizeContextSearchText(value: string): string {
   return value.trim().toLocaleLowerCase();
+}
+
+function normalizeContextSearchQuery(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function isDistinctiveAsciiSearchToken(token: string): boolean {
+  return token.length >= 3 && /[a-z0-9]/.test(token);
 }
