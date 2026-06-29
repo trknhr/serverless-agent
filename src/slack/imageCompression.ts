@@ -1,8 +1,10 @@
 import { Jimp, JimpMime } from "jimp";
 
 const defaultMaxDimension = 1280;
-const defaultTargetBytes = 650_000;
-const jpegQualitySteps = [72, 62, 52, 44];
+const defaultMinDimension = 360;
+const defaultTargetBytes = 400_000;
+const jpegQualitySteps = [72, 62, 52, 44, 36, 30];
+const dimensionScale = 0.75;
 
 export interface CompressedSlackImage {
   bytes: Buffer;
@@ -17,6 +19,7 @@ export interface CompressedSlackImage {
 
 export interface CompressSlackImageOptions {
   maxDimension?: number;
+  minDimension?: number;
   targetBytes?: number;
 }
 
@@ -35,35 +38,51 @@ export async function compressSlackImageForModel(
 
   const targetBytes = options.targetBytes ?? defaultTargetBytes;
   const maxDimension = options.maxDimension ?? defaultMaxDimension;
+  const minDimension = Math.min(options.minDimension ?? defaultMinDimension, maxDimension);
   const image = await Jimp.read(input);
   const originalWidth = image.bitmap.width;
   const originalHeight = image.bitmap.height;
 
   resizeToMaxDimension(image, maxDimension);
 
-  let best = await encodeJpeg(image, jpegQualitySteps[0]);
-  for (const quality of jpegQualitySteps) {
-    const candidate = await encodeJpeg(image, quality);
-    best = candidate.byteLength < best.byteLength ? candidate : best;
-    if (candidate.byteLength <= targetBytes) {
-      best = candidate;
-      break;
-    }
-  }
-
-  if (best.byteLength > targetBytes) {
-    resizeToMaxDimension(image, Math.floor(maxDimension * 0.75));
-    for (const quality of jpegQualitySteps.slice(1)) {
+  let best: { bytes: Buffer; width: number; height: number } | undefined;
+  while (true) {
+    for (const quality of jpegQualitySteps) {
       const candidate = await encodeJpeg(image, quality);
-      best = candidate.byteLength < best.byteLength ? candidate : best;
+      if (!best || candidate.byteLength < best.bytes.byteLength) {
+        best = {
+          bytes: candidate,
+          width: image.bitmap.width,
+          height: image.bitmap.height,
+        };
+      }
       if (candidate.byteLength <= targetBytes) {
-        best = candidate;
-        break;
+        return {
+          bytes: candidate,
+          mimeType: "image/jpeg",
+          originalBytes: input.byteLength,
+          compressedBytes: candidate.byteLength,
+          originalWidth,
+          originalHeight,
+          width: image.bitmap.width,
+          height: image.bitmap.height,
+        };
       }
     }
+
+    const currentLongestSide = Math.max(image.bitmap.width, image.bitmap.height);
+    if (currentLongestSide <= minDimension) {
+      break;
+    }
+
+    const nextMaxDimension = Math.max(minDimension, Math.floor(currentLongestSide * dimensionScale));
+    if (nextMaxDimension >= currentLongestSide) {
+      break;
+    }
+    resizeToMaxDimension(image, nextMaxDimension);
   }
 
-  const compressedBytes = Buffer.from(best);
+  const compressedBytes = best?.bytes ?? Buffer.from(await encodeJpeg(image, jpegQualitySteps.at(-1) ?? 30));
   return {
     bytes: compressedBytes,
     mimeType: "image/jpeg",
@@ -71,8 +90,8 @@ export async function compressSlackImageForModel(
     compressedBytes: compressedBytes.byteLength,
     originalWidth,
     originalHeight,
-    width: image.bitmap.width,
-    height: image.bitmap.height,
+    width: best?.width ?? image.bitmap.width,
+    height: best?.height ?? image.bitmap.height,
   };
 }
 

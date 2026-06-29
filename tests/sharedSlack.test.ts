@@ -231,6 +231,42 @@ describe("Slack image compression", () => {
     expect(compressed!.bytes.byteLength).toBe(compressed!.compressedBytes);
   });
 
+  it("keeps reducing large detailed images until they fit the target byte budget", async () => {
+    const image = new Jimp({ width: 1000, height: 750, color: 0xffffffff });
+    for (let y = 0; y < image.bitmap.height; y += 1) {
+      for (let x = 0; x < image.bitmap.width; x += 1) {
+        const value = ((x * 1103515245 + y * 12345) >>> 0) & 0xffffff;
+        image.setPixelColor(((value << 8) | 0xff) >>> 0, x, y);
+      }
+    }
+    const bytes = Buffer.from(await image.getBuffer(JimpMime.png));
+
+    const compressed = await compressSlackImageForModel(bytes, "image/png", {
+      maxDimension: 1000,
+      targetBytes: 120_000,
+    });
+
+    expect(compressed).not.toBeNull();
+    expect(compressed!.compressedBytes).toBeLessThanOrEqual(120_000);
+    expect(Math.max(compressed!.width!, compressed!.height!)).toBeLessThan(750);
+  }, 10_000);
+
+  it("uses a conservative default byte budget for inline model images", async () => {
+    const image = new Jimp({ width: 1600, height: 1200, color: 0xffffffff });
+    for (let y = 0; y < image.bitmap.height; y += 1) {
+      for (let x = 0; x < image.bitmap.width; x += 1) {
+        const value = ((x * 1103515245 + y * 12345) >>> 0) & 0xffffff;
+        image.setPixelColor(((value << 8) | 0xff) >>> 0, x, y);
+      }
+    }
+    const bytes = Buffer.from(await image.getBuffer(JimpMime.png));
+
+    const compressed = await compressSlackImageForModel(bytes, "image/png");
+
+    expect(compressed).not.toBeNull();
+    expect(compressed!.compressedBytes).toBeLessThanOrEqual(400_000);
+  }, 10_000);
+
   it("only treats static web image formats as compressible", async () => {
     expect(isCompressibleSlackImageMimeType("image/jpeg")).toBe(true);
     expect(isCompressibleSlackImageMimeType("image/png")).toBe(true);
