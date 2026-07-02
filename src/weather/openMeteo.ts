@@ -33,6 +33,9 @@ interface OpenMeteoGeocodingResponse {
     country?: string;
     country_code?: string;
     admin1?: string;
+    admin2?: string;
+    admin3?: string;
+    admin4?: string;
     latitude: number;
     longitude: number;
     timezone?: string;
@@ -254,8 +257,38 @@ function scoreGeocodingResult(
   if (original.includes(result.name)) {
     score += 25;
   }
-  score += Math.min((result.population ?? 0) / 100_000, 20);
+  score += scoreRomanizedAdministrativeMatch(result, original);
   return score;
+}
+
+function scoreRomanizedAdministrativeMatch(
+  result: NonNullable<OpenMeteoGeocodingResponse["results"]>[number],
+  original: string,
+): number {
+  const normalizedOriginal = normalizeAsciiMatchText(original);
+  if (!normalizedOriginal || /[一-龯ぁ-んァ-ン]/u.test(original)) {
+    return 0;
+  }
+
+  const adminMatches = [result.admin1, result.admin2, result.admin3, result.admin4]
+    .map((value) => normalizeAsciiMatchText(value))
+    .filter((value): value is string => Boolean(value));
+
+  if (adminMatches.some((value) => value === normalizedOriginal)) {
+    return 45;
+  }
+  if (adminMatches.some((value) => value.startsWith(normalizedOriginal))) {
+    return 60;
+  }
+  if (adminMatches.some((value) => value.includes(normalizedOriginal))) {
+    return 30;
+  }
+  return 0;
+}
+
+function normalizeAsciiMatchText(value?: string): string | undefined {
+  const normalized = value?.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return normalized && /[a-z]/.test(normalized) ? normalized : undefined;
 }
 
 async function fetchForecast(input: {
