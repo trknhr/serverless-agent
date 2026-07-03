@@ -66,6 +66,70 @@ describe("search_context tool", () => {
     });
   });
 
+  it("treats empty task queries as filtered task lists", async () => {
+    const tasks = {
+      list: vi.fn().mockResolvedValue([
+        {
+          workspaceId: "T1",
+          taskId: "task_synthetic_followup",
+          title: "Synthetic follow-up",
+          status: "open",
+          dueAt: "2026-06-05T23:59:00+09:00",
+          updatedAt: "2026-06-05T00:05:00.000Z",
+        },
+      ]),
+      search: vi.fn(),
+    };
+    const memoryItems = {
+      search: vi.fn(),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        tasks,
+        taskEvents: {},
+        memoryItems,
+      } as never,
+      {
+        workspaceId: "T1",
+        userId: "U1",
+        logger: new Logger({ test: "search-context-empty-task-list" }),
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-search-context-empty-task-list",
+      type: "agent.tool_use",
+      name: "search_context",
+      input: {
+        query: "",
+        task_statuses: ["open", "in_progress"],
+        limit: 10,
+      },
+    });
+
+    expect(tasks.list).toHaveBeenCalledWith({
+      workspaceId: "T1",
+      statuses: ["open", "in_progress"],
+      dueBefore: undefined,
+      limit: 10,
+      ownerUserId: "U1",
+    });
+    expect(tasks.search).not.toHaveBeenCalled();
+    expect(memoryItems.search).not.toHaveBeenCalled();
+    expect(toolPayload(result)).toMatchObject({
+      query: "",
+      searched_queries: [],
+      count: 1,
+      tasks: [
+        {
+          task_id: "task_synthetic_followup",
+          title: "Synthetic follow-up",
+          status: "open",
+        },
+      ],
+    });
+  });
+
   it("does not owner-filter task lists for scheduled reminders", async () => {
     const tasks = {
       list: vi.fn().mockResolvedValue([

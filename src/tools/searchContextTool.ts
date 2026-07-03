@@ -3,7 +3,7 @@ import { RecurringTask } from "../tasks/recurringTask";
 
 export const searchContextSchema = z
   .object({
-    query: z.string().min(1).max(400).optional(),
+    query: z.string().max(400).optional(),
     queries: z.array(z.string().min(1).max(400)).max(5).optional(),
     task_statuses: z.array(z.enum(["open", "in_progress", "done", "cancelled"])).optional(),
     task_due_before: z.string().min(1).optional(),

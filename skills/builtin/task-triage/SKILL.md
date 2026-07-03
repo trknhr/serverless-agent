@@ -6,7 +6,7 @@ Use this skill when the user asks about tasks, follow-ups, priorities, status, o
 
 1. Identify concrete action items, owners, due dates, and priority signals from the conversation.
 2. Use `search_context` when the user asks about a named task, keyword, past reminder, deadline, plan, item to bring, tracked duty, saved memory, or current task list.
-3. For broad current-task lists, call `search_context` without `query` and pass `task_statuses` or `task_due_before`.
+3. For broad current-task lists, call `search_context` with `query: ""` or without `query`, and pass `task_statuses` or `task_due_before`.
 4. Use `upsert_task` for durable action items that the user expects to track beyond the current reply.
 5. Use `patch_task` to safely update an existing task after `search_context` identifies a single clear match.
 6. Use `mark_task_done` only when the user clearly says a tracked task is complete.
