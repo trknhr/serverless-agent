@@ -37,6 +37,30 @@ export const customToolDefinitions = [
     },
   },
   {
+    name: "normalize_date",
+    description:
+      "deterministic date normalization for user text, image OCR, PDFs, and document snippets. Use this before answering with, saving, or scheduling a date from extracted text. It keeps original date text separate from the resolved date, validates weekdays, and flags dates before the basis date.",
+    input_schema: {
+      type: "object",
+      properties: {
+        expression: {
+          type: "string",
+          description: "Original date text or short phrase to normalize, such as 7/13, 7月13日, tomorrow, or 今日.",
+          maxLength: 200,
+        },
+        basis_date: {
+          type: "string",
+          description: "Current local date in YYYY-MM-DD used to infer missing years and past/today status.",
+        },
+        timezone: {
+          type: "string",
+          description: "IANA time zone such as Asia/Tokyo. Omit to use the assistant default.",
+        },
+      },
+      required: ["expression"],
+    },
+  },
+  {
     name: "propose_skill",
     description:
       "Create or update a proposed generated skill from a complete SKILL.md document only after explicit confirmation that the user wants a reusable skill draft. Do not call propose_skill based only on inferred intent. This does not enable the skill; ask for approval before calling approve_skill.",

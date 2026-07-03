@@ -30,6 +30,7 @@ import { TaskState, TaskStatus } from "../tasks/taskState";
 import { WeatherForecastProvider } from "../weather/openMeteo";
 import { WebToolProvider } from "../web/webTools";
 import { BrowserProvider, BrowserViewport } from "../browser/provider";
+import { normalizeDateExpression } from "../dates/normalizeDate";
 import {
   addUniqueSearchRecords,
   buildContextSearchQueries,
@@ -58,6 +59,12 @@ const loadSkillSchema = z.object({
 const readAttachmentImageSchema = z.object({
   source_id: z.string().min(1),
   question: z.string().min(1).max(2000).optional(),
+});
+
+const normalizeDateSchema = z.object({
+  expression: z.string().min(1).max(200),
+  basis_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  timezone: z.string().min(1).optional(),
 });
 
 const generatedSkillTestCaseInputSchema = z.object({
@@ -539,6 +546,8 @@ export class CustomToolExecutor {
           return await this.loadSkill(input);
         case "read_attachment_image":
           return await this.readAttachmentImage(input);
+        case "normalize_date":
+          return this.normalizeDate(input);
         case "propose_skill":
           return await this.proposeSkill(input);
         case "approve_skill":
@@ -667,6 +676,17 @@ export class CustomToolExecutor {
         },
       ],
     };
+  }
+
+  private normalizeDate(input: Record<string, unknown>): ToolExecutionResult {
+    const parsed = normalizeDateSchema.parse(input);
+    return jsonResult(
+      normalizeDateExpression({
+        expression: parsed.expression,
+        basisDate: parsed.basis_date,
+        timezone: parsed.timezone ?? this.getDefaultCalendarTimeZone(),
+      }),
+    );
   }
 
   private async loadSkill(input: Record<string, unknown>): Promise<ToolExecutionResult> {
@@ -1041,6 +1061,10 @@ export class CustomToolExecutor {
     const origin = parsed.origin ?? this.context.memoryWritePolicy?.defaultOrigin ?? "explicit";
     const entityKey = normalizeEntityKey(parsed.entity_key);
     const tags = normalizeTags(parsed.tags);
+    const dateValidationError = validateMemoryDateWrite(parsed.text, parsed.attributes);
+    if (dateValidationError) {
+      return errorResult(dateValidationError);
+    }
 
     if (scope === "channel") {
       if (!this.context.channelId || !this.repositories.channelMemories) {
@@ -1375,6 +1399,11 @@ export class CustomToolExecutor {
 
   private async upsertTask(input: Record<string, unknown>): Promise<ToolExecutionResult> {
     const parsed = upsertTaskSchema.parse(input);
+    const dateValidationError = validateTaskDateWrite("upsert_task", parsed.due_at, parsed.metadata);
+    if (dateValidationError) {
+      return errorResult(dateValidationError);
+    }
+
     const existing = parsed.task_id
       ? await this.repositories.tasks.get(this.context.workspaceId, parsed.task_id)
       : null;
@@ -1419,6 +1448,11 @@ export class CustomToolExecutor {
 
   private async patchTask(input: Record<string, unknown>): Promise<ToolExecutionResult> {
     const parsed = patchTaskSchema.parse(input);
+    const dateValidationError = validateTaskDateWrite("patch_task", parsed.due_at, parsed.metadata);
+    if (dateValidationError) {
+      return errorResult(dateValidationError);
+    }
+
     const patch = stripUndefined({
       title: parsed.title,
       description: parsed.description,
@@ -2435,6 +2469,95 @@ function normalizeTags(tags?: string[]): string[] | undefined {
 
   const normalized = [...new Set(tags.map((tag) => tag.trim().toLowerCase().replace(/\s+/g, "_")).filter(Boolean))];
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function validateMemoryDateWrite(text: string, attributes?: Record<string, unknown>): string | undefined {
+  if (!hasExplicitDateReference(text)) {
+    return undefined;
+  }
+
+  const validation = getDateValidation(attributes);
+  if (!validation) {
+    return "save_memory for date-bearing text requires attributes.date_validation from normalize_date.";
+  }
+
+  return validateDateValidationRecord("save_memory", validation);
+}
+
+function validateTaskDateWrite(
+  toolName: "upsert_task" | "patch_task",
+  dueAt?: string,
+  metadata?: Record<string, unknown>,
+): string | undefined {
+  if (!dueAt) {
+    return undefined;
+  }
+
+  const validation = getDateValidation(metadata);
+  if (!validation) {
+    return `${toolName} with due_at requires metadata.date_validation from normalize_date.`;
+  }
+
+  const validationError = validateDateValidationRecord(toolName, validation);
+  if (validationError) {
+    return validationError;
+  }
+
+  const dueDate = extractDatePart(dueAt);
+  const normalizedDate = validationDateValue(validation);
+  if (dueDate && normalizedDate && dueDate !== normalizedDate) {
+    return `${toolName} due_at date (${dueDate}) does not match metadata.date_validation.normalized_date (${normalizedDate}).`;
+  }
+
+  return undefined;
+}
+
+function validateDateValidationRecord(toolName: string, validation: Record<string, unknown>): string | undefined {
+  const normalizedDate = validationDateValue(validation);
+  if (!normalizedDate) {
+    return `${toolName} date_validation must include normalized_date from normalize_date.`;
+  }
+  if (validation.is_past === true && validation.user_confirmed !== true) {
+    return `${toolName} date_validation resolved to a past date; ask the user to confirm before saving or set date_validation.user_confirmed=true after confirmation.`;
+  }
+  if (validation.weekday_matches === false && validation.user_confirmed !== true) {
+    return `${toolName} date_validation found a weekday mismatch; ask the user to confirm before saving or set date_validation.user_confirmed=true after confirmation.`;
+  }
+
+  return undefined;
+}
+
+function getDateValidation(record?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!record) {
+    return undefined;
+  }
+
+  const candidate = record.date_validation ?? record.dateValidation;
+  return isPlainRecord(candidate) ? candidate : undefined;
+}
+
+function validationDateValue(validation: Record<string, unknown>): string | undefined {
+  const value = validation.normalized_date ?? validation.resolved_date;
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined;
+}
+
+function extractDatePart(value: string): string | undefined {
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match?.[1];
+}
+
+function hasExplicitDateReference(value: string): boolean {
+  return (
+    /\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b/.test(value) ||
+    /(?:^|[^\d])\d{1,2}[/-]\d{1,2}(?:[^\d]|$)/.test(value) ||
+    /\d{1,2}月\s*\d{1,2}日/.test(value) ||
+    /\b(?:today|tomorrow|yesterday|next week|last week)\b/i.test(value) ||
+    /今日|明日|昨日|来週|先週/.test(value)
+  );
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function serializeRecurringTaskSearchResult(task: RecurringTask): Record<string, unknown> {

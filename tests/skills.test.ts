@@ -1127,6 +1127,167 @@ describe("load_skill tool", () => {
     expect(executor.getSummary().taskIds).toEqual(["task_alpha"]);
   });
 
+  it("normalizes an explicit date against a stable basis", async () => {
+    const executor = new CustomToolExecutor({} as never, {
+      workspaceId: "T1",
+      userId: "U1",
+      logger,
+    });
+
+    const result = await executor.execute({
+      id: "tool-normalize-date",
+      type: "agent.tool_use",
+      name: "normalize_date",
+      input: {
+        expression: "7/2 (Thu)",
+        basis_date: "2026-07-03",
+        timezone: "Asia/Tokyo",
+      },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse((result.content?.[0] as { text: string }).text)).toMatchObject({
+      original_text: "7/2 (Thu)",
+      normalized_date: "2026-07-02",
+      basis_date: "2026-07-03",
+      timezone: "Asia/Tokyo",
+      is_past: true,
+      weekday_matches: true,
+    });
+  });
+
+  it("requires date validation before saving a dated task", async () => {
+    const tasks = {
+      upsert: vi.fn(),
+    };
+    const taskEvents = {
+      save: vi.fn(),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        tasks,
+        taskEvents,
+      } as never,
+      {
+        workspaceId: "T1",
+        userId: "U1",
+        logger,
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-upsert-without-date-validation",
+      type: "agent.tool_use",
+      name: "upsert_task",
+      input: {
+        title: "Generic event",
+        due_at: "2026-07-02T23:59:00+09:00",
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result.content?.[0] as { text: string }).text).toContain("normalize_date");
+    expect(tasks.upsert).not.toHaveBeenCalled();
+    expect(taskEvents.save).not.toHaveBeenCalled();
+  });
+
+  it("saves a dated task with matching validation metadata", async () => {
+    const tasks = {
+      upsert: vi.fn().mockResolvedValue({
+        workspaceId: "T1",
+        taskId: "task_validated",
+        title: "Generic event",
+        status: "open",
+        dueAt: "2026-07-13T23:59:00+09:00",
+        metadata: {
+          date_validation: {
+            source_text: "7/13",
+            normalized_date: "2026-07-13",
+            basis_date: "2026-07-03",
+            is_past: false,
+            weekday_matches: true,
+          },
+        },
+        updatedAt: "updated",
+      }),
+    };
+    const taskEvents = {
+      save: vi.fn(),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        tasks,
+        taskEvents,
+      } as never,
+      {
+        workspaceId: "T1",
+        userId: "U1",
+        logger,
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-upsert-with-date-validation",
+      type: "agent.tool_use",
+      name: "upsert_task",
+      input: {
+        title: "Generic event",
+        due_at: "2026-07-13T23:59:00+09:00",
+        metadata: {
+          date_validation: {
+            source_text: "7/13",
+            normalized_date: "2026-07-13",
+            basis_date: "2026-07-03",
+            is_past: false,
+            weekday_matches: true,
+          },
+        },
+      },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(tasks.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dueAt: "2026-07-13T23:59:00+09:00",
+        metadata: expect.objectContaining({
+          date_validation: expect.objectContaining({
+            normalized_date: "2026-07-13",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("requires date validation before saving date-bearing memory", async () => {
+    const memoryItems = {
+      save: vi.fn(),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        memoryItems,
+      } as never,
+      {
+        workspaceId: "T1",
+        userId: "U1",
+        logger,
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-save-memory-without-date-validation",
+      type: "agent.tool_use",
+      name: "save_memory",
+      input: {
+        text: "Remember that the generic event is on 7/13.",
+        scope: "workspace",
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result.content?.[0] as { text: string }).text).toContain("date_validation");
+    expect(memoryItems.save).not.toHaveBeenCalled();
+  });
+
   it("infers the scheduled reminder provider when updating the output conversation key", async () => {
     const scheduledTasks = {
       get: vi.fn().mockResolvedValue({

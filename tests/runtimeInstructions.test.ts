@@ -37,6 +37,16 @@ describe("Agent runtime instructions", () => {
     expect(prompt).toContain("source IDs explicitly shown in the current attachment manifest");
   });
 
+  it("requires date normalization before durable date writes", () => {
+    const prompt = buildSystemPrompt("");
+
+    expect(prompt).toContain("normalize_date");
+    expect(prompt).toContain("original date text");
+    expect(prompt).toContain("resolved date");
+    expect(prompt).toContain("Do not call a past date upcoming");
+    expect(prompt).toContain("date_validation");
+  });
+
   it("starts Google Calendar authorization through the dedicated tool", () => {
     const prompt = buildSystemPrompt("");
 

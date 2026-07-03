@@ -54,7 +54,9 @@ export class ModelAttachmentImageAnalyzer implements AttachmentImageAnalyzer {
       model: this.input.modelProvider(this.input.modelId),
       system:
         "You answer questions about a single user-provided image. Use only the image content. " +
-        "If text is visible, transcribe it as accurately as possible. If the image is unreadable, say so.",
+        "If text is visible, transcribe it as accurately as possible. " +
+        "When text contains dates, keep the original wording and do not infer whether the date is past or upcoming. " +
+        "If the image is unreadable, say so.",
       messages: [
         {
           role: "user",

@@ -105,4 +105,18 @@ describe("tool definitions", () => {
       type: "string",
     });
   });
+
+  it("exposes deterministic date normalization", () => {
+    const normalizeDate = toolDefinition("normalize_date");
+
+    expect(normalizeDate.description).toContain("deterministic");
+    expect(normalizeDate.description).toContain("original date text");
+    expect(normalizeDate.input_schema.required).toEqual(["expression"]);
+    expect(normalizeDate.input_schema.properties.expression).toMatchObject({
+      type: "string",
+    });
+    expect(normalizeDate.input_schema.properties.basis_date).toMatchObject({
+      type: "string",
+    });
+  });
 });
