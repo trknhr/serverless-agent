@@ -92,7 +92,7 @@ export async function handler(event: SQSEvent): Promise<void> {
       source: "line",
       sourceEvent: "line_message",
       messageTs: queueMessage.messageTs,
-      turnTs: queueMessage.messageTs,
+      turnTs: createLineUserTurnTs(queueMessage.receivedAt, queueMessage.messageTs),
       userId: queueMessage.userId,
       text: queueMessage.text,
     });
@@ -137,6 +137,7 @@ export async function handler(event: SQSEvent): Promise<void> {
     await lineClient.pushText(queueMessage.responseTargetId, completionText);
 
     const assistantMessageTs = createSyntheticLineTs();
+    const assistantTurnTs = createLineTurnTs(new Date(), assistantMessageTs);
     await conversationTurnRepository.save({
       workspaceId: queueMessage.workspaceId,
       channelId: queueMessage.channelId,
@@ -146,7 +147,7 @@ export async function handler(event: SQSEvent): Promise<void> {
       source: "line",
       sourceEvent: "line_assistant_reply",
       messageTs: assistantMessageTs,
-      turnTs: assistantMessageTs,
+      turnTs: assistantTurnTs,
       text: completionText,
     });
 
@@ -232,4 +233,18 @@ function createConversationSession(
 
 function createSyntheticLineTs(): string {
   return `${Date.now()}.${Math.floor(Math.random() * 1_000_000).toString().padStart(6, "0")}`;
+}
+
+function createLineUserTurnTs(receivedAt: string, messageTs: string): string {
+  const receivedAtDate = new Date(receivedAt);
+  const date = Number.isNaN(receivedAtDate.getTime()) ? new Date() : receivedAtDate;
+  return createLineTurnTs(date, messageTs);
+}
+
+function createLineTurnTs(date: Date, discriminator: string): string {
+  return `LINE#${date.toISOString()}#${sanitizeLineTurnTsDiscriminator(discriminator)}`;
+}
+
+function sanitizeLineTurnTsDiscriminator(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._:-]+/g, "_") || "turn";
 }

@@ -122,21 +122,16 @@ export class SlackFilesClient {
     );
 
     for (const attachment of attachments.slice(0, maxInlineFiles)) {
-      const modelBytes = attachment.modelContentBytes ?? attachment.contentBytes;
-      if (attachment.status === "ready" && isCompressibleSlackImageMimeType(attachment.modelMimeType ?? attachment.mimeType)) {
-        if (modelBytes && modelBytes.byteLength <= maxInlineBase64Bytes) {
-          blocks.push(...attachment.contentBlocks);
-        } else {
-          blocks.push({
-            type: "text",
-            text: `Attachment note: ${attachment.label} could not be attached inline because it was too large after image compression.`,
-          });
-        }
-        continue;
-      }
-
       const document = documentsByFileId.get(attachment.file.id);
       if (document?.status === "archived" && document.s3Bucket && document.s3Key) {
+        if (isArchivedImage(document, attachment)) {
+          blocks.push({
+            type: "text",
+            text: buildSlackImageAttachmentManifestLine(attachment.label, document.sourceId),
+          });
+          continue;
+        }
+
         try {
           const url = await input.presignUrl(document);
           blocks.push(...buildAgentContentBlocksForDocumentUrl(attachment.label, attachment.mimeType, url));
@@ -150,6 +145,19 @@ export class SlackFilesClient {
           });
           continue;
         }
+      }
+
+      const modelBytes = attachment.modelContentBytes ?? attachment.contentBytes;
+      if (attachment.status === "ready" && isCompressibleSlackImageMimeType(attachment.modelMimeType ?? attachment.mimeType)) {
+        if (modelBytes && modelBytes.byteLength <= maxInlineBase64Bytes) {
+          blocks.push(...attachment.contentBlocks);
+        } else {
+          blocks.push({
+            type: "text",
+            text: `Attachment note: ${attachment.label} could not be attached inline because it was too large after image compression.`,
+          });
+        }
+        continue;
       }
 
       if (modelBytes && modelBytes.byteLength > maxInlineBase64Bytes) {
@@ -383,4 +391,14 @@ async function buildModelInputContent(
     bytes: buffer,
     mimeType,
   };
+}
+
+function isArchivedImage(document: SourceDocument, attachment: PreparedSlackAttachment): boolean {
+  const mimeType = document.mimeType ?? attachment.modelMimeType ?? attachment.mimeType;
+  return mimeType?.startsWith("image/") ?? false;
+}
+
+function buildSlackImageAttachmentManifestLine(label: string, sourceId: string): string {
+  const safeLabel = label.replace(/\s+/g, " ").trim() || sourceId;
+  return `Available image attachment: Slack image ${safeLabel} sourceId=${sourceId}. Use read_attachment_image with this sourceId only when the current user request needs the image.`;
 }

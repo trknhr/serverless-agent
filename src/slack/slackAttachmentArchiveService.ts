@@ -38,6 +38,7 @@ export class SlackAttachmentArchiveService {
   ): Promise<SourceDocument> {
     const sourceId = `src_${randomUUID()}`;
     const now = new Date().toISOString();
+    const archivePayload = selectArchivePayload(attachment);
     const baseDocument: SourceDocument = {
       sourceId,
       workspaceId: input.workspaceId,
@@ -50,27 +51,27 @@ export class SlackAttachmentArchiveService {
       threadTs: input.threadTs,
       messageTs: input.messageTs,
       uploadedByUserId: input.userId,
-      mimeType: attachment.mimeType,
-      size: attachment.contentBytes?.byteLength ?? attachment.file.size,
+      mimeType: archivePayload?.mimeType ?? attachment.mimeType,
+      size: archivePayload?.bytes.byteLength ?? attachment.contentBytes?.byteLength ?? attachment.file.size,
       status: mapAttachmentStatus(attachment.status),
       createdAt: now,
       updatedAt: now,
     };
 
-    if (attachment.status !== "ready" || !attachment.contentBytes) {
+    if (attachment.status !== "ready" || !archivePayload) {
       return this.persistDocument(baseDocument, input.logger);
     }
 
-    const checksum = createHash("sha256").update(attachment.contentBytes).digest("hex");
-    const s3Key = buildS3Key(input.workspaceId, sourceId, attachment.label, attachment.mimeType, now);
+    const checksum = createHash("sha256").update(archivePayload.bytes).digest("hex");
+    const s3Key = buildS3Key(input.workspaceId, sourceId, archivePayload.label, archivePayload.mimeType, now);
 
     try {
       await this.s3.send(
         new PutObjectCommand({
           Bucket: this.bucketName,
           Key: s3Key,
-          Body: attachment.contentBytes,
-          ContentType: attachment.mimeType,
+          Body: archivePayload.bytes,
+          ContentType: archivePayload.mimeType,
           Metadata: {
             source_id: sourceId,
             workspace_id: input.workspaceId,
@@ -162,4 +163,41 @@ function sanitizeFileName(label: string, sourceId: string, mimeType?: string): s
   const safeBase = normalized.length > 0 ? normalized : sourceId;
   const hasExtension = /\.[a-zA-Z0-9]+$/.test(safeBase);
   return hasExtension ? safeBase : `${safeBase}${defaultExtensionForMimeType(mimeType)}`;
+}
+
+interface ArchivePayload {
+  bytes: Buffer;
+  mimeType?: string;
+  label: string;
+}
+
+function selectArchivePayload(attachment: PreparedSlackAttachment): ArchivePayload | undefined {
+  if (!attachment.contentBytes) {
+    return undefined;
+  }
+
+  if (attachment.modelContentBytes && attachment.modelMimeType?.startsWith("image/")) {
+    return {
+      bytes: attachment.modelContentBytes,
+      mimeType: attachment.modelMimeType,
+      label: replaceExtensionForMimeType(attachment.label, attachment.modelMimeType),
+    };
+  }
+
+  return {
+    bytes: attachment.contentBytes,
+    mimeType: attachment.mimeType,
+    label: attachment.label,
+  };
+}
+
+function replaceExtensionForMimeType(label: string, mimeType?: string): string {
+  const extension = defaultExtensionForMimeType(mimeType);
+  const trimmed = label.trim();
+  if (!extension || !trimmed) {
+    return label;
+  }
+
+  const withoutExtension = trimmed.replace(/\.[a-zA-Z0-9]+$/, "");
+  return `${withoutExtension || trimmed}${extension}`;
 }

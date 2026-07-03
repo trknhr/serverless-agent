@@ -129,6 +129,7 @@ export async function handler(event: SQSEvent): Promise<void> {
         presignUrl: presignSourceDocument,
       },
     );
+    const attachmentSourceIds = listReadableImageAttachmentSourceIds(archivedDocuments);
 
     const priorTurns =
       queueMessage.contextScope === "thread"
@@ -170,6 +171,7 @@ export async function handler(event: SQSEvent): Promise<void> {
         receivedAt: queueMessage.receivedAt,
         timeZone: "Asia/Tokyo",
       }),
+      attachmentSourceIds,
       log,
       userTurnId: userTurn.turnId,
     });
@@ -282,6 +284,7 @@ async function invokeAgentOrRespondWithError(input: {
   sessionRecord: ConversationSessionRecord;
   thinkingMessageTs?: string;
   content: ReturnType<typeof buildSlackContextBlocks>;
+  attachmentSourceIds: string[];
   log: ReturnType<typeof logger.child>;
   userTurnId: string;
 }): Promise<AgentRunResult | null> {
@@ -308,6 +311,7 @@ async function invokeAgentOrRespondWithError(input: {
           workspaceId: input.queueMessage.workspaceId,
           userId: input.queueMessage.userId,
           channelId: input.queueMessage.channelId,
+          attachmentSourceIds: input.attachmentSourceIds,
           memoryWritePolicy: {
             allowWorkspaceMemory: false,
             channelInferredStatus: "candidate",
@@ -384,6 +388,18 @@ async function invokeAgentOrRespondWithError(input: {
 
     return null;
   }
+}
+
+function listReadableImageAttachmentSourceIds(documents: SourceDocument[]): string[] {
+  return documents
+    .filter(
+      (document) =>
+        document.status === "archived" &&
+        Boolean(document.s3Bucket) &&
+        Boolean(document.s3Key) &&
+        Boolean(document.mimeType?.startsWith("image/")),
+    )
+    .map((document) => document.sourceId);
 }
 
 async function updateSlackDisplayedOutputTrace(input: {

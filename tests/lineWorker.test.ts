@@ -104,6 +104,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
   process.env = { ...originalEnv };
 });
 
@@ -216,6 +217,22 @@ describe("LINE events worker", () => {
     );
     expect(JSON.stringify(invokeInput.request.content)).not.toContain("base64");
     expect(mocks.linePushText).toHaveBeenCalledWith("line-target-G1", "Agent reply.");
+
+    const [savedUserTurn, savedAssistantTurn] = mocks.conversationTurnsSave.mock.calls.map(
+      ([turn]) => turn,
+    );
+    expect(savedUserTurn).toMatchObject({
+      role: "user",
+      messageTs: "1710000000000",
+      turnTs: "LINE#2026-06-05T00:00:00.000Z#1710000000000",
+    });
+    expect(savedAssistantTurn).toMatchObject({
+      role: "assistant",
+      sourceEvent: "line_assistant_reply",
+      messageTs: expect.stringMatching(/^\d+\.\d{6}$/),
+      turnTs: expect.stringMatching(/^LINE#\d{4}-\d{2}-\d{2}T.*Z#\d+\.\d{6}$/),
+    });
+    expect(savedAssistantTurn.turnTs).toContain(savedAssistantTurn.messageTs);
   });
 });
 

@@ -411,17 +411,9 @@ describe("SlackFilesClient", () => {
     ).toEqual([{ type: "text", text: "one" }]);
   });
 
-  it("uses compressed inline content for archived image attachments", async () => {
+  it("uses archived source IDs instead of inline base64 for archived image attachments", async () => {
     const client = new SlackFilesClient(async () => "token", 10);
     const presignUrl = vi.fn().mockResolvedValue("https://archive/image");
-    const imageBlock = {
-      type: "image" as const,
-      source: {
-        type: "base64" as const,
-        media_type: "image/jpeg",
-        data: Buffer.from("small").toString("base64"),
-      },
-    };
 
     await expect(
       client.buildContentBlocksFromArchive(
@@ -434,7 +426,17 @@ describe("SlackFilesClient", () => {
             status: "ready",
             contentBytes: Buffer.from("large original"),
             modelContentBytes: Buffer.from("small"),
-            contentBlocks: [{ type: "text", text: "Attached image: photo.jpg" }, imageBlock],
+            contentBlocks: [
+              { type: "text", text: "Attached image: photo.jpg" },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: Buffer.from("small").toString("base64"),
+                },
+              },
+            ],
           },
         ],
         [
@@ -445,6 +447,8 @@ describe("SlackFilesClient", () => {
             sourceRef: "F1",
             title: "photo.jpg",
             slackFileId: "F1",
+            mimeType: "image/jpeg",
+            size: 5,
             s3Bucket: "bucket",
             s3Key: "raw/private/slack/T1/src_1/photo.jpg",
             status: "archived",
@@ -454,7 +458,12 @@ describe("SlackFilesClient", () => {
         ],
         { presignUrl },
       ),
-    ).resolves.toEqual([{ type: "text", text: "Attached image: photo.jpg" }, imageBlock]);
+    ).resolves.toEqual([
+      {
+        type: "text",
+        text: "Available image attachment: Slack image photo.jpg sourceId=src_1. Use read_attachment_image with this sourceId only when the current user request needs the image.",
+      },
+    ]);
     expect(presignUrl).not.toHaveBeenCalled();
   });
 });
@@ -560,6 +569,51 @@ describe("SlackAttachmentArchiveService", () => {
         checksum: "c35b21d6ca39aa7cc3b79a705d989f1a6e88b99ab43988d74048799e3db926a3",
         s3Bucket: "bucket",
         sourceRef: "https://slack/files/F1",
+      }),
+    );
+  });
+
+  it("uploads compressed model bytes for ready image attachments", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T00:00:00Z"));
+    s3SendMock.mockResolvedValueOnce({});
+    const repository = { save: vi.fn().mockResolvedValue(undefined) };
+    const logger = { warn: vi.fn() };
+    const service = new SlackAttachmentArchiveService("bucket", repository as any);
+
+    await service.archiveAttachments({
+      workspaceId: "T1",
+      channelId: "C1",
+      threadTs: "100",
+      messageTs: "101",
+      userId: "U1",
+      logger: logger as any,
+      attachments: [
+        {
+          file: { id: "F1", size: 14 },
+          label: "photo.heic",
+          mimeType: "image/heic",
+          modelMimeType: "image/jpeg",
+          status: "ready",
+          contentBytes: Buffer.from("large original"),
+          modelContentBytes: Buffer.from("small"),
+          contentBlocks: [],
+        },
+      ],
+    });
+
+    expect(s3SendMock.mock.calls[0][0].input).toMatchObject({
+      Bucket: "bucket",
+      Key: expect.stringMatching(/^raw\/private\/slack\/T1\/2026\/05\/src_.+\/photo\.jpg$/),
+      Body: Buffer.from("small"),
+      ContentType: "image/jpeg",
+    });
+    expect(repository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "archived",
+        mimeType: "image/jpeg",
+        size: 5,
+        checksum: "81db8ebbbbc69c6c6ad4a6aa92b76e0c08af547da236b9e2c9dbe1d8285a8130",
       }),
     );
   });
