@@ -99,6 +99,7 @@ export class ConversationTurnRepository {
     limit: number,
   ): Promise<ConversationTurnRecord[]> {
     const boundedLimit = Math.min(Math.max(limit, 1), 50);
+    const fetchLimit = Math.min(Math.max(boundedLimit * 5, boundedLimit), 50);
     const response = await documentClient.send(
       new QueryCommand({
         TableName: this.tableName,
@@ -108,13 +109,14 @@ export class ConversationTurnRepository {
           ":gsi1pk": buildChannelScopeGsiPk(workspaceId, channelId, "channel_top_level"),
         },
         ScanIndexForward: false,
-        Limit: boundedLimit,
+        Limit: fetchLimit,
       }),
     );
 
     return (response.Items ?? [])
       .map((item) => this.mapItem(item))
-      .reverse();
+      .sort(compareTurnsByCreatedAt)
+      .slice(-boundedLimit);
   }
 
   private mapItem(item: Record<string, unknown>): ConversationTurnRecord {
@@ -135,4 +137,12 @@ export class ConversationTurnRepository {
       createdAt: item.created_at as string,
     };
   }
+}
+
+function compareTurnsByCreatedAt(left: ConversationTurnRecord, right: ConversationTurnRecord): number {
+  const createdCompare = left.createdAt.localeCompare(right.createdAt);
+  if (createdCompare !== 0) {
+    return createdCompare;
+  }
+  return left.turnTs.localeCompare(right.turnTs);
 }

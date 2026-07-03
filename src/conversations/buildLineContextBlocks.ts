@@ -85,14 +85,31 @@ function renderTurn(index: number, turn: ConversationTurnRecord): string {
       : turn.userId
         ? `user:${turn.userId}`
         : turn.role;
-  return `${index + 1}. ${actor}: ${truncateTurnText(turn.text)}`;
+  return `${index + 1}. ${actor}: ${truncateTurnText(stripArchivedAttachmentManifest(turn.text))}`;
 }
 
 function truncateTurnText(text: string, maxLength = 1200): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
+  const normalized = text.replace(/\s+/g, " ").trim() || "[attachment omitted]";
   if (normalized.length <= maxLength) {
     return normalized;
   }
 
   return `${normalized.slice(0, maxLength - 1)}...`;
+}
+
+function stripArchivedAttachmentManifest(text: string): string {
+  return text
+    .split(/\n+/)
+    .filter((line) => !isArchivedAttachmentManifestLine(line))
+    .join("\n")
+    .trim();
+}
+
+function isArchivedAttachmentManifestLine(line: string): boolean {
+  return (
+    line.includes("Available image attachment: LINE image") ||
+    line.includes("Use read_attachment_image with this sourceId") ||
+    line.includes("Use the source document tool to inspect it") ||
+    /\bsourceId=src_[a-zA-Z0-9-]+\b/.test(line)
+  );
 }

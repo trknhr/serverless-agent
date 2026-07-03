@@ -1,4 +1,5 @@
 import type { SQSEvent } from "aws-lambda";
+import { AgentContentBlock } from "../../agent/types";
 import { AgentCoreRuntimeClient } from "../../agentcore/client";
 import { buildAgentRuntimeResources } from "../../agentcore/contracts";
 import { SecretsProvider } from "../../aws/secretsProvider";
@@ -73,8 +74,8 @@ export async function handler(event: SQSEvent): Promise<void> {
       ttlSeconds: 86_400,
       maxImages: 3,
     });
-    const attachmentBlocks = archivedAttachments.manifestBlocks;
-    const attachmentSourceIds = archivedAttachments.documents
+    const currentAttachmentBlocks = archivedAttachments.manifestBlocks;
+    const currentAttachmentSourceIds = archivedAttachments.documents
       .filter((document) => document.status === "archived" && document.s3Bucket && document.s3Key)
       .map((document) => document.sourceId);
     const priorTurns = await conversationTurnRepository.listRecentChannelTopLevelTurns(
@@ -82,6 +83,8 @@ export async function handler(event: SQSEvent): Promise<void> {
       queueMessage.channelId,
       env.TOP_LEVEL_CONTEXT_TURN_LIMIT,
     );
+    const attachmentBlocks = currentAttachmentBlocks;
+    const attachmentSourceIds = currentAttachmentSourceIds;
 
     const userTurn = await conversationTurnRepository.save({
       workspaceId: queueMessage.workspaceId,
@@ -94,7 +97,7 @@ export async function handler(event: SQSEvent): Promise<void> {
       messageTs: queueMessage.messageTs,
       turnTs: createLineUserTurnTs(queueMessage.receivedAt, queueMessage.messageTs),
       userId: queueMessage.userId,
-      text: queueMessage.text,
+      text: buildLineUserTurnText(queueMessage.text, currentAttachmentBlocks),
     });
 
     const completion = await agentClient.invoke({
@@ -247,4 +250,14 @@ function createLineTurnTs(date: Date, discriminator: string): string {
 
 function sanitizeLineTurnTsDiscriminator(value: string): string {
   return value.replace(/[^a-zA-Z0-9._:-]+/g, "_") || "turn";
+}
+
+function buildLineUserTurnText(text: string, attachmentBlocks: AgentContentBlock[]): string {
+  const manifestText = attachmentBlocks
+    .filter((block): block is Extract<AgentContentBlock, { type: "text" }> => block.type === "text")
+    .map((block) => block.text)
+    .filter((blockText) => blockText.includes("Available image attachment: LINE image"))
+    .join("\n");
+
+  return [text, manifestText].filter(Boolean).join("\n");
 }

@@ -1459,7 +1459,62 @@ describe("conversation turn repository", () => {
 
     sendMock.mockResolvedValueOnce({ Items: [] });
     await expect(repo.listRecentChannelTopLevelTurns("T1", "C1", 0)).resolves.toEqual([]);
-    expect(commandInput(2)).toMatchObject({ Limit: 1 });
+    expect(commandInput(2)).toMatchObject({ Limit: 5 });
+  });
+
+  it("sorts recent top-level turns by creation time after overfetching mixed sort keys", async () => {
+    const repo = new ConversationTurnRepository("turns");
+    const baseItem = {
+      workspace_id: "T1",
+      channel_id: "C1",
+      conversation_ts: "100",
+      context_scope: "channel_top_level",
+      source: "line",
+      source_event: "line_message",
+      message_ts: "621106298603963083",
+      user_id: "U1",
+      text: "base",
+    };
+    const olderUser = {
+      ...baseItem,
+      turn_id: "older-user",
+      role: "user",
+      turn_ts: "621106298603963083",
+      created_at: "2026-07-03T00:45:08.004Z",
+      text: "remember this",
+    };
+    const middleUser = {
+      ...baseItem,
+      turn_id: "middle-user",
+      role: "user",
+      message_ts: "621106565746786307",
+      turn_ts: "621106565746786307",
+      created_at: "2026-07-03T00:47:46.643Z",
+      text: "middle message",
+    };
+    const latestAssistant = {
+      ...baseItem,
+      turn_id: "latest-assistant",
+      role: "assistant",
+      source_event: "line_assistant_reply",
+      message_ts: "1783039670907.414355",
+      turn_ts: "1783039670907.414355",
+      created_at: "2026-07-03T00:47:50.907Z",
+      text: "assistant answer",
+    };
+
+    sendMock.mockResolvedValueOnce({
+      Items: [middleUser, olderUser, latestAssistant],
+    });
+
+    await expect(repo.listRecentChannelTopLevelTurns("T1", "C1", 2)).resolves.toMatchObject([
+      { turnId: "middle-user" },
+      { turnId: "latest-assistant" },
+    ]);
+    expect(commandInput()).toMatchObject({
+      Limit: 10,
+      ScanIndexForward: false,
+    });
   });
 });
 

@@ -261,6 +261,38 @@ describe("LINE conversation prompt blocks", () => {
     expect(text).toContain("Current user message:\nwhat changed?");
     expect(attachmentBlock).toEqual({ type: "text", text: "Attached image: img-1" });
   });
+
+  it("omits archived attachment manifests from prior chat context", () => {
+    const [promptBlock] = buildLineContextBlocks({
+      currentText: "continue",
+      priorTurns: [
+        {
+          turnId: "turn-1",
+          workspaceId: "line:user:U1",
+          channelId: "line:user:U1",
+          conversationTs: "line:user:U1",
+          contextScope: "channel_top_level",
+          role: "user",
+          source: "line",
+          sourceEvent: "line_message",
+          messageTs: "1",
+          turnTs: "1",
+          userId: "U1",
+          text: [
+            "Please inspect the attached file.",
+            "Available image attachment: LINE image img-1 sourceId=src_previous expiresAt=2026-06-06T00:00:00.000Z.",
+            "Use read_attachment_image with this sourceId only when the current user request needs the image.",
+          ].join("\n"),
+          createdAt: "created",
+        },
+      ],
+    });
+
+    expect(promptBlock.text).toContain("Please inspect the attached file.");
+    expect(promptBlock.text).not.toContain("src_previous");
+    expect(promptBlock.text).not.toContain("Available image attachment");
+    expect(promptBlock.text).not.toContain("read_attachment_image");
+  });
 });
 
 describe("LINE messaging client", () => {

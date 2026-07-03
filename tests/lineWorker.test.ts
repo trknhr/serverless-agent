@@ -226,6 +226,8 @@ describe("LINE events worker", () => {
       messageTs: "1710000000000",
       turnTs: "LINE#2026-06-05T00:00:00.000Z#1710000000000",
     });
+    expect(savedUserTurn.text).toContain("What is in this image?");
+    expect(savedUserTurn.text).toContain("sourceId=src_archived");
     expect(savedAssistantTurn).toMatchObject({
       role: "assistant",
       sourceEvent: "line_assistant_reply",
@@ -233,6 +235,49 @@ describe("LINE events worker", () => {
       turnTs: expect.stringMatching(/^LINE#\d{4}-\d{2}-\d{2}T.*Z#\d+\.\d{6}$/),
     });
     expect(savedAssistantTurn.turnTs).toContain(savedAssistantTurn.messageTs);
+  });
+
+  it("does not inject previous LINE image manifests into text-only requests", async () => {
+    mocks.conversationTurnsListRecent.mockResolvedValueOnce([
+      {
+        turnId: "turn-image",
+        workspaceId: "ws_1",
+        channelId: "line:group:G1",
+        conversationTs: "line:group:G1",
+        contextScope: "channel_top_level",
+        role: "user",
+        source: "line",
+        sourceEvent: "line_message",
+        messageTs: "img-1",
+        turnTs: "LINE#2026-06-05T00:00:00.000Z#img-1",
+        userId: "line:user:U1",
+        text: [
+          "The user sent image attachment(s) without text.",
+          "Available image attachment: LINE image img-1 sourceId=src_recent expiresAt=2026-06-06T00:00:00.000Z.",
+          "Use read_attachment_image with this sourceId only when the current user request needs the image.",
+        ].join("\n"),
+        createdAt: "2026-06-05T00:00:00.000Z",
+      },
+    ]);
+    const { handler } = await import("../src/functions/line-events-worker/index");
+
+    await handler({
+      Records: [
+        {
+          body: JSON.stringify(
+            lineQueueMessage({
+              text: "Remember this image",
+              attachments: [],
+              messageTs: "text-1",
+            }),
+          ),
+        },
+      ],
+    } as any);
+
+    const invokeInput = mocks.agentInvoke.mock.calls[0][0];
+    expect(invokeInput.request.toolContext.attachmentSourceIds).toEqual([]);
+    expect(JSON.stringify(invokeInput.request.content)).not.toContain("src_recent");
   });
 });
 
