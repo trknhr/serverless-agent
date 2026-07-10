@@ -20,6 +20,7 @@
     "ingest-markdown": "ts-node scripts/ingest-markdown.ts",
     "extract-pdf-markdown": "ts-node scripts/extract-pdf-markdown.ts",
     "put-provider-binding": "ts-node scripts/put-provider-binding.ts",
+    "repair:dynamodb": "ts-node scripts/repair-dynamodb.ts",
     "ask-agent": "ts-node scripts/ask-agent.ts",
     "dev:chat": "ts-node scripts/dev-chat.ts"
   },

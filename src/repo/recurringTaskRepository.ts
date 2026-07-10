@@ -55,24 +55,29 @@ export class RecurringTaskRepository {
   }
 
   async upsert(
-    task: Omit<RecurringTask, "createdAt" | "updatedAt" | "dueTime" | "timezone" | "enabled"> &
-      Partial<Pick<RecurringTask, "dueTime" | "timezone" | "enabled">>,
+    task: Omit<
+      RecurringTask,
+      "createdAt" | "updatedAt" | "dueTime" | "timezone" | "enabled" | "leadTimeDays"
+    > &
+      Partial<Pick<RecurringTask, "dueTime" | "timezone" | "enabled" | "leadTimeDays">>,
   ): Promise<RecurringTask> {
     const existing = await this.get(task.workspaceId, task.recurringTaskId);
     const now = new Date().toISOString();
-    const record: RecurringTask = {
+    const record = recurringTaskSchema.parse({
       ...existing,
       ...task,
       recurrence: {
         ...existing?.recurrence,
         ...task.recurrence,
       },
+      leadTimeDays: task.leadTimeDays ?? existing?.leadTimeDays ?? 0,
+      dayOfTask: task.dayOfTask ?? existing?.dayOfTask,
       dueTime: task.dueTime ?? existing?.dueTime ?? "23:59",
       timezone: task.timezone ?? existing?.timezone ?? "Asia/Tokyo",
       enabled: task.enabled ?? existing?.enabled ?? true,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
-    };
+    });
 
     await documentClient.send(
       new PutCommand({
@@ -85,6 +90,8 @@ export class RecurringTaskRepository {
           title: record.title,
           description: record.description,
           recurrence: record.recurrence,
+          leadTimeDays: record.leadTimeDays,
+          dayOfTask: record.dayOfTask,
           dueTime: record.dueTime,
           timezone: record.timezone,
           enabled: record.enabled,

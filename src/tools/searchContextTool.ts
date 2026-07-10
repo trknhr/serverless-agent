@@ -122,6 +122,8 @@ export function buildRecurringTaskSearchText(task: RecurringTask): string {
       task.sourceType,
       task.sourceRef,
       JSON.stringify(task.recurrence),
+      String(task.leadTimeDays ?? 0),
+      task.dayOfTask ? JSON.stringify(task.dayOfTask) : undefined,
       task.metadata ? JSON.stringify(task.metadata) : undefined,
     ]
       .filter(Boolean)

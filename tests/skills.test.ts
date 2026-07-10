@@ -1288,6 +1288,425 @@ describe("load_skill tool", () => {
     expect(memoryItems.save).not.toHaveBeenCalled();
   });
 
+  it("creates a yearly recurring task with lead time and a day-of action", async () => {
+    const recurringTasks = {
+      upsert: vi.fn().mockImplementation(async (input) => ({
+        ...input,
+        leadTimeDays: input.leadTimeDays ?? 0,
+        dueTime: input.dueTime ?? "23:59",
+        timezone: input.timezone ?? "Asia/Tokyo",
+        enabled: true,
+        createdAt: "created",
+        updatedAt: "updated",
+      })),
+    };
+    const executor = new CustomToolExecutor(
+      { recurringTasks } as never,
+      {
+        workspaceId: "T1",
+        userId: "U1",
+        logger,
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-yearly-family-day",
+      type: "agent.tool_use",
+      name: "upsert_recurring_task",
+      input: {
+        recurring_task_id: "rt_fathers_day",
+        title: "父の日プレゼント準備",
+        recurrence: {
+          frequency: "yearly",
+          month_of_year: 6,
+          days_of_week: ["sunday"],
+          week_of_month: 3,
+        },
+        lead_time_days: 7,
+        day_of_task: {
+          title: "父の日当日メッセージ",
+          due_time: "09:00",
+        },
+      },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(recurringTasks.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recurringTaskId: "rt_fathers_day",
+        recurrence: expect.objectContaining({
+          frequency: "yearly",
+          monthOfYear: 6,
+          daysOfWeek: ["sunday"],
+          weekOfMonth: 3,
+        }),
+        leadTimeDays: 7,
+        dayOfTask: expect.objectContaining({
+          enabled: true,
+          title: "父の日当日メッセージ",
+          dueTime: "09:00",
+        }),
+      }),
+    );
+    expect(JSON.parse((result.content?.[0] as { text: string }).text)).toMatchObject({
+      recurring_task_id: "rt_fathers_day",
+      recurrence: { frequency: "yearly", month_of_year: 6 },
+      lead_time_days: 7,
+      day_of_task: { title: "父の日当日メッセージ", due_time: "09:00" },
+    });
+  });
+
+  it("preserves the legacy generated ID when new recurrence fields are at their defaults", async () => {
+    const recurringTasks = {
+      upsert: vi.fn().mockImplementation(async (input) => ({
+        ...input,
+        leadTimeDays: input.leadTimeDays ?? 0,
+        dueTime: input.dueTime ?? "23:59",
+        timezone: input.timezone ?? "Asia/Tokyo",
+        enabled: true,
+        createdAt: "created",
+        updatedAt: "updated",
+      })),
+    };
+    const executor = new CustomToolExecutor({ recurringTasks } as never, {
+      workspaceId: "T1",
+      userId: "U1",
+      logger,
+    });
+
+    await executor.execute({
+      id: "tool-legacy-recurring-id",
+      type: "agent.tool_use",
+      name: "upsert_recurring_task",
+      input: {
+        title: "Daily standup",
+        recurrence: { frequency: "daily" },
+      },
+    });
+
+    expect(recurringTasks.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ recurringTaskId: "rt_52a308fb2834033e", leadTimeDays: undefined }),
+    );
+  });
+
+  it("allows a day-of update to inherit the existing lead time", async () => {
+    const recurringTasks = {
+      upsert: vi.fn().mockImplementation(async (input) => ({
+        ...input,
+        leadTimeDays: 7,
+        dueTime: "23:59",
+        timezone: "Asia/Tokyo",
+        enabled: true,
+        createdAt: "created",
+        updatedAt: "updated",
+      })),
+    };
+    const executor = new CustomToolExecutor({ recurringTasks } as never, {
+      workspaceId: "T1",
+      userId: "U1",
+      logger,
+    });
+
+    const result = await executor.execute({
+      id: "tool-update-day-of",
+      type: "agent.tool_use",
+      name: "upsert_recurring_task",
+      input: {
+        recurring_task_id: "rt_existing",
+        title: "Prepare",
+        recurrence: {
+          frequency: "yearly",
+          month_of_year: 5,
+          days_of_week: ["sunday"],
+          week_of_month: 2,
+        },
+        day_of_task: { title: "Updated same-day message" },
+      },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(recurringTasks.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recurringTaskId: "rt_existing",
+        leadTimeDays: undefined,
+        dayOfTask: expect.objectContaining({ title: "Updated same-day message" }),
+      }),
+    );
+  });
+
+  it("saves direct interactive channel memory as active and passes idempotency keys", async () => {
+    const channelMemories = {
+      upsert: vi.fn().mockImplementation(async (input) => ({
+        ...input,
+        memoryId: input.memoryId ?? "chanmem_family_birthday",
+        createdAt: "created",
+        updatedAt: "updated",
+      })),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        channelMemories,
+      } as never,
+      {
+        source: "slack",
+        workspaceId: "T1",
+        channelId: "C1",
+        userId: "U1",
+        logger,
+        memoryWritePolicy: {
+          defaultOrigin: "explicit",
+          channelInferredStatus: "candidate",
+        },
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-save-explicit-channel-memory",
+      type: "agent.tool_use",
+      name: "save_memory",
+      input: {
+        text: "架空太郎の好きな色は青",
+        scope: "channel",
+        entity_key: "person:fixture-taro",
+        dedupe_key: "person:fixture-taro:favorite-color",
+      },
+    });
+
+    expect(channelMemories.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dedupeKey: "person:fixture-taro:favorite-color",
+        status: "active",
+        origin: "explicit",
+      }),
+    );
+    expect(JSON.parse((result.content?.[0] as { text: string }).text)).toMatchObject({
+      memory_id: "chanmem_family_birthday",
+      dedupe_key: "person:fixture-taro:favorite-color",
+      status: "active",
+      origin: "explicit",
+      approval_required: false,
+    });
+  });
+
+  it("updates a known channel memory and keeps proactive inferred memory as a candidate", async () => {
+    const channelMemories = {
+      get: vi.fn().mockResolvedValue(null),
+      upsert: vi.fn().mockImplementation(async (input) => ({
+        ...input,
+        memoryId: input.memoryId ?? "chanmem_candidate",
+        createdAt: "created",
+        updatedAt: "new-updated",
+      })),
+    };
+    const executor = new CustomToolExecutor(
+      { channelMemories } as never,
+      {
+        source: "slack",
+        workspaceId: "T1",
+        channelId: "C1",
+        userId: "U1",
+        logger,
+        memoryWritePolicy: {
+          defaultOrigin: "explicit",
+          channelInferredStatus: "candidate",
+        },
+      },
+    );
+
+    await executor.execute({
+      id: "tool-update-channel-memory",
+      type: "agent.tool_use",
+      name: "save_memory",
+      input: {
+        text: "架空太郎の好きな色は紺",
+        scope: "channel",
+        memory_id: "chanmem_existing",
+        expected_updated_at: "old-updated",
+      },
+    });
+    await executor.execute({
+      id: "tool-save-inferred-channel-memory",
+      type: "agent.tool_use",
+      name: "save_memory",
+      input: {
+        text: "架空太郎は青系の色を好むかもしれない",
+        scope: "channel",
+        origin: "inferred",
+        dedupe_key: "person:fixture-taro:inferred-color",
+      },
+    });
+
+    expect(channelMemories.upsert).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        memoryId: "chanmem_existing",
+        expectedUpdatedAt: "old-updated",
+        status: "active",
+        origin: "explicit",
+      }),
+    );
+    expect(channelMemories.upsert).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        status: "candidate",
+        origin: "inferred",
+      }),
+    );
+  });
+
+  it("uses stored date validation for a partial birthday-memory update", async () => {
+    const channelMemories = {
+      get: vi.fn().mockResolvedValue({
+        workspaceId: "T1",
+        channelId: "C1",
+        memoryId: "chanmem_birthday",
+        text: "架空太郎は2000年1月2日生まれ",
+        attributes: {
+          date_kind: "birthday",
+          date_validation: {
+            normalized_date: "2000-01-02",
+            is_past: true,
+            weekday_matches: true,
+          },
+        },
+        status: "active",
+        origin: "explicit",
+        createdAt: "created",
+        updatedAt: "old-updated",
+      }),
+      upsert: vi.fn().mockImplementation(async (input) => ({
+        ...input,
+        memoryId: "chanmem_birthday",
+        createdAt: "created",
+        updatedAt: "new-updated",
+      })),
+    };
+    const executor = new CustomToolExecutor({ channelMemories } as never, {
+      source: "slack",
+      workspaceId: "T1",
+      channelId: "C1",
+      userId: "U1",
+      logger,
+      memoryWritePolicy: { defaultOrigin: "explicit" },
+    });
+
+    const result = await executor.execute({
+      id: "tool-update-birthday",
+      type: "agent.tool_use",
+      name: "save_memory",
+      input: {
+        memory_id: "chanmem_birthday",
+        expected_updated_at: "old-updated",
+        text: "架空太郎（かくうたろう）は2000年1月2日生まれ",
+        scope: "channel",
+      },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(channelMemories.get).toHaveBeenCalledWith("T1", "C1", "chanmem_birthday");
+    expect(channelMemories.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memoryId: "chanmem_birthday",
+        expectedUpdatedAt: "old-updated",
+        attributes: undefined,
+      }),
+    );
+  });
+
+  it("accepts past birth dates without treating them as overdue work", async () => {
+    const channelMemories = {
+      upsert: vi.fn().mockImplementation(async (input) => ({
+        ...input,
+        memoryId: "chanmem_birthday",
+        createdAt: "created",
+        updatedAt: "updated",
+      })),
+    };
+    const executor = new CustomToolExecutor(
+      { channelMemories } as never,
+      {
+        source: "slack",
+        workspaceId: "T1",
+        channelId: "C1",
+        userId: "U1",
+        logger,
+        memoryWritePolicy: { defaultOrigin: "explicit" },
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-save-birthday",
+      type: "agent.tool_use",
+      name: "save_memory",
+      input: {
+        text: "架空太郎は2000年1月2日生まれ",
+        scope: "channel",
+        dedupe_key: "person:fixture-taro:birthday",
+        attributes: {
+          date_kind: "birthday",
+          date_validation: {
+            normalized_date: "2000-01-02",
+            is_past: true,
+            weekday_matches: true,
+          },
+        },
+      },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(channelMemories.upsert).toHaveBeenCalledOnce();
+  });
+
+  it("rejects multiple date validations in one memory with split guidance", async () => {
+    const memoryItems = {
+      save: vi.fn(),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        memoryItems,
+      } as never,
+      {
+        workspaceId: "T1",
+        userId: "U1",
+        logger,
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-save-memory-with-multiple-date-validations",
+      type: "agent.tool_use",
+      name: "save_memory",
+      input: {
+        text: "テスト申請Aの期限7月7日（火）、テスト申請Bの期限7月10日（金）",
+        scope: "workspace",
+        attributes: {
+          date_validation: [
+            {
+              source_text: "7月7日（火）",
+              normalized_date: "2026-07-07",
+              basis_date: "2026-07-05",
+              is_past: false,
+              weekday_matches: true,
+            },
+            {
+              source_text: "7月10日（金）",
+              normalized_date: "2026-07-10",
+              basis_date: "2026-07-05",
+              is_past: false,
+              weekday_matches: true,
+            },
+          ],
+        },
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text: string }).text;
+    expect(text).toContain("single object");
+    expect(text).toContain("call save_memory separately");
+    expect(memoryItems.save).not.toHaveBeenCalled();
+  });
+
   it("infers the scheduled reminder provider when updating the output conversation key", async () => {
     const scheduledTasks = {
       get: vi.fn().mockResolvedValue({

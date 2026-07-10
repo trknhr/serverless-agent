@@ -21,6 +21,42 @@ async function createTempStateStore(): Promise<FileStateStore> {
 }
 
 describe("local development state", () => {
+  it("serializes concurrent file-backed updates in one process", async () => {
+    const store = await createTempStateStore();
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+
+    const first = store.update(async (state) => {
+      order.push("first:start");
+      markFirstStarted();
+      await firstGate;
+      state.sessionHistories.first = [];
+      order.push("first:end");
+    });
+    const second = store.update((state) => {
+      order.push("second:start");
+      state.sessionHistories.second = [];
+      order.push("second:end");
+    });
+
+    await firstStarted;
+    expect(order).toEqual(["first:start"]);
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(order).toEqual(["first:start", "first:end", "second:start", "second:end"]);
+    await expect(store.load()).resolves.toMatchObject({
+      sessionHistories: { first: [], second: [] },
+    });
+  });
+
   it("persists memory, task, and session history in a file-backed state store", async () => {
     const store = await createTempStateStore();
     const repositories = createLocalRepositories(store);

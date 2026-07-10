@@ -249,7 +249,7 @@ export const customToolDefinitions = [
   {
     name: "save_memory",
     description:
-      "Save a durable memory. Use scope=user_preference for personal preferences like preferred name, language, or style. Use scope=channel for stable channel-shared rules, decisions, and references. In Slack conversations, do not use scope=workspace. Save one memory per fact and do not save transient chatter or daily summaries. When durable facts come from a user-supplied image, PDF, document, or attachment, call this only after the user asks to remember them or approves saving.",
+      "Create or update one durable memory after the user directly asks to remember it or approves saving it. For proactive inferred memory, explicitly set origin=inferred so it remains a candidate. Use scope=user_preference for personal preferences and scope=channel for channel-shared facts. Before correcting or enriching an existing fact, call search_context and pass its memory_id plus expected_updated_at=<returned updated_at> back here. For new channel facts, provide a stable one-fact dedupe_key such as person:hanako:birthday; retries with that key update the same memory. In Slack conversations, do not use scope=workspace. Save one memory per fact and do not save transient chatter or daily summaries. For date-bearing memories, save one date per memory with one attributes.date_validation object; for multiple dates, call save_memory separately for each date. When durable facts come from a user-supplied image, PDF, document, or attachment, call this only after the user asks to remember them or approves saving.",
     input_schema: {
       type: "object",
       properties: {
@@ -269,6 +269,21 @@ export const customToolDefinitions = [
           description:
             "Use explicit only when the user directly asked to remember or always apply the fact. Use inferred for facts derived from conversation. Use imported for document/import sources.",
         },
+        memory_id: {
+          type: "string",
+          description:
+            "Existing current-channel memory ID returned by search_context. Provide this when correcting or enriching a saved fact.",
+        },
+        dedupe_key: {
+          type: "string",
+          description:
+            "Stable identity for one channel fact, such as person:hanako:birthday. Do not reuse one key for multiple facts.",
+        },
+        expected_updated_at: {
+          type: "string",
+          description:
+            "The existing memory updated_at value returned by search_context, used to prevent overwriting a newer change.",
+        },
         entity_key: {
           type: "string",
           description: "Stable key like person:hanako, project:renovation, place:home, or vendor:costco.",
@@ -280,7 +295,8 @@ export const customToolDefinitions = [
         },
         attributes: {
           type: "object",
-          description: "Structured details such as aliases, dates, constraints, confidence, or source snippets.",
+          description:
+            "Structured details such as aliases, dates, constraints, confidence, or source snippets. For birthdays use date_kind=birthday. Set include_in_daily_reminder=true only for an actionable dated fact that should appear in scheduled summaries.",
         },
         tags: {
           type: "array",
@@ -531,7 +547,7 @@ export const customToolDefinitions = [
   {
     name: "upsert_recurring_task",
     description:
-      "Create or update a recurring task definition. Use this for tasks that repeat daily, weekly, or monthly; do not create one-off tasks for recurring rules unless the user asks for a specific occurrence.",
+      "Create or update a recurring task definition. Supports daily, weekly, monthly, and yearly rules. For yearly rules, always provide month_of_year and either one days_of_month value or one days_of_week value with week_of_month; never approximate yearly with monthly interval=12. Use lead_time_days when the action is due before the event. If the user also wants a distinct action on the event day, provide day_of_task. Do not create one-off tasks for recurring rules unless the user asks for a specific occurrence.",
     input_schema: {
       type: "object",
       properties: {
@@ -541,8 +557,14 @@ export const customToolDefinitions = [
         recurrence: {
           type: "object",
           properties: {
-            frequency: { type: "string", enum: ["daily", "weekly", "monthly"] },
+            frequency: { type: "string", enum: ["daily", "weekly", "monthly", "yearly"] },
             interval: { type: "integer", minimum: 1, maximum: 12 },
+            month_of_year: {
+              type: "integer",
+              minimum: 1,
+              maximum: 12,
+              description: "Required for yearly recurrence; 1 is January and 12 is December.",
+            },
             days_of_week: {
               type: "array",
               items: {
@@ -563,7 +585,34 @@ export const customToolDefinitions = [
           },
           required: ["frequency"],
         },
-        due_time: { type: "string", description: "Local due time in HH:mm, for example 21:00 or 23:59." },
+        lead_time_days: {
+          type: "integer",
+          minimum: 0,
+          maximum: 366,
+          description: "How many days before the recurrence event the primary task is due.",
+        },
+        day_of_task: {
+          type: "object",
+          description:
+            "Optional second task due on the recurrence event day. Use only when lead_time_days is greater than zero.",
+          properties: {
+            enabled: { type: "boolean" },
+            title: { type: "string" },
+            description: { type: "string" },
+            due_time: {
+              type: "string",
+              pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+              description: "Local due time in HH:mm.",
+            },
+            priority: { type: "string", enum: ["low", "medium", "high"] },
+          },
+          required: ["title"],
+        },
+        due_time: {
+          type: "string",
+          pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+          description: "Local due time in HH:mm, for example 21:00 or 23:59.",
+        },
         timezone: { type: "string", description: "IANA time zone such as Asia/Tokyo." },
         enabled: { type: "boolean" },
         owner_user_id: { type: "string" },

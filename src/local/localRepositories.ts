@@ -1,6 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { CalendarDraft, CalendarDraftStatus } from "../calendar/calendarDraft";
 import { ChannelMemoryItem } from "../memory/channelMemoryItem";
+import {
+  decideExistingChannelMemoryUpsert,
+  nextChannelMemoryUpdatedAt,
+} from "../memory/channelMemoryUpsertPolicy";
 import { MemoryItem } from "../memory/memoryItem";
 import { UserPreferenceItem } from "../memory/userPreferenceItem";
 import {
@@ -11,7 +15,7 @@ import {
 import { matchesTaskSearch, normalizeSearchText } from "../repo/taskStateRepository";
 import { BuiltinSkillOverride, GeneratedSkillRecord, SkillRepository } from "../skills/types";
 import { WorkSessionKind, WorkSessionRecord, WorkSessionStatus } from "../shared/contracts";
-import { RecurringTask } from "../tasks/recurringTask";
+import { RecurringTask, recurringTaskSchema } from "../tasks/recurringTask";
 import { ScheduledTask } from "../tasks/taskDefinition";
 import { TaskEventRecord, TaskState, TaskStatus } from "../tasks/taskState";
 import { FileStateStore } from "./fileStateStore";
@@ -40,13 +44,14 @@ export class LocalMemoryItemRepository {
       const existing = item.memoryId
         ? state.memoryItems.find((candidate) => candidate.workspaceId === item.workspaceId && candidate.memoryId === item.memoryId)
         : undefined;
-      const now = new Date().toISOString();
+      const now = new Date();
+      const nowIso = now.toISOString();
       const record: MemoryItem = {
         ...existing,
         ...item,
         memoryId: item.memoryId ?? `mem_${randomUUID()}`,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
+        createdAt: existing?.createdAt ?? nowIso,
+        updatedAt: nextChannelMemoryUpdatedAt(existing?.updatedAt, now),
       };
       upsert(state.memoryItems, record, (candidate) => candidate.workspaceId === record.workspaceId && candidate.memoryId === record.memoryId);
       return record;
@@ -83,14 +88,135 @@ export class LocalChannelMemoryRepository {
               candidate.memoryId === item.memoryId,
           )
         : undefined;
-      const now = new Date().toISOString();
+      const now = new Date();
+      const nowIso = now.toISOString();
       const record: ChannelMemoryItem = {
         ...existing,
         ...item,
         memoryId: item.memoryId ?? `chanmem_${randomUUID()}`,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
+        createdAt: existing?.createdAt ?? nowIso,
+        updatedAt: nextChannelMemoryUpdatedAt(existing?.updatedAt, now),
       };
+      upsert(
+        state.channelMemories,
+        record,
+        (candidate) =>
+          candidate.workspaceId === record.workspaceId &&
+          candidate.channelId === record.channelId &&
+          candidate.memoryId === record.memoryId,
+      );
+      return record;
+    });
+  }
+
+  async upsert(
+    item: Omit<ChannelMemoryItem, "memoryId" | "createdAt" | "updatedAt"> & {
+      memoryId?: string;
+      expectedUpdatedAt?: string;
+    },
+  ): Promise<ChannelMemoryItem> {
+    return this.store.update((state) => {
+      const scoped = state.channelMemories.filter(
+        (candidate) => candidate.workspaceId === item.workspaceId && candidate.channelId === item.channelId,
+      );
+      const dedupeKey = normalizeLocalDedupeKey(item.dedupeKey);
+      const dedupeMatches = dedupeKey
+        ? scoped.filter((candidate) => normalizeLocalDedupeKey(candidate.dedupeKey) === dedupeKey)
+        : [];
+      const allMatches = item.memoryId
+        ? scoped.filter((candidate) => candidate.memoryId === item.memoryId)
+        : dedupeMatches.length > 0
+          ? dedupeMatches
+          : scoped.filter(
+              (candidate) =>
+                normalizeLocalComparable(candidate.entityKey ?? "") === normalizeLocalComparable(item.entityKey ?? "") &&
+                normalizeLocalComparable(candidate.text) === normalizeLocalComparable(item.text),
+            );
+      const liveMatches = allMatches.filter(
+        (candidate) => candidate.status === "active" || candidate.status === "candidate",
+      );
+      const matches = item.memoryId || liveMatches.length === 0 ? allMatches : liveMatches;
+
+      if (matches.length > 1) {
+        throw new Error(`Multiple channel memories match this fact: ${matches.map((entry) => entry.memoryId).join(", ")}`);
+      }
+      const existing = matches[0];
+      if (item.memoryId && !existing) {
+        throw new Error(`Channel memory ${item.memoryId} was not found in the current channel`);
+      }
+      if (existing && ["archived", "rejected"].includes(existing.status)) {
+        throw new Error(`Channel memory ${existing.memoryId} is ${existing.status} and cannot be reactivated`);
+      }
+
+      const { expectedUpdatedAt: _expectedUpdatedAt, ...incoming } = item;
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const conflictingDedupeMemory = dedupeKey
+        ? scoped.find(
+            (candidate) =>
+              normalizeLocalDedupeKey(candidate.dedupeKey) === dedupeKey &&
+              candidate.memoryId !== existing?.memoryId &&
+              (candidate.status === "active" || candidate.status === "candidate"),
+          )
+        : undefined;
+      if (conflictingDedupeMemory) {
+        throw new Error(
+          `Channel memory dedupe key ${dedupeKey} is already used by ${conflictingDedupeMemory.memoryId}`,
+        );
+      }
+      if (
+        existing?.dedupeKey &&
+        dedupeKey &&
+        normalizeLocalDedupeKey(existing.dedupeKey) !== dedupeKey
+      ) {
+        throw new Error(`Channel memory ${existing.memoryId} dedupe key cannot be changed`);
+      }
+
+      const memoryId =
+        existing?.memoryId ??
+        item.memoryId ??
+        buildLocalDeterministicMemoryId(item.workspaceId, item.channelId, dedupeKey, item.entityKey, item.text);
+      if (!existing && scoped.some((candidate) => candidate.memoryId === memoryId)) {
+        throw new Error(`Channel memory ID collision for ${memoryId}`);
+      }
+
+      const record: ChannelMemoryItem = {
+        ...existing,
+        ...incoming,
+        memoryId,
+        dedupeKey: dedupeKey ?? existing?.dedupeKey,
+        entityKey: item.entityKey ?? existing?.entityKey,
+        attributes:
+          existing?.attributes || item.attributes
+            ? { ...(existing?.attributes ?? {}), ...(item.attributes ?? {}) }
+            : undefined,
+        tags: mergeLocalTags(existing?.tags, item.tags),
+        importance: item.importance ?? existing?.importance,
+        status:
+          existing?.status === "active" || (existing?.status === "candidate" && item.origin === "explicit")
+            ? "active"
+            : item.status,
+        origin: existing?.origin === "explicit" ? "explicit" : item.origin,
+        sourceType: existing?.sourceType ?? item.sourceType,
+        sourceRef: existing?.sourceRef ?? item.sourceRef,
+        createdByUserId: existing?.createdByUserId ?? item.createdByUserId,
+        createdAt: existing?.createdAt ?? nowIso,
+        updatedAt: nextChannelMemoryUpdatedAt(existing?.updatedAt, now),
+      };
+
+      if (
+        existing &&
+        decideExistingChannelMemoryUpsert({
+          existing,
+          next: record,
+          incomingOrigin: item.origin,
+          requestedMemoryId: item.memoryId,
+          expectedUpdatedAt: item.expectedUpdatedAt,
+        }) === "noop"
+      ) {
+        return existing;
+      }
+
       upsert(
         state.channelMemories,
         record,
@@ -134,6 +260,31 @@ export class LocalChannelMemoryRepository {
       input.limit,
     );
   }
+}
+
+function normalizeLocalDedupeKey(value?: string): string | undefined {
+  const normalized = value?.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, "-");
+  return normalized || undefined;
+}
+
+function normalizeLocalComparable(value: string): string {
+  return value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function buildLocalDeterministicMemoryId(
+  workspaceId: string,
+  channelId: string,
+  dedupeKey: string | undefined,
+  entityKey: string | undefined,
+  text: string,
+): string {
+  const identity = dedupeKey ?? `exact:${normalizeLocalComparable(entityKey ?? "")}:${normalizeLocalComparable(text)}`;
+  return `chanmem_${createHash("sha256").update(`${workspaceId}\0${channelId}\0${identity}`).digest("hex").slice(0, 32)}`;
+}
+
+function mergeLocalTags(existing?: string[], incoming?: string[]): string[] | undefined {
+  const merged = [...new Set([...(existing ?? []), ...(incoming ?? [])])];
+  return merged.length > 0 ? merged : undefined;
 }
 
 export class LocalUserPreferenceRepository {
@@ -360,27 +511,32 @@ export class LocalRecurringTaskRepository {
   }
 
   async upsert(
-    task: Omit<RecurringTask, "createdAt" | "updatedAt" | "dueTime" | "timezone" | "enabled"> &
-      Partial<Pick<RecurringTask, "dueTime" | "timezone" | "enabled">>,
+    task: Omit<
+      RecurringTask,
+      "createdAt" | "updatedAt" | "dueTime" | "timezone" | "enabled" | "leadTimeDays"
+    > &
+      Partial<Pick<RecurringTask, "dueTime" | "timezone" | "enabled" | "leadTimeDays">>,
   ): Promise<RecurringTask> {
     return this.store.update((state) => {
       const existing = state.recurringTasks.find(
         (candidate) => candidate.workspaceId === task.workspaceId && candidate.recurringTaskId === task.recurringTaskId,
       );
       const now = new Date().toISOString();
-      const record: RecurringTask = {
+      const record = recurringTaskSchema.parse({
         ...existing,
         ...task,
         recurrence: {
           ...existing?.recurrence,
           ...task.recurrence,
         },
+        leadTimeDays: task.leadTimeDays ?? existing?.leadTimeDays ?? 0,
+        dayOfTask: task.dayOfTask ?? existing?.dayOfTask,
         dueTime: task.dueTime ?? existing?.dueTime ?? "23:59",
         timezone: task.timezone ?? existing?.timezone ?? "Asia/Tokyo",
         enabled: task.enabled ?? existing?.enabled ?? true,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
-      };
+      });
       upsert(
         state.recurringTasks,
         record,

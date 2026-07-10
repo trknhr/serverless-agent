@@ -81,6 +81,7 @@ beforeEach(() => {
 
 afterEach(() => {
   process.env = { ...originalEnv };
+  vi.useRealTimers();
 });
 
 describe("scheduled agent runner", () => {
@@ -113,20 +114,257 @@ describe("scheduled agent runner", () => {
     });
 
     const { handler } = await import("../src/functions/scheduled-agent-runner");
+    const { AgentCoreRuntimeClient } = await import("../src/agentcore/client");
 
     await handler({
       taskId: "morning",
       workspaceId: "T1",
     });
 
+    expect(AgentCoreRuntimeClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        responseTimeoutMs: 120000,
+      }),
+    );
     const agentRequestText = mocks.agentInvoke.mock.calls[0][0].request.content[0].text;
     expect(agentRequestText).toContain("Only include facts, reminders, dates, tasks, events, and notes that are present in tool results");
     expect(agentRequestText).toContain("If the prompt asks for a memo or note and no grounded item is available, omit that section");
+    expect(mocks.agentInvoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          context: expect.objectContaining({
+            channelId: "C1",
+          }),
+          toolContext: expect.objectContaining({
+            channelId: "C1",
+            memoryWritePolicy: {
+              allowWorkspaceMemory: false,
+              channelInferredStatus: "candidate",
+              defaultOrigin: "inferred",
+            },
+          }),
+        }),
+      }),
+    );
     expect(mocks.slackPostMessage).toHaveBeenCalledWith({
       channel: "C1",
       text: "*リマインダー:* Morning Reminder\n\nToday's reminder.",
     });
     expect(mocks.linePushText).not.toHaveBeenCalled();
+  });
+
+  it("materializes yearly preparation and day-of task instances", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2027-05-02T00:00:00+09:00"));
+    mocks.documentSend.mockImplementation(async (command) => {
+      const input = command.input as Record<string, any>;
+      if (input.TableName === "task_table_name" && input.Key) {
+        return {
+          Item: {
+            taskId: "morning",
+            name: "Morning Reminder",
+            prompt: "Post today's reminder.",
+            workspaceId: "T1",
+            outputChannelId: "C1",
+            enabled: true,
+            reuseSession: false,
+            createdAt: "2026-05-29T00:00:00.000Z",
+            updatedAt: "2026-05-29T00:00:00.000Z",
+          },
+        };
+      }
+      if (input.TableName === "recurring_tasks_table_name" && input.KeyConditionExpression) {
+        return {
+          Items: [
+            {
+              pk: "WORKSPACE#T1",
+              sk: "RECURRING_TASK#rt_mothers_day",
+              recurringTaskId: "rt_mothers_day",
+              workspaceId: "T1",
+              title: "母の日プレゼント準備",
+              description: "プレゼント検討・購入・配送手続き",
+              recurrence: {
+                frequency: "yearly",
+                interval: 1,
+                monthOfYear: 5,
+                daysOfWeek: ["sunday"],
+                weekOfMonth: 2,
+              },
+              leadTimeDays: 7,
+              dayOfTask: {
+                enabled: true,
+                title: "母の日当日メッセージ",
+                dueTime: "09:00",
+              },
+              dueTime: "23:59",
+              timezone: "Asia/Tokyo",
+              enabled: true,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+        };
+      }
+      if (input.KeyConditionExpression || input.IndexName) {
+        return { Items: [] };
+      }
+      return {};
+    });
+    mocks.agentInvoke.mockResolvedValueOnce({
+      text: "Today's reminder.",
+      sessionId: "agent-session",
+      status: "completed",
+      taskIds: [],
+      recurringTaskIds: [],
+      savedMemoryIds: [],
+      calendarDraftIds: [],
+    });
+
+    const { handler } = await import("../src/functions/scheduled-agent-runner");
+    await handler({ taskId: "morning", workspaceId: "T1" });
+
+    const taskPuts = mocks.documentSend.mock.calls
+      .map(([command]) => command.input as Record<string, any>)
+      .filter((input) => input.TableName === "tasks_table_name" && input.Item?.sourceType === "recurring_task");
+    expect(taskPuts).toHaveLength(2);
+    expect(taskPuts.map((input) => input.Item)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "母の日プレゼント準備",
+          dueAt: "2027-05-02T23:59:00+09:00",
+          metadata: expect.objectContaining({
+            eventDate: "2027-05-09",
+            dueDate: "2027-05-02",
+            materializationKind: "primary",
+            leadTimeDays: 7,
+          }),
+        }),
+        expect.objectContaining({
+          title: "母の日当日メッセージ",
+          dueAt: "2027-05-09T09:00:00+09:00",
+          metadata: expect.objectContaining({
+            eventDate: "2027-05-09",
+            dueDate: "2027-05-09",
+            materializationKind: "day_of",
+            leadTimeDays: 0,
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("refreshes an open recurring instance when its lead-time deadline changes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2027-05-02T00:00:00+09:00"));
+    mocks.documentSend.mockImplementation(async (command) => {
+      const input = command.input as Record<string, any>;
+      if (input.TableName === "task_table_name" && input.Key) {
+        return {
+          Item: {
+            taskId: "morning",
+            name: "Morning Reminder",
+            prompt: "Post today's reminder.",
+            workspaceId: "T1",
+            outputChannelId: "C1",
+            enabled: true,
+            reuseSession: false,
+            createdAt: "2026-05-29T00:00:00.000Z",
+            updatedAt: "2026-05-29T00:00:00.000Z",
+          },
+        };
+      }
+      if (input.TableName === "recurring_tasks_table_name" && input.KeyConditionExpression) {
+        return {
+          Items: [
+            {
+              recurringTaskId: "rt_mothers_day",
+              workspaceId: "T1",
+              title: "母の日プレゼント準備",
+              recurrence: {
+                frequency: "yearly",
+                interval: 1,
+                monthOfYear: 5,
+                daysOfWeek: ["sunday"],
+                weekOfMonth: 2,
+              },
+              leadTimeDays: 7,
+              dueTime: "23:59",
+              timezone: "Asia/Tokyo",
+              enabled: true,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-07-10T00:00:00.000Z",
+            },
+          ],
+        };
+      }
+      if (
+        input.TableName === "tasks_table_name" &&
+        input.Key?.sk?.startsWith("TASK#")
+      ) {
+        const taskId = String(input.Key.sk).slice("TASK#".length);
+        return {
+          Item: {
+            workspaceId: "T1",
+            taskId,
+            title: "母の日プレゼント準備",
+            status: "open",
+            dueAt: "2027-05-09T23:59:00+09:00",
+            sourceType: "recurring_task",
+            sourceRef: "rt_mothers_day",
+            metadata: {
+              recurringTaskId: "rt_mothers_day",
+              occurrenceDate: "2027-05-09",
+            },
+            createdAt: "2027-04-25T00:00:00.000Z",
+            updatedAt: "2027-04-25T00:00:00.000Z",
+          },
+        };
+      }
+      if (input.KeyConditionExpression || input.IndexName) {
+        return { Items: [] };
+      }
+      return {};
+    });
+    mocks.agentInvoke.mockResolvedValueOnce({
+      text: "Today's reminder.",
+      sessionId: "agent-session",
+      status: "completed",
+      taskIds: [],
+      recurringTaskIds: [],
+      savedMemoryIds: [],
+      calendarDraftIds: [],
+    });
+
+    const { handler } = await import("../src/functions/scheduled-agent-runner");
+    await handler({ taskId: "morning", workspaceId: "T1" });
+
+    const refreshed = mocks.documentSend.mock.calls
+      .map(([command]) => command.input as Record<string, any>)
+      .find(
+        (input) =>
+          input.TableName === "tasks_table_name" &&
+          input.Item?.sourceType === "recurring_task" &&
+          input.Item?.metadata?.materializationKind === "primary",
+      );
+    expect(refreshed?.Item).toMatchObject({
+      status: "open",
+      dueAt: "2027-05-02T23:59:00+09:00",
+      metadata: {
+        recurringTaskId: "rt_mothers_day",
+        occurrenceDate: "2027-05-09",
+        eventDate: "2027-05-09",
+        dueDate: "2027-05-02",
+        materializationKind: "primary",
+        leadTimeDays: 7,
+      },
+    });
+    const updateEvent = mocks.documentSend.mock.calls
+      .map(([command]) => command.input as Record<string, any>)
+      .find(
+        (input) =>
+          input.TableName === "task_events_table_name" && input.Item?.type === "updated",
+      );
+    expect(updateEvent).toBeDefined();
   });
 
   it("passes the scheduled reminder creator as the agent user context", async () => {

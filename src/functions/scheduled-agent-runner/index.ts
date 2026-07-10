@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { EventBridgeEvent } from "aws-lambda";
 import { AgentCoreRuntimeClient } from "../../agentcore/client";
 import { buildAgentRuntimeResources } from "../../agentcore/contracts";
@@ -18,7 +19,11 @@ import { TaskStateRepository } from "../../repo/taskStateRepository";
 import { logger } from "../../shared/logger";
 import { SlackAuthClient } from "../../slack/authTest";
 import { SlackWebClient } from "../../slack/postMessage";
-import { RecurringTask, RecurringTaskWeekday } from "../../tasks/recurringTask";
+import {
+  buildOccurrenceDueAt,
+  buildRecurringOccurrenceTaskId,
+  enumerateRecurringTaskOccurrences,
+} from "../../tasks/recurringTaskSchedule";
 import { resolveScheduledOutputTarget, ScheduledOutputTarget } from "../../tasks/scheduledOutput";
 import { ScheduledTask } from "../../tasks/taskDefinition";
 import { TaskState } from "../../tasks/taskState";
@@ -35,21 +40,12 @@ interface SchedulerPayload {
 const SCHEDULE_TIMEZONE = "Asia/Tokyo";
 const RECURRING_TASK_LOOKAHEAD_DAYS = 7;
 const SCHEDULER_SEND_LIMIT_KIND = "scheduler_send";
-const WEEKDAYS: RecurringTaskWeekday[] = [
-  "sunday",
-  "monday",
-  "tuesday",
-  "wednesday",
-  "thursday",
-  "friday",
-  "saturday",
-];
-
 const env = loadSchedulerEnv();
 const secretsProvider = new SecretsProvider();
 const agentClient = new AgentCoreRuntimeClient({
   runtimeArn: env.AGENTCORE_RUNTIME_ARN,
   qualifier: env.AGENTCORE_RUNTIME_QUALIFIER,
+  responseTimeoutMs: env.AGENT_RESPONSE_TIMEOUT_MS,
 });
 const slackClient = new SlackWebClient(() =>
   secretsProvider.getSecretString(env.SLACK_BOT_TOKEN_SECRET_ID),
@@ -134,6 +130,7 @@ export async function handler(
         source: "scheduler",
         workspaceId: task.workspaceId,
         userId: scheduledUserId,
+        channelId: outputTarget.channelId,
         taskId: task.taskId,
         traceId,
         turnId,
@@ -142,6 +139,12 @@ export async function handler(
       toolContext: {
         workspaceId: task.workspaceId,
         userId: scheduledUserId,
+        channelId: outputTarget.channelId,
+        memoryWritePolicy: {
+          allowWorkspaceMemory: false,
+          channelInferredStatus: "candidate",
+          defaultOrigin: "inferred",
+        },
       },
     },
   });
@@ -212,42 +215,63 @@ async function materializeRecurringTasks(
   const createdTasks: TaskState[] = [];
 
   for (const recurringTask of recurringTasks) {
-    const occurrenceDates = enumerateOccurrenceDates(recurringTask, now, RECURRING_TASK_LOOKAHEAD_DAYS);
-    for (const occurrenceDate of occurrenceDates) {
-      const taskId = buildRecurringOccurrenceTaskId(recurringTask, occurrenceDate);
+    const occurrences = enumerateRecurringTaskOccurrences(recurringTask, now, RECURRING_TASK_LOOKAHEAD_DAYS);
+    for (const occurrence of occurrences) {
+      const taskId = buildRecurringOccurrenceTaskId(recurringTask, occurrence.eventDate, occurrence.kind);
       const existing = await taskStateRepository.get(workspaceId, taskId);
-      if (existing) {
-        continue;
-      }
-
-      const task = await taskStateRepository.upsert({
+      const desiredTask = {
         workspaceId,
         taskId,
-        title: recurringTask.title,
-        description: recurringTask.description,
-        status: "open",
-        dueAt: buildOccurrenceDueAt(occurrenceDate, recurringTask.dueTime, recurringTask.timezone),
-        priority: recurringTask.priority,
+        title: occurrence.title,
+        description: occurrence.description,
+        status: "open" as const,
+        dueAt: buildOccurrenceDueAt(occurrence.dueDate, occurrence.dueTime, recurringTask.timezone),
+        priority: occurrence.priority,
         ownerUserId: recurringTask.ownerUserId,
         sourceType: "recurring_task",
         sourceRef: recurringTask.sourceRef ?? recurringTask.recurringTaskId,
         metadata: {
           ...recurringTask.metadata,
           recurringTaskId: recurringTask.recurringTaskId,
-          occurrenceDate,
+          occurrenceDate: occurrence.eventDate,
+          eventDate: occurrence.eventDate,
+          dueDate: occurrence.dueDate,
+          materializationKind: occurrence.kind,
+          leadTimeDays: occurrence.kind === "primary" ? recurringTask.leadTimeDays : 0,
         },
-      });
+      };
+
+      let eventType: "created" | "updated" = "created";
+      let task: TaskState;
+      if (existing) {
+        if (
+          !canRefreshRecurringTaskInstance(existing, recurringTask.recurringTaskId) ||
+          isRecurringTaskInstanceCurrent(existing, desiredTask)
+        ) {
+          continue;
+        }
+        task = await taskStateRepository.upsert({
+          ...existing,
+          ...desiredTask,
+          status: existing.status,
+        });
+        eventType = "updated";
+      } else {
+        task = await taskStateRepository.upsert(desiredTask);
+      }
       createdTasks.push(task);
 
       await taskEventRepository.save({
         taskId: task.taskId,
-        type: "created",
+        type: eventType,
         payload: {
           title: task.title,
           status: task.status,
           due_at: task.dueAt,
           recurring_task_id: recurringTask.recurringTaskId,
-          occurrence_date: occurrenceDate,
+          occurrence_date: occurrence.eventDate,
+          due_date: occurrence.dueDate,
+          materialization_kind: occurrence.kind,
         },
       });
     }
@@ -261,6 +285,44 @@ async function materializeRecurringTasks(
   }
 
   return createdTasks;
+}
+
+function canRefreshRecurringTaskInstance(task: TaskState, recurringTaskId: string): boolean {
+  if (task.status !== "open" && task.status !== "in_progress") {
+    return false;
+  }
+  if (task.sourceType !== "recurring_task") {
+    return false;
+  }
+  const metadataRecurringTaskId = task.metadata?.recurringTaskId;
+  return metadataRecurringTaskId === recurringTaskId ||
+    (metadataRecurringTaskId === undefined && task.sourceRef === recurringTaskId);
+}
+
+function isRecurringTaskInstanceCurrent(
+  existing: TaskState,
+  desired: Pick<
+    TaskState,
+    | "title"
+    | "description"
+    | "dueAt"
+    | "priority"
+    | "ownerUserId"
+    | "sourceType"
+    | "sourceRef"
+    | "metadata"
+  >,
+): boolean {
+  return (
+    existing.title === desired.title &&
+    existing.description === desired.description &&
+    existing.dueAt === desired.dueAt &&
+    existing.priority === desired.priority &&
+    existing.ownerUserId === desired.ownerUserId &&
+    existing.sourceType === desired.sourceType &&
+    existing.sourceRef === desired.sourceRef &&
+    isDeepStrictEqual(existing.metadata, desired.metadata)
+  );
 }
 
 async function autoCloseExpiredTasks(
@@ -329,155 +391,6 @@ function isExpiredTaskDueAt(dueAt: string | undefined, now: Date, today: string)
   }
 
   return dueDate.getTime() < now.getTime();
-}
-
-function enumerateOccurrenceDates(
-  recurringTask: RecurringTask,
-  now: Date,
-  lookaheadDays: number,
-): string[] {
-  const startDate = formatInTimeZone(now, recurringTask.timezone).date;
-  const dates: string[] = [];
-
-  for (let offset = 0; offset <= lookaheadDays; offset += 1) {
-    const dateOnly = addDays(startDate, offset);
-    if (isRecurringTaskOccurrenceDate(recurringTask, dateOnly)) {
-      dates.push(dateOnly);
-    }
-  }
-
-  return dates;
-}
-
-function isRecurringTaskOccurrenceDate(
-  recurringTask: RecurringTask,
-  dateOnly: string,
-): boolean {
-  const startDate = formatInTimeZone(new Date(recurringTask.createdAt), recurringTask.timezone).date;
-  const interval = recurringTask.recurrence.interval ?? 1;
-
-  if (recurringTask.recurrence.frequency === "daily") {
-    const days = daysBetween(startDate, dateOnly);
-    return days >= 0 && days % interval === 0;
-  }
-
-  if (recurringTask.recurrence.frequency === "weekly") {
-    const days = daysBetween(startDate, dateOnly);
-    if (days < 0 || Math.floor(days / 7) % interval !== 0) {
-      return false;
-    }
-    const weekdays = recurringTask.recurrence.daysOfWeek ?? [weekdayForDate(startDate)];
-    return weekdays.includes(weekdayForDate(dateOnly));
-  }
-
-  if (recurringTask.recurrence.frequency === "monthly") {
-    const months = monthsBetween(startDate, dateOnly);
-    if (months < 0 || months % interval !== 0) {
-      return false;
-    }
-
-    const dayOfMonth = parseDateOnly(dateOnly).day;
-    if (recurringTask.recurrence.daysOfMonth?.includes(dayOfMonth)) {
-      return true;
-    }
-
-    if (recurringTask.recurrence.weekOfMonth && recurringTask.recurrence.daysOfWeek?.length) {
-      return recurringTask.recurrence.daysOfWeek.some((weekday) =>
-        isNthWeekdayOfMonth(dateOnly, weekday, recurringTask.recurrence.weekOfMonth!),
-      );
-    }
-
-    return dayOfMonth === parseDateOnly(startDate).day;
-  }
-
-  return false;
-}
-
-function buildRecurringOccurrenceTaskId(recurringTask: RecurringTask, occurrenceDate: string): string {
-  const hash = createHash("sha256")
-    .update(`${recurringTask.workspaceId}:${recurringTask.recurringTaskId}:${occurrenceDate}`)
-    .digest("hex")
-    .slice(0, 16);
-  return `task_rec_${hash}_${occurrenceDate.replace(/-/g, "")}`;
-}
-
-function buildOccurrenceDueAt(dateOnly: string, dueTime: string, timeZone: string): string {
-  return `${dateOnly}T${dueTime}:00${timeZoneOffsetForDate(dateOnly, timeZone)}`;
-}
-
-function addDays(dateOnly: string, days: number): string {
-  const { year, month, day } = parseDateOnly(dateOnly);
-  const date = new Date(Date.UTC(year, month - 1, day + days));
-  return formatUtcDateOnly(date);
-}
-
-function daysBetween(startDate: string, endDate: string): number {
-  const start = parseDateOnly(startDate);
-  const end = parseDateOnly(endDate);
-  const startMs = Date.UTC(start.year, start.month - 1, start.day);
-  const endMs = Date.UTC(end.year, end.month - 1, end.day);
-  return Math.floor((endMs - startMs) / (24 * 60 * 60 * 1000));
-}
-
-function monthsBetween(startDate: string, endDate: string): number {
-  const start = parseDateOnly(startDate);
-  const end = parseDateOnly(endDate);
-  return (end.year - start.year) * 12 + (end.month - start.month);
-}
-
-function weekdayForDate(dateOnly: string): RecurringTaskWeekday {
-  const { year, month, day } = parseDateOnly(dateOnly);
-  return WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
-}
-
-function isNthWeekdayOfMonth(
-  dateOnly: string,
-  weekday: RecurringTaskWeekday,
-  weekOfMonth: number | "last",
-): boolean {
-  if (weekdayForDate(dateOnly) !== weekday) {
-    return false;
-  }
-
-  const { day } = parseDateOnly(dateOnly);
-  if (weekOfMonth === "last") {
-    return parseDateOnly(addDays(dateOnly, 7)).month !== parseDateOnly(dateOnly).month;
-  }
-
-  return Math.floor((day - 1) / 7) + 1 === weekOfMonth;
-}
-
-function parseDateOnly(dateOnly: string): { year: number; month: number; day: number } {
-  const [year, month, day] = dateOnly.split("-").map((part) => Number.parseInt(part, 10));
-  return { year, month, day };
-}
-
-function formatUtcDateOnly(date: Date): string {
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function timeZoneOffsetForDate(dateOnly: string, timeZone: string): string {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZoneName: "shortOffset",
-  });
-  const timeZoneName = formatter
-    .formatToParts(new Date(`${dateOnly}T12:00:00Z`))
-    .find((part) => part.type === "timeZoneName")?.value;
-  const match = timeZoneName?.match(/^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/);
-  if (!match) {
-    return "+00:00";
-  }
-
-  const [, sign, rawHour, rawMinute] = match;
-  const hour = rawHour.padStart(2, "0");
-  const minute = rawMinute ?? "00";
-  return `${sign}${hour}:${minute}`;
 }
 
 async function buildFallbackTask(

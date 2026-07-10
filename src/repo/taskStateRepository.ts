@@ -30,6 +30,7 @@ export class TaskStateRepository {
           pk: buildWorkspacePk(workspaceId),
           sk: buildTaskSk(taskId),
         },
+        ConsistentRead: true,
       }),
     );
 

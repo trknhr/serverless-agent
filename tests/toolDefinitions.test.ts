@@ -38,6 +38,31 @@ describe("tool definitions", () => {
     expect(toolDefinition("patch_task").input_schema.required).toEqual(["task_id"]);
   });
 
+  it("tells the model to split date-bearing memories by date", () => {
+    expect(toolDescription("save_memory")).toContain("For date-bearing memories");
+    expect(toolDescription("save_memory")).toContain("one date per memory");
+    expect(toolDescription("save_memory")).toContain("call save_memory separately");
+    expect(toolDescription("save_memory")).toContain("dedupe_key");
+    expect(toolDescription("save_memory")).toContain("expected_updated_at=<returned updated_at>");
+    expect(toolDescription("save_memory")).toContain("memory_id");
+    expect(toolDefinition("save_memory").input_schema.properties).toMatchObject({
+      memory_id: { type: "string" },
+      dedupe_key: { type: "string" },
+      expected_updated_at: { type: "string" },
+    });
+  });
+
+  it("exposes yearly recurrence, lead time, and a distinct day-of task", () => {
+    const definition = toolDefinition("upsert_recurring_task");
+    const serialized = JSON.stringify(definition.input_schema);
+
+    expect(toolDescription("upsert_recurring_task")).toContain("never approximate yearly");
+    expect(serialized).toContain("yearly");
+    expect(serialized).toContain("month_of_year");
+    expect(serialized).toContain("lead_time_days");
+    expect(serialized).toContain("day_of_task");
+  });
+
   it("uses search_context as the only model-facing search entrypoint", () => {
     const toolNames = customToolDefinitions.map((tool) => tool.name);
 

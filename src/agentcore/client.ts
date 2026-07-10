@@ -12,6 +12,7 @@ export interface AgentCoreRuntimeClientOptions {
   runtimeArn: string;
   qualifier?: string;
   region?: string;
+  responseTimeoutMs?: number;
 }
 
 export interface InvokeAgentInput {
@@ -30,6 +31,32 @@ export class AgentCoreRuntimeClient {
   }
 
   async invoke(input: InvokeAgentInput): Promise<AgentRunResult> {
+    const timeoutMs = this.options.responseTimeoutMs;
+    if (!timeoutMs) {
+      return this.invokeOnce(input);
+    }
+
+    const abortController = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const operation = this.invokeOnce(input, abortController.signal);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        abortController.abort();
+        reject(new Error(`AgentCore runtime response timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([operation, timeoutPromise]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      operation.catch(() => undefined);
+    }
+  }
+
+  private async invokeOnce(input: InvokeAgentInput, abortSignal?: AbortSignal): Promise<AgentRunResult> {
     const response = await this.client.send(
       new InvokeAgentRuntimeCommand({
         agentRuntimeArn: this.options.runtimeArn,
@@ -40,6 +67,7 @@ export class AgentCoreRuntimeClient {
         accept: "text/event-stream, application/json",
         payload: Buffer.from(JSON.stringify(input.request), "utf-8"),
       }),
+      abortSignal ? { abortSignal } : undefined,
     );
 
     const raw = response.response ? await response.response.transformToString() : "";

@@ -30,6 +30,8 @@ export interface LocalState {
 }
 
 export class FileStateStore implements SessionHistoryStore {
+  private updateTail: Promise<void> = Promise.resolve();
+
   constructor(private readonly filePath = DEFAULT_LOCAL_STATE_PATH) {}
 
   get path(): string {
@@ -55,11 +57,18 @@ export class FileStateStore implements SessionHistoryStore {
     await rename(tmpPath, this.filePath);
   }
 
-  async update<T>(mutator: (state: LocalState) => T | Promise<T>): Promise<T> {
-    const state = await this.load();
-    const result = await mutator(state);
-    await this.save(state);
-    return result;
+  update<T>(mutator: (state: LocalState) => T | Promise<T>): Promise<T> {
+    const operation = this.updateTail.then(async () => {
+      const state = await this.load();
+      const result = await mutator(state);
+      await this.save(state);
+      return result;
+    });
+    this.updateTail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
   async get(sessionId: string): Promise<SessionHistoryMessage[]> {

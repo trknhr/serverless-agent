@@ -21,6 +21,7 @@ const secretsProvider = new SecretsProvider();
 const agentClient = new AgentCoreRuntimeClient({
   runtimeArn: env.AGENTCORE_RUNTIME_ARN,
   qualifier: env.AGENTCORE_RUNTIME_QUALIFIER,
+  responseTimeoutMs: env.AGENT_RESPONSE_TIMEOUT_MS,
 });
 const lineClient = new LineMessagingClient(() =>
   secretsProvider.getSecretString(env.LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID),
@@ -130,7 +131,7 @@ export async function handler(event: SQSEvent): Promise<void> {
           memoryWritePolicy: {
             allowWorkspaceMemory: false,
             channelInferredStatus: "candidate",
-            defaultOrigin: "inferred",
+            defaultOrigin: "explicit",
           },
         },
       },

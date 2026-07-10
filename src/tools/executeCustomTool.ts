@@ -8,6 +8,9 @@ import {
 } from "../calendar/googleCalendarClient";
 import { buildGoogleOAuthStartUrl } from "../calendar/userGoogleCalendar";
 import { AgentToolUseEvent, ToolExecutionResult } from "../agent/types";
+import type { ChannelMemoryItem } from "../memory/channelMemoryItem";
+import type { MemoryItem } from "../memory/memoryItem";
+import type { UserPreferenceItem } from "../memory/userPreferenceItem";
 import { CalendarDraftRepository } from "../repo/calendarDraftRepository";
 import { ChannelMemoryRepository } from "../repo/channelMemoryRepository";
 import { MemoryItemRepository } from "../repo/memoryItemRepository";
@@ -107,6 +110,9 @@ const saveMemorySchema = z.object({
   text: z.string().min(1),
   scope: z.enum(["channel", "user_preference", "workspace"]).optional(),
   origin: z.enum(["explicit", "inferred", "imported"]).optional(),
+  memory_id: z.string().min(1).optional(),
+  dedupe_key: z.string().min(1).max(200).optional(),
+  expected_updated_at: z.string().min(1).optional(),
   entity_key: z.string().min(1).optional(),
   attributes: z.record(z.string(), z.unknown()).optional(),
   tags: z.array(z.string().min(1)).optional(),
@@ -205,12 +211,56 @@ const patchTaskSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
-const recurringTaskRecurrenceInputSchema = z.object({
-  frequency: z.enum(["daily", "weekly", "monthly"]),
-  interval: z.number().int().min(1).max(12).optional(),
-  days_of_week: z.array(recurringTaskWeekdaySchema).optional(),
-  days_of_month: z.array(z.number().int().min(1).max(31)).optional(),
-  week_of_month: z.union([z.number().int().min(1).max(5), z.literal("last")]).optional(),
+const recurringTaskRecurrenceInputSchema = z
+  .object({
+    frequency: z.enum(["daily", "weekly", "monthly", "yearly"]),
+    interval: z.number().int().min(1).max(12).optional(),
+    month_of_year: z.number().int().min(1).max(12).optional(),
+    days_of_week: z.array(recurringTaskWeekdaySchema).optional(),
+    days_of_month: z.array(z.number().int().min(1).max(31)).optional(),
+    week_of_month: z.union([z.number().int().min(1).max(5), z.literal("last")]).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.frequency !== "yearly") {
+      if (value.month_of_year !== undefined) {
+        ctx.addIssue({ code: "custom", path: ["month_of_year"], message: "month_of_year is yearly-only" });
+      }
+      return;
+    }
+    if (value.month_of_year === undefined) {
+      ctx.addIssue({ code: "custom", path: ["month_of_year"], message: "yearly recurrence requires month_of_year" });
+    }
+    const hasFixedDay = Boolean(value.days_of_month?.length);
+    const hasNthWeekday = Boolean(value.week_of_month && value.days_of_week?.length);
+    if (hasFixedDay === hasNthWeekday) {
+      ctx.addIssue({ code: "custom", message: "yearly recurrence requires one fixed day or one nth weekday rule" });
+    }
+    if (value.days_of_month && value.days_of_month.length !== 1) {
+      ctx.addIssue({ code: "custom", path: ["days_of_month"], message: "yearly recurrence requires one day" });
+    }
+    const fixedDay = value.days_of_month?.[0];
+    if (
+      value.month_of_year !== undefined &&
+      fixedDay !== undefined &&
+      fixedDay > maximumDayOfYearlyMonth(value.month_of_year)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["days_of_month", 0],
+        message: `day ${fixedDay} does not exist in month ${value.month_of_year}`,
+      });
+    }
+    if (hasNthWeekday && value.days_of_week?.length !== 1) {
+      ctx.addIssue({ code: "custom", path: ["days_of_week"], message: "yearly recurrence requires one weekday" });
+    }
+  });
+
+const recurringTaskDayOfTaskInputSchema = z.object({
+  enabled: z.boolean().optional(),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  due_time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(),
+  priority: z.enum(["low", "medium", "high"]).optional(),
 });
 
 const listRecurringTasksSchema = z.object({
@@ -218,20 +268,37 @@ const listRecurringTasksSchema = z.object({
   limit: z.number().int().min(1).max(100).optional(),
 });
 
-const upsertRecurringTaskSchema = z.object({
-  recurring_task_id: z.string().min(1).optional(),
-  title: z.string().min(1),
-  description: z.string().optional(),
-  recurrence: recurringTaskRecurrenceInputSchema,
-  due_time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-  timezone: z.string().min(1).optional(),
-  enabled: z.boolean().optional(),
-  owner_user_id: z.string().min(1).optional(),
-  priority: z.enum(["low", "medium", "high"]).optional(),
-  source_type: z.string().optional(),
-  source_ref: z.string().optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-});
+const upsertRecurringTaskSchema = z
+  .object({
+    recurring_task_id: z.string().min(1).optional(),
+    title: z.string().min(1),
+    description: z.string().optional(),
+    recurrence: recurringTaskRecurrenceInputSchema,
+    lead_time_days: z.number().int().min(0).max(366).optional(),
+    day_of_task: recurringTaskDayOfTaskInputSchema.optional(),
+    due_time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(),
+    timezone: z.string().min(1).optional(),
+    enabled: z.boolean().optional(),
+    owner_user_id: z.string().min(1).optional(),
+    priority: z.enum(["low", "medium", "high"]).optional(),
+    source_type: z.string().optional(),
+    source_ref: z.string().optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const dayOfEnabled = value.day_of_task?.enabled ?? Boolean(value.day_of_task);
+    if (
+      dayOfEnabled &&
+      (value.lead_time_days === 0 ||
+        (value.lead_time_days === undefined && value.recurring_task_id === undefined))
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["day_of_task"],
+        message: "day_of_task requires lead_time_days greater than zero",
+      });
+    }
+  });
 
 const disableRecurringTaskSchema = z.object({
   recurring_task_id: z.string().min(1),
@@ -440,6 +507,7 @@ const discardCalendarDraftSchema = z.object({
 
 type CalendarDraftCandidateInput = z.infer<typeof calendarDraftCandidateSchema>;
 type RecurringTaskRecurrenceInput = z.infer<typeof recurringTaskRecurrenceInputSchema>;
+type RecurringTaskDayOfTaskInput = z.infer<typeof recurringTaskDayOfTaskInputSchema>;
 type ScheduledReminderRecurrenceInput = z.infer<typeof scheduledReminderRecurrenceInputSchema>;
 
 interface AppliedCalendarDraftEventResult {
@@ -462,6 +530,8 @@ const CALENDAR_TOOL_NAMES = new Set([
   "create_calendar_draft",
   "apply_calendar_draft",
 ]);
+const MULTIPLE_MEMORY_DATES_ERROR =
+  "save_memory attributes.date_validation must be a single object. Save one date-bearing fact per memory; for multiple dates, call save_memory separately for each date.";
 
 export interface ToolExecutionContext {
   source?: string;
@@ -891,6 +961,24 @@ export class CustomToolExecutor {
         (tasks ?? []).map((task) => serializeTaskState(task)),
         (task) => stringRecordValue(task, "task_id"),
       );
+
+      if (shouldIncludeScheduledDatedMemories(this.context)) {
+        const datedMemories = await captureContextSearchSource(
+          "memories",
+          undefined,
+          searchErrors,
+          async () =>
+            this.listScheduledDatedMemories({
+              dueBefore: parsed.task_due_before,
+              limit: parsed.limit,
+            }),
+        );
+        addUniqueSearchRecords(
+          memoryResultsById,
+          datedMemories ?? [],
+          (memory) => `${stringRecordValue(memory, "scope")}:${stringRecordValue(memory, "memory_id")}`,
+        );
+      }
     }
 
     let webPayload: Record<string, unknown> | undefined;
@@ -972,6 +1060,76 @@ export class CustomToolExecutor {
       .map(serializeRecurringTaskSearchResult);
   }
 
+  private async listScheduledDatedMemories(input: {
+    dueBefore?: string;
+    limit?: number;
+  }): Promise<Record<string, unknown>[]> {
+    const searchLimit = 20;
+    const outputLimit = Math.min(Math.max(input.limit ?? 10, 1), searchLimit);
+    const records: Array<{ date: string; record: Record<string, unknown> }> = [];
+
+    if (this.context.channelId && this.repositories.channelMemories) {
+      const memories = await this.repositories.channelMemories.search({
+        workspaceId: this.context.workspaceId,
+        channelId: this.context.channelId,
+        query: "",
+        limit: searchLimit,
+        statuses: ["active"],
+      });
+      records.push(
+        ...memories
+          .map((memory) => ({
+            date: memoryDateValue(memory.attributes),
+            record: serializeChannelMemorySearchResult(memory),
+          }))
+          .filter(isScheduledDatedMemoryRecord(input.dueBefore)),
+      );
+    }
+
+    if (this.context.userId && this.repositories.userPreferences) {
+      const preferences = await this.repositories.userPreferences.search({
+        workspaceId: this.context.workspaceId,
+        userId: this.context.userId,
+        query: "",
+        limit: searchLimit,
+      });
+      records.push(
+        ...preferences
+          .map((preference) => ({
+            date: memoryDateValue(preference.attributes),
+            record: serializeUserPreferenceSearchResult(preference),
+          }))
+          .filter(isScheduledDatedMemoryRecord(input.dueBefore)),
+      );
+    }
+
+    if (!this.context.channelId && !this.context.userId) {
+      const memories = await this.repositories.memoryItems.search({
+        workspaceId: this.context.workspaceId,
+        query: "",
+        limit: searchLimit,
+      });
+      records.push(
+        ...memories
+          .map((memory) => ({
+            date: memoryDateValue(memory.attributes),
+            record: serializeWorkspaceMemorySearchResult(memory),
+          }))
+          .filter(isScheduledDatedMemoryRecord(input.dueBefore)),
+      );
+    }
+
+    return records
+      .sort(
+        (a, b) =>
+          a.date.localeCompare(b.date) ||
+          numberRecordValue(b.record, "importance") - numberRecordValue(a.record, "importance") ||
+          stringRecordValue(b.record, "updated_at").localeCompare(stringRecordValue(a.record, "updated_at")),
+      )
+      .slice(0, outputLimit)
+      .map(({ record }) => record);
+  }
+
   private async searchMemories(input: Record<string, unknown>): Promise<ToolExecutionResult> {
     const parsed = searchMemoriesSchema.parse(input);
     const scope = parsed.scope ?? inferSearchScope(this.context);
@@ -990,6 +1148,7 @@ export class CustomToolExecutor {
         ...memories.map((memory) => ({
           scope: "channel",
           memory_id: memory.memoryId,
+          dedupe_key: memory.dedupeKey,
           entity_key: memory.entityKey,
           text: memory.text,
           attributes: memory.attributes ?? {},
@@ -1061,7 +1220,23 @@ export class CustomToolExecutor {
     const origin = parsed.origin ?? this.context.memoryWritePolicy?.defaultOrigin ?? "explicit";
     const entityKey = normalizeEntityKey(parsed.entity_key);
     const tags = normalizeTags(parsed.tags);
-    const dateValidationError = validateMemoryDateWrite(parsed.text, parsed.attributes);
+    let validationAttributes = parsed.attributes;
+    if (
+      scope === "channel" &&
+      parsed.memory_id &&
+      this.context.channelId &&
+      this.repositories.channelMemories
+    ) {
+      const existing = await this.repositories.channelMemories.get(
+        this.context.workspaceId,
+        this.context.channelId,
+        parsed.memory_id,
+      );
+      if (existing?.attributes || parsed.attributes) {
+        validationAttributes = { ...(existing?.attributes ?? {}), ...(parsed.attributes ?? {}) };
+      }
+    }
+    const dateValidationError = validateMemoryDateWrite(parsed.text, validationAttributes);
     if (dateValidationError) {
       return errorResult(dateValidationError);
     }
@@ -1075,9 +1250,12 @@ export class CustomToolExecutor {
         origin === "explicit"
           ? "active"
           : this.context.memoryWritePolicy?.channelInferredStatus ?? "active";
-      const memory = await this.repositories.channelMemories.save({
+      const memory = await this.repositories.channelMemories.upsert({
         workspaceId: this.context.workspaceId,
         channelId: this.context.channelId,
+        memoryId: normalizeOptionalString(parsed.memory_id),
+        dedupeKey: normalizeMemoryDedupeKey(parsed.dedupe_key),
+        expectedUpdatedAt: normalizeOptionalString(parsed.expected_updated_at),
         entityKey,
         text: parsed.text,
         attributes: parsed.attributes,
@@ -1094,6 +1272,7 @@ export class CustomToolExecutor {
         saved: true,
         scope: "channel",
         memory_id: memory.memoryId,
+        dedupe_key: memory.dedupeKey,
         entity_key: memory.entityKey,
         text: memory.text,
         tags: memory.tags ?? [],
@@ -1102,6 +1281,12 @@ export class CustomToolExecutor {
         approval_required: memory.status === "candidate",
         updated_at: memory.updatedAt,
       });
+    }
+
+    if (parsed.memory_id || parsed.dedupe_key || parsed.expected_updated_at) {
+      return errorResult(
+        "memory_id, dedupe_key, and expected_updated_at are currently supported only for channel memory.",
+      );
     }
 
     if (scope === "user_preference") {
@@ -1538,6 +1723,8 @@ export class CustomToolExecutor {
         title: task.title,
         description: task.description,
         recurrence: serializeRecurringTaskRecurrence(task.recurrence),
+        lead_time_days: task.leadTimeDays,
+        day_of_task: serializeRecurringTaskDayOfTask(task.dayOfTask),
         due_time: task.dueTime,
         timezone: task.timezone,
         enabled: task.enabled,
@@ -1554,15 +1741,18 @@ export class CustomToolExecutor {
     const parsed = upsertRecurringTaskSchema.parse(input);
     const repository = this.requireRecurringTaskRepository();
     const recurrence = normalizeRecurringTaskRecurrence(parsed.recurrence);
+    const dayOfTask = normalizeRecurringTaskDayOfTask(parsed.day_of_task);
     const recurringTaskId =
       normalizeOptionalString(parsed.recurring_task_id) ??
-      buildRecurringTaskId(parsed.title, recurrence, parsed.due_time);
+      buildRecurringTaskId(parsed.title, recurrence, parsed.due_time, parsed.lead_time_days, dayOfTask);
     const task = await repository.upsert({
       recurringTaskId,
       workspaceId: this.context.workspaceId,
       title: parsed.title,
       description: parsed.description,
       recurrence,
+      leadTimeDays: parsed.lead_time_days,
+      dayOfTask,
       dueTime: parsed.due_time ?? "23:59",
       timezone: parsed.timezone ?? this.getDefaultCalendarTimeZone(),
       enabled: parsed.enabled,
@@ -1579,6 +1769,8 @@ export class CustomToolExecutor {
       recurring_task_id: task.recurringTaskId,
       title: task.title,
       recurrence: serializeRecurringTaskRecurrence(task.recurrence),
+      lead_time_days: task.leadTimeDays,
+      day_of_task: serializeRecurringTaskDayOfTask(task.dayOfTask),
       due_time: task.dueTime,
       timezone: task.timezone,
       enabled: task.enabled,
@@ -2462,6 +2654,15 @@ function normalizeEntityKey(value?: string): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
+function normalizeMemoryDedupeKey(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, "-");
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 function normalizeTags(tags?: string[]): string[] | undefined {
   if (!tags || tags.length === 0) {
     return undefined;
@@ -2472,6 +2673,10 @@ function normalizeTags(tags?: string[]): string[] | undefined {
 }
 
 function validateMemoryDateWrite(text: string, attributes?: Record<string, unknown>): string | undefined {
+  if (hasDateValidationArray(attributes)) {
+    return MULTIPLE_MEMORY_DATES_ERROR;
+  }
+
   if (!hasExplicitDateReference(text)) {
     return undefined;
   }
@@ -2481,7 +2686,9 @@ function validateMemoryDateWrite(text: string, attributes?: Record<string, unkno
     return "save_memory for date-bearing text requires attributes.date_validation from normalize_date.";
   }
 
-  return validateDateValidationRecord("save_memory", validation);
+  return validateDateValidationRecord("save_memory", validation, {
+    allowPast: isHistoricalMemoryDate(attributes),
+  });
 }
 
 function validateTaskDateWrite(
@@ -2512,12 +2719,16 @@ function validateTaskDateWrite(
   return undefined;
 }
 
-function validateDateValidationRecord(toolName: string, validation: Record<string, unknown>): string | undefined {
+function validateDateValidationRecord(
+  toolName: string,
+  validation: Record<string, unknown>,
+  options: { allowPast?: boolean } = {},
+): string | undefined {
   const normalizedDate = validationDateValue(validation);
   if (!normalizedDate) {
     return `${toolName} date_validation must include normalized_date from normalize_date.`;
   }
-  if (validation.is_past === true && validation.user_confirmed !== true) {
+  if (validation.is_past === true && !options.allowPast && validation.user_confirmed !== true) {
     return `${toolName} date_validation resolved to a past date; ask the user to confirm before saving or set date_validation.user_confirmed=true after confirmation.`;
   }
   if (validation.weekday_matches === false && validation.user_confirmed !== true) {
@@ -2534,6 +2745,14 @@ function getDateValidation(record?: Record<string, unknown>): Record<string, unk
 
   const candidate = record.date_validation ?? record.dateValidation;
   return isPlainRecord(candidate) ? candidate : undefined;
+}
+
+function hasDateValidationArray(record?: Record<string, unknown>): boolean {
+  if (!record) {
+    return false;
+  }
+
+  return Array.isArray(record.date_validation) || Array.isArray(record.dateValidation);
 }
 
 function validationDateValue(validation: Record<string, unknown>): string | undefined {
@@ -2566,6 +2785,8 @@ function serializeRecurringTaskSearchResult(task: RecurringTask): Record<string,
     title: task.title,
     description: task.description,
     recurrence: serializeRecurringTaskRecurrence(task.recurrence),
+    lead_time_days: task.leadTimeDays,
+    day_of_task: serializeRecurringTaskDayOfTask(task.dayOfTask),
     due_time: task.dueTime,
     timezone: task.timezone,
     enabled: task.enabled,
@@ -2575,6 +2796,90 @@ function serializeRecurringTaskSearchResult(task: RecurringTask): Record<string,
     source_ref: task.sourceRef,
     updated_at: task.updatedAt,
   };
+}
+
+function shouldIncludeScheduledDatedMemories(context: ToolExecutionContext): boolean {
+  return context.source === "scheduler";
+}
+
+function isScheduledDatedMemoryRecord(dueBefore?: string) {
+  const dueBeforeDate = dueBefore ? extractDatePart(dueBefore) : undefined;
+  return (
+    candidate: { date: string | undefined; record: Record<string, unknown> },
+  ): candidate is { date: string; record: Record<string, unknown> } => {
+    if (!candidate.date) {
+      return false;
+    }
+
+    return !dueBeforeDate || candidate.date <= dueBeforeDate;
+  };
+}
+
+function memoryDateValue(attributes?: Record<string, unknown>): string | undefined {
+  if (
+    attributes?.include_in_daily_reminder !== true ||
+    normalizeMemoryDateKind(attributes?.date_kind) === "birthday"
+  ) {
+    return undefined;
+  }
+  const validation = getDateValidation(attributes);
+  return validation ? validationDateValue(validation) : undefined;
+}
+
+function isHistoricalMemoryDate(attributes?: Record<string, unknown>): boolean {
+  const kind = normalizeMemoryDateKind(attributes?.date_kind);
+  return kind === "birthday" || kind === "historical";
+}
+
+function normalizeMemoryDateKind(value: unknown): string | undefined {
+  return typeof value === "string" ? value.trim().toLowerCase() : undefined;
+}
+
+function serializeChannelMemorySearchResult(memory: ChannelMemoryItem): Record<string, unknown> {
+  return {
+    scope: "channel",
+    memory_id: memory.memoryId,
+    dedupe_key: memory.dedupeKey,
+    entity_key: memory.entityKey,
+    text: memory.text,
+    attributes: memory.attributes ?? {},
+    tags: memory.tags ?? [],
+    importance: memory.importance ?? 0,
+    updated_at: memory.updatedAt,
+    status: memory.status,
+  };
+}
+
+function serializeUserPreferenceSearchResult(preference: UserPreferenceItem): Record<string, unknown> {
+  return {
+    scope: "user_preference",
+    memory_id: preference.preferenceId,
+    preference_key: preference.preferenceKey,
+    entity_key: preference.entityKey,
+    text: preference.text,
+    attributes: preference.attributes ?? {},
+    tags: preference.tags ?? [],
+    importance: preference.importance ?? 0,
+    updated_at: preference.updatedAt,
+  };
+}
+
+function serializeWorkspaceMemorySearchResult(memory: MemoryItem): Record<string, unknown> {
+  return {
+    scope: "workspace",
+    memory_id: memory.memoryId,
+    entity_key: memory.entityKey,
+    text: memory.text,
+    attributes: memory.attributes ?? {},
+    tags: memory.tags ?? [],
+    importance: memory.importance ?? 0,
+    updated_at: memory.updatedAt,
+  };
+}
+
+function numberRecordValue(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  return typeof value === "number" ? value : 0;
 }
 
 function inferSearchScope(context: ToolExecutionContext): "all" | "workspace" {
@@ -2951,10 +3256,25 @@ function normalizeRecurringTaskRecurrence(
   return {
     frequency: input.frequency,
     interval: input.interval ?? 1,
+    monthOfYear: input.month_of_year,
     daysOfWeek: input.days_of_week && input.days_of_week.length > 0 ? [...new Set(input.days_of_week)] : undefined,
     daysOfMonth: input.days_of_month && input.days_of_month.length > 0 ? [...new Set(input.days_of_month)] : undefined,
     weekOfMonth: input.week_of_month,
   };
+}
+
+function normalizeRecurringTaskDayOfTask(
+  input?: RecurringTaskDayOfTaskInput,
+): RecurringTask["dayOfTask"] {
+  return input
+    ? {
+        enabled: input.enabled ?? true,
+        title: input.title,
+        description: input.description,
+        dueTime: input.due_time,
+        priority: input.priority,
+      }
+    : undefined;
 }
 
 function serializeRecurringTaskRecurrence(
@@ -2963,6 +3283,7 @@ function serializeRecurringTaskRecurrence(
   return {
     frequency: recurrence.frequency,
     interval: recurrence.interval,
+    month_of_year: recurrence.monthOfYear,
     days_of_week: recurrence.daysOfWeek,
     days_of_month: recurrence.daysOfMonth,
     week_of_month: recurrence.weekOfMonth,
@@ -2973,16 +3294,44 @@ function buildRecurringTaskId(
   title: string,
   recurrence: RecurringTaskRecurrence,
   dueTime?: string,
+  leadTimeDays?: number,
+  dayOfTask?: unknown,
 ): string {
+  const identity: Record<string, unknown> = {
+    title: title.trim().toLowerCase(),
+    recurrence,
+    dueTime: dueTime ?? "23:59",
+  };
+  if ((leadTimeDays ?? 0) > 0) {
+    identity.leadTimeDays = leadTimeDays;
+  }
+  if (dayOfTask !== undefined) {
+    identity.dayOfTask = dayOfTask;
+  }
   const hash = createHash("sha256")
-    .update(JSON.stringify({
-      title: title.trim().toLowerCase(),
-      recurrence,
-      dueTime: dueTime ?? "23:59",
-    }))
+    .update(JSON.stringify(identity))
     .digest("hex")
     .slice(0, 16);
   return `rt_${hash}`;
+}
+
+function serializeRecurringTaskDayOfTask(
+  dayOfTask: RecurringTask["dayOfTask"],
+): Record<string, unknown> | undefined {
+  if (!dayOfTask) {
+    return undefined;
+  }
+  return {
+    enabled: dayOfTask.enabled,
+    title: dayOfTask.title,
+    description: dayOfTask.description,
+    due_time: dayOfTask.dueTime,
+    priority: dayOfTask.priority,
+  };
+}
+
+function maximumDayOfYearlyMonth(month: number): number {
+  return [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 31;
 }
 
 function isDateOnly(value: string): boolean {

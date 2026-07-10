@@ -949,6 +949,7 @@ describe("task repositories", () => {
         recurrence: { frequency: "daily" },
       }),
     ).resolves.toMatchObject({
+      leadTimeDays: 0,
       dueTime: "23:59",
       timezone: "Asia/Tokyo",
       enabled: true,
@@ -981,6 +982,80 @@ describe("task repositories", () => {
       enabled: false,
       createdAt: "created",
     });
+
+    sendMock.mockResolvedValueOnce({});
+    sendMock.mockResolvedValueOnce({});
+    await expect(
+      repo.upsert({
+        recurringTaskId: "rt-yearly",
+        workspaceId: "T1",
+        title: "Father's Day preparation",
+        recurrence: {
+          frequency: "yearly",
+          interval: 1,
+          monthOfYear: 6,
+          daysOfWeek: ["sunday"],
+          weekOfMonth: 3,
+        },
+        leadTimeDays: 7,
+        dayOfTask: {
+          enabled: true,
+          title: "Send Father's Day message",
+          dueTime: "09:00",
+        },
+      }),
+    ).resolves.toMatchObject({
+      leadTimeDays: 7,
+      dayOfTask: { enabled: true, title: "Send Father's Day message", dueTime: "09:00" },
+    });
+    expect(commandInput(sendMock.mock.calls.length - 1)).toMatchObject({
+      Item: {
+        leadTimeDays: 7,
+        dayOfTask: { enabled: true, title: "Send Father's Day message", dueTime: "09:00" },
+      },
+    });
+  });
+
+  it("validates the fully merged recurring task before persisting an update", async () => {
+    const repo = new RecurringTaskRepository("recurring");
+    sendMock.mockResolvedValueOnce({
+      Item: {
+        recurringTaskId: "rt-yearly",
+        workspaceId: "T1",
+        title: "Prepare",
+        recurrence: {
+          frequency: "yearly",
+          interval: 1,
+          monthOfYear: 5,
+          daysOfWeek: ["sunday"],
+          weekOfMonth: 2,
+        },
+        leadTimeDays: 7,
+        dayOfTask: { enabled: true, title: "Send message" },
+        dueTime: "23:59",
+        timezone: "Asia/Tokyo",
+        enabled: true,
+        createdAt: "created",
+        updatedAt: "updated",
+      },
+    });
+
+    await expect(
+      repo.upsert({
+        recurringTaskId: "rt-yearly",
+        workspaceId: "T1",
+        title: "Prepare",
+        recurrence: {
+          frequency: "yearly",
+          interval: 1,
+          monthOfYear: 5,
+          daysOfWeek: ["sunday"],
+          weekOfMonth: 2,
+        },
+        leadTimeDays: 0,
+      }),
+    ).rejects.toThrow("dayOfTask requires leadTimeDays");
+    expect(sendMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1253,6 +1328,399 @@ describe("memory repositories", () => {
 
     sendMock.mockResolvedValueOnce({});
     await expect(repo.get("T1", "C1", "missing")).resolves.toBeNull();
+  });
+
+  it("idempotently upserts channel memories by dedupe key and promotes explicit candidates", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-10T01:00:00Z"));
+    const repo = new ChannelMemoryRepository("channel-memory");
+
+    sendMock
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            workspaceId: "T1",
+            channelId: "C1",
+            memoryId: "chanmem_existing",
+            dedupeKey: "person:fixture-taro:birthday",
+            entityKey: "person:fixture-taro",
+            text: "架空太郎：2000年1月2日生",
+            attributes: { date_kind: "birthday" },
+            tags: ["family", "birthday"],
+            importance: 0.8,
+            status: "candidate",
+            origin: "inferred",
+            sourceType: "document_import",
+            sourceRef: "s3://source/document.pdf",
+            createdByUserId: "U1",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    const result = await repo.upsert({
+      workspaceId: "T1",
+      channelId: "C1",
+      dedupeKey: "person:fixture-taro:birthday",
+      text: "架空太郎（かくうたろう）：2000年1月2日生まれ。",
+      attributes: { reading: "かくうたろう" },
+      tags: ["birthday"],
+      status: "active",
+      origin: "explicit",
+      sourceType: "agent",
+      createdByUserId: "U1",
+    });
+
+    expect(result).toMatchObject({
+      memoryId: "chanmem_existing",
+      dedupeKey: "person:fixture-taro:birthday",
+      status: "active",
+      origin: "explicit",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-07-10T01:00:00.000Z",
+      attributes: { date_kind: "birthday", reading: "かくうたろう" },
+      tags: ["family", "birthday"],
+      entityKey: "person:fixture-taro",
+      importance: 0.8,
+      sourceType: "document_import",
+      sourceRef: "s3://source/document.pdf",
+    });
+    expect(commandInput(1)).toMatchObject({
+      TableName: "channel-memory",
+      Item: {
+        sk: "MEMORY#chanmem_existing",
+        dedupeKey: "person:fixture-taro:birthday",
+        status: "active",
+        origin: "explicit",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+      ConditionExpression: "#updatedAt = :expectedUpdatedAt",
+      ExpressionAttributeValues: {
+        ":expectedUpdatedAt": "2026-01-01T00:00:00.000Z",
+      },
+    });
+  });
+
+  it("adds a dedupe key to an exact legacy candidate instead of creating a duplicate", async () => {
+    const repo = new ChannelMemoryRepository("channel-memory");
+    sendMock
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            workspaceId: "T1",
+            channelId: "C1",
+            memoryId: "chanmem_legacy",
+            entityKey: "person:fixture-taro",
+            text: "架空太郎の誕生日は1月2日",
+            status: "candidate",
+            origin: "inferred",
+            createdAt: "created",
+            updatedAt: "updated",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    await expect(
+      repo.upsert({
+        workspaceId: "T1",
+        channelId: "C1",
+        dedupeKey: "person:fixture-taro:birthday",
+        entityKey: "person:fixture-taro",
+        text: "架空太郎の誕生日は1月2日",
+        status: "active",
+        origin: "explicit",
+      }),
+    ).resolves.toMatchObject({
+      memoryId: "chanmem_legacy",
+      dedupeKey: "person:fixture-taro:birthday",
+      status: "active",
+    });
+    expect(commandInput(1)).toMatchObject({
+      Item: { sk: "MEMORY#chanmem_legacy" },
+      ConditionExpression: "#updatedAt = :expectedUpdatedAt",
+    });
+  });
+
+  it("re-reads after a concurrent deduplicated create instead of overwriting it", async () => {
+    const repo = new ChannelMemoryRepository("channel-memory");
+    sendMock
+      .mockResolvedValueOnce({ Items: [] })
+      .mockRejectedValueOnce({ name: "ConditionalCheckFailedException" })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            workspaceId: "T1",
+            channelId: "C1",
+            memoryId: "chanmem_concurrent",
+            dedupeKey: "project:alpha:owner",
+            text: "Alpha owner is U1",
+            status: "active",
+            origin: "explicit",
+            sourceType: "agent",
+            createdByUserId: "U1",
+            createdAt: "created",
+            updatedAt: "updated",
+          },
+        ],
+      });
+
+    await expect(
+      repo.upsert({
+        workspaceId: "T1",
+        channelId: "C1",
+        dedupeKey: "project:alpha:owner",
+        text: "Alpha owner is U1",
+        status: "active",
+        origin: "explicit",
+        sourceType: "agent",
+        createdByUserId: "U1",
+      }),
+    ).resolves.toMatchObject({ memoryId: "chanmem_concurrent", status: "active" });
+    expect(commandInput(1)).toMatchObject({
+      ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+    });
+    expect(sendMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("lets a live canonical memory reuse a dedupe key left on an archived duplicate", async () => {
+    const repo = new ChannelMemoryRepository("channel-memory");
+    sendMock
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            workspaceId: "T1",
+            channelId: "C1",
+            memoryId: "chanmem_active",
+            dedupeKey: "person:fixture-taro:birthday",
+            text: "Canonical birthday",
+            status: "active",
+            origin: "explicit",
+            createdAt: "active-created",
+            updatedAt: "active-updated",
+          },
+          {
+            workspaceId: "T1",
+            channelId: "C1",
+            memoryId: "chanmem_archived",
+            dedupeKey: "person:fixture-taro:birthday",
+            text: "Duplicate birthday",
+            status: "archived",
+            origin: "inferred",
+            createdAt: "archived-created",
+            updatedAt: "archived-updated",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    await expect(
+      repo.upsert({
+        workspaceId: "T1",
+        channelId: "C1",
+        memoryId: "chanmem_active",
+        dedupeKey: "person:fixture-taro:birthday",
+        expectedUpdatedAt: "active-updated",
+        text: "Canonical birthday with reading",
+        status: "active",
+        origin: "explicit",
+      }),
+    ).resolves.toMatchObject({ memoryId: "chanmem_active", status: "active" });
+  });
+
+  it("does not let inferred input rewrite an approved explicit memory", async () => {
+    const repo = new ChannelMemoryRepository("channel-memory");
+    sendMock.mockResolvedValueOnce({
+      Items: [
+        {
+          workspaceId: "T1",
+          channelId: "C1",
+          memoryId: "chanmem_approved",
+          dedupeKey: "project:fixture:owner",
+          text: "The approved owner is U1",
+          status: "active",
+          origin: "explicit",
+          createdAt: "created",
+          updatedAt: "updated",
+        },
+      ],
+    });
+
+    await expect(
+      repo.upsert({
+        workspaceId: "T1",
+        channelId: "C1",
+        dedupeKey: "project:fixture:owner",
+        text: "The inferred owner might be U2",
+        status: "candidate",
+        origin: "inferred",
+      }),
+    ).rejects.toThrow("active and cannot be changed by inferred input");
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires a version token before changing approved explicit memory", async () => {
+    const repo = new ChannelMemoryRepository("channel-memory");
+    sendMock.mockResolvedValueOnce({
+      Items: [
+        {
+          workspaceId: "T1",
+          channelId: "C1",
+          memoryId: "chanmem_approved",
+          dedupeKey: "project:fixture:owner",
+          text: "The approved owner is U1",
+          status: "active",
+          origin: "explicit",
+          createdAt: "created",
+          updatedAt: "updated",
+        },
+      ],
+    });
+
+    await expect(
+      repo.upsert({
+        workspaceId: "T1",
+        channelId: "C1",
+        dedupeKey: "project:fixture:owner",
+        text: "The approved owner is U2",
+        status: "active",
+        origin: "explicit",
+      }),
+    ).rejects.toThrow("requires memory_id and expected_updated_at");
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not overwrite concurrent approved memory after an inferred create loses the race", async () => {
+    const repo = new ChannelMemoryRepository("channel-memory");
+    sendMock
+      .mockResolvedValueOnce({ Items: [] })
+      .mockRejectedValueOnce({ name: "ConditionalCheckFailedException" })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            workspaceId: "T1",
+            channelId: "C1",
+            memoryId: "chanmem_concurrent_approved",
+            dedupeKey: "project:fixture:owner",
+            text: "The approved owner is U1",
+            status: "active",
+            origin: "explicit",
+            createdAt: "created",
+            updatedAt: "updated",
+          },
+        ],
+      });
+
+    await expect(
+      repo.upsert({
+        workspaceId: "T1",
+        channelId: "C1",
+        dedupeKey: "project:fixture:owner",
+        text: "The inferred owner might be U2",
+        status: "candidate",
+        origin: "inferred",
+      }),
+    ).rejects.toThrow("cannot be changed by inferred input");
+    expect(sendMock).toHaveBeenCalledTimes(3);
+    expect(commandInput(1)).toMatchObject({
+      ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+    });
+  });
+
+  it("accepts a versioned retry when a concurrent writer already stored the same state", async () => {
+    const repo = new ChannelMemoryRepository("channel-memory");
+    sendMock
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            workspaceId: "T1",
+            channelId: "C1",
+            memoryId: "chanmem_versioned",
+            dedupeKey: "project:fixture:owner",
+            text: "The owner is U1",
+            status: "active",
+            origin: "explicit",
+            createdAt: "created",
+            updatedAt: "version-1",
+          },
+        ],
+      })
+      .mockRejectedValueOnce({ name: "ConditionalCheckFailedException" })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            workspaceId: "T1",
+            channelId: "C1",
+            memoryId: "chanmem_versioned",
+            dedupeKey: "project:fixture:owner",
+            text: "The owner is U2",
+            status: "active",
+            origin: "explicit",
+            createdAt: "created",
+            updatedAt: "version-2",
+          },
+        ],
+      });
+
+    await expect(
+      repo.upsert({
+        workspaceId: "T1",
+        channelId: "C1",
+        memoryId: "chanmem_versioned",
+        dedupeKey: "project:fixture:owner",
+        expectedUpdatedAt: "version-1",
+        text: "The owner is U2",
+        status: "active",
+        origin: "explicit",
+      }),
+    ).resolves.toMatchObject({ text: "The owner is U2", updatedAt: "version-2" });
+    expect(sendMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects stale or cross-channel channel-memory updates", async () => {
+    const repo = new ChannelMemoryRepository("channel-memory");
+
+    sendMock.mockResolvedValueOnce({ Items: [] });
+    await expect(
+      repo.upsert({
+        workspaceId: "T1",
+        channelId: "C1",
+        memoryId: "chanmem_missing",
+        expectedUpdatedAt: "old",
+        text: "Updated fact",
+        status: "active",
+        origin: "explicit",
+      }),
+    ).rejects.toThrow("was not found in the current channel");
+
+    sendMock.mockResolvedValueOnce({
+      Items: [
+        {
+          workspaceId: "T1",
+          channelId: "C1",
+          memoryId: "chanmem_existing",
+          text: "Existing fact",
+          status: "active",
+          origin: "explicit",
+          createdAt: "created",
+          updatedAt: "newer",
+        },
+      ],
+    });
+    await expect(
+      repo.upsert({
+        workspaceId: "T1",
+        channelId: "C1",
+        memoryId: "chanmem_existing",
+        expectedUpdatedAt: "stale",
+        text: "Updated fact",
+        status: "active",
+        origin: "explicit",
+      }),
+    ).rejects.toThrow("changed since it was loaded");
+    expect(sendMock).toHaveBeenCalledTimes(2);
   });
 
   it("saves and searches user preferences", async () => {

@@ -82,6 +82,21 @@ export interface RunAgentTurnOptions {
 const bedrockServiceTiers = ["reserved", "priority", "default", "flex"] as const;
 const inMemorySessionHistories = new Map<string, SessionHistoryMessage[]>();
 const maxSessionHistoryMessages = 20;
+const writeToolNames = new Set([
+  "save_memory",
+  "promote_memory_to_workspace",
+  "upsert_task",
+  "patch_task",
+  "mark_task_done",
+  "upsert_recurring_task",
+  "disable_recurring_task",
+  "create_scheduled_reminder",
+  "update_scheduled_reminder",
+  "delete_scheduled_reminder",
+  "create_calendar_draft",
+  "apply_calendar_draft",
+  "discard_calendar_draft",
+]);
 
 const inMemorySessionHistoryStore: SessionHistoryStore = {
   get(sessionId: string) {
@@ -99,11 +114,9 @@ export async function* runAgentTurn(options: RunAgentTurnOptions): AsyncGenerato
   const started = Date.now();
   const startedAt = new Date(started).toISOString();
   const toolCalls: AgentTurnToolCallTrace[] = [];
-  const onToolCall = options.saveTurnTrace
-    ? (call: AgentTurnToolCallTrace) => {
-        toolCalls.push(call);
-      }
-    : undefined;
+  const onToolCall = (call: AgentTurnToolCallTrace) => {
+    toolCalls.push(call);
+  };
   const selectedModelId = selectModelId(request, options.documentModelId ?? options.modelId, options.modelId);
   const selectedBedrockServiceTier =
     selectedModelId === options.modelId ? options.bedrockServiceTier : undefined;
@@ -170,6 +183,14 @@ export async function* runAgentTurn(options: RunAgentTurnOptions): AsyncGenerato
 
       assistantText += part.text;
       yield { event: "message", data: { text: part.text } };
+    }
+
+    const writeToolFailureNotice = buildWriteToolFailureNotice(toolCalls, request);
+    if (writeToolFailureNotice) {
+      const separator = assistantText.trim() ? "\n\n" : "";
+      const noticeText = `${separator}${writeToolFailureNotice}`;
+      assistantText += noticeText;
+      yield { event: "message", data: { text: noticeText } };
     }
 
     summary = executor?.getSummary() ?? summary;
@@ -239,6 +260,120 @@ function emptyToolSummary(): {
     savedMemoryIds: [],
     calendarDraftIds: [],
   };
+}
+
+function buildWriteToolFailureNotice(
+  toolCalls: AgentTurnToolCallTrace[],
+  request: AgentRuntimeRequest,
+): string | undefined {
+  const writeErrors = toolCalls
+    .filter((call, index) =>
+      call.isError &&
+      writeToolNames.has(call.name) &&
+      !hasLaterSuccessfulEquivalentWrite(toolCalls, index, call)
+    )
+    .map((call) => ({
+      name: call.name,
+      message: extractToolCallErrorMessage(call),
+    }))
+    .filter((error) => error.message);
+
+  if (writeErrors.length === 0) {
+    return undefined;
+  }
+
+  const uniqueErrors = Array.from(
+    new Map(writeErrors.map((error) => [`${error.name}:${error.message}`, error])).values(),
+  ).slice(0, 5);
+  const lines = uniqueErrors.map((error) => `- ${error.name}: ${error.message}`);
+
+  if (shouldUseJapaneseWriteFailureNotice(request)) {
+    return [
+      "保存できませんでした。実際には保存・更新されていません。",
+      "原因:",
+      ...lines,
+    ].join("\n");
+  }
+
+  return [
+    "The save or update failed. Nothing was saved or changed.",
+    "Cause:",
+    ...lines,
+  ].join("\n");
+}
+
+function hasLaterSuccessfulEquivalentWrite(
+  toolCalls: AgentTurnToolCallTrace[],
+  failedIndex: number,
+  failedCall: AgentTurnToolCallTrace,
+): boolean {
+  const failedKey = buildWriteToolAttemptKey(failedCall);
+  return toolCalls
+    .slice(failedIndex + 1)
+    .some((call) => !call.isError && writeToolNames.has(call.name) && buildWriteToolAttemptKey(call) === failedKey);
+}
+
+function buildWriteToolAttemptKey(call: AgentTurnToolCallTrace): string {
+  return `${call.name}:${stableStringify(canonicalizeWriteToolInput(call.input))}`;
+}
+
+function canonicalizeWriteToolInput(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizeWriteToolInput);
+  }
+
+  if (!isRecord(value)) {
+    return value;
+  }
+
+  const entries = Object.entries(value)
+    .filter(([key]) => key !== "date_validation" && key !== "dateValidation")
+    .map(([key, item]) => [key, canonicalizeWriteToolInput(item)] as const)
+    .filter(([, item]) => !isEmptyCanonicalValue(item))
+    .sort(([left], [right]) => left.localeCompare(right));
+
+  return Object.fromEntries(entries);
+}
+
+function isEmptyCanonicalValue(value: unknown): boolean {
+  return isRecord(value) && Object.keys(value).length === 0;
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value) ?? String(value);
+}
+
+function extractToolCallErrorMessage(call: AgentTurnToolCallTrace): string {
+  if (call.error) {
+    return call.error;
+  }
+
+  const output = call.output;
+  if (!isRecord(output)) {
+    return "Tool execution failed.";
+  }
+
+  const content = output.content;
+  if (!Array.isArray(content)) {
+    return "Tool execution failed.";
+  }
+
+  for (const block of content) {
+    if (isRecord(block) && block.type === "text" && typeof block.text === "string" && block.text.trim()) {
+      return block.text;
+    }
+  }
+
+  return "Tool execution failed.";
+}
+
+function shouldUseJapaneseWriteFailureNotice(request: AgentRuntimeRequest): boolean {
+  const language = request.resources?.defaultResponseLanguage?.trim().toLowerCase();
+  if (language?.startsWith("ja")) {
+    return true;
+  }
+
+  return /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(toHistoryText(request.content));
 }
 
 export function parseBedrockServiceTier(value: string | undefined): BedrockServiceTier | undefined {
@@ -530,4 +665,8 @@ function inferMediaTypeFromTitle(title: string | undefined): string {
     return "text/html";
   }
   return "application/octet-stream";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

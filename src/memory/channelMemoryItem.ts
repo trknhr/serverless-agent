@@ -2,6 +2,7 @@ export interface ChannelMemoryItem {
   workspaceId: string;
   channelId: string;
   memoryId: string;
+  dedupeKey?: string;
   text: string;
   entityKey?: string;
   attributes?: Record<string, unknown>;

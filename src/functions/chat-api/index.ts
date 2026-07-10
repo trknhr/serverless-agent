@@ -13,6 +13,7 @@ const env = loadChatApiEnv();
 const agentClient = new AgentCoreRuntimeClient({
   runtimeArn: env.AGENTCORE_RUNTIME_ARN,
   qualifier: env.AGENTCORE_RUNTIME_QUALIFIER,
+  responseTimeoutMs: env.AGENT_RESPONSE_TIMEOUT_MS,
 });
 const skillRegistry = env.SKILLS_TABLE_NAME
   ? new SkillRegistry(new DynamoDbSkillRepository(env.SKILLS_TABLE_NAME))

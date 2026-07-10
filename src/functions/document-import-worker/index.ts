@@ -34,6 +34,7 @@ const s3 = new S3Client({});
 const agentClient = new AgentCoreRuntimeClient({
   runtimeArn: env.AGENTCORE_RUNTIME_ARN,
   qualifier: env.AGENTCORE_RUNTIME_QUALIFIER,
+  responseTimeoutMs: env.AGENT_RESPONSE_TIMEOUT_MS,
 });
 const sourceDocumentRepository = new SourceDocumentRepository(env.SOURCE_DOCUMENTS_TABLE_NAME);
 

@@ -407,8 +407,8 @@ Provider conversation key examples:
 - Slack channel: `channel:{channelId}`
 
 Slack conversations prevent direct `save_memory` writes to workspace scope.
-Inferred channel memory is saved as a candidate, while scheduled reminders run
-with workspace scope. After explicit user approval, the assistant can copy a
+Inferred channel memory is saved as a candidate. Scheduled turns also default
+proactive channel-memory writes to inferred candidates. After explicit user approval, the assistant can copy a
 current-channel memory into workspace memory with `promote_memory_to_workspace`;
 the promoted item keeps provenance for the original channel and memory ID.
 
@@ -428,6 +428,12 @@ The runner also materializes enabled recurring task definitions for the next 7
 days before building the reminder prompt. Scheduled reminders control when the
 assistant posts; recurring task definitions control which repeated duties are
 included in the reminder.
+
+Recurring tasks support daily, weekly, monthly, and yearly rules. A yearly rule
+uses `monthOfYear` with either a fixed `daysOfMonth` value or an nth weekday.
+`leadTimeDays` moves the primary deadline before the event, and `dayOfTask` can
+materialize a separate action on the event date. Existing open instances are
+refreshed when those definition fields change.
 
 Example scheduled task:
 
@@ -483,8 +489,8 @@ Example recurring task:
 ```json
 {
   "pk": "WORKSPACE#workspace_demo",
-  "sk": "RECURRING_TASK#rt_cfc324a11246c10f",
-  "recurringTaskId": "rt_cfc324a11246c10f",
+  "sk": "RECURRING_TASK#rt_example_weekly_report",
+  "recurringTaskId": "rt_example_weekly_report",
   "workspaceId": "workspace_demo",
   "title": "Submit weekly report",
   "recurrence": {
@@ -603,7 +609,7 @@ npm run extract-pdf-markdown -- \
 ## Markdown Ingestion
 
 Markdown ingestion uses the same `SourceDocumentsTable`, private S3 archive
-bucket, and import worker. Repeating rules such as weekly or monthly duties
+bucket, and import worker. Repeating rules such as weekly, monthly, or yearly duties
 should be captured as recurring task definitions, not one-off task instances.
 
 Supported formats:

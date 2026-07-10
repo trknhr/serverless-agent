@@ -34,6 +34,7 @@ const secretsProvider = new SecretsProvider();
 const agentClient = new AgentCoreRuntimeClient({
   runtimeArn: env.AGENTCORE_RUNTIME_ARN,
   qualifier: env.AGENTCORE_RUNTIME_QUALIFIER,
+  responseTimeoutMs: env.AGENT_RESPONSE_TIMEOUT_MS,
 });
 const slackClient = new SlackWebClient(() =>
   secretsProvider.getSecretString(env.SLACK_BOT_TOKEN_SECRET_ID),
@@ -315,7 +316,7 @@ async function invokeAgentOrRespondWithError(input: {
           memoryWritePolicy: {
             allowWorkspaceMemory: false,
             channelInferredStatus: "candidate",
-            defaultOrigin: "inferred",
+            defaultOrigin: "explicit",
           },
         },
       },

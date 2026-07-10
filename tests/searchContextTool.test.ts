@@ -198,6 +198,121 @@ describe("search_context tool", () => {
     });
   });
 
+  it("includes dated channel memories in scheduled task-list context", async () => {
+    const tasks = {
+      list: vi.fn().mockResolvedValue([
+        {
+          workspaceId: "T1",
+          taskId: "task_fixture_b",
+          title: "テスト作業B",
+          status: "open",
+          dueAt: "2026-07-10T23:59:00+09:00",
+          updatedAt: "2026-07-06T23:00:18.653Z",
+        },
+      ]),
+    };
+    const channelMemories = {
+      search: vi.fn().mockResolvedValue([
+        {
+          workspaceId: "T1",
+          channelId: "C1",
+          memoryId: "chanmem_fixture_deadline",
+          text: "テスト申請Aは2026-07-07が期限。",
+          attributes: {
+            include_in_daily_reminder: true,
+            date_validation: {
+              normalized_date: "2026-07-07",
+            },
+          },
+          tags: ["schedule"],
+          importance: 0.8,
+          status: "active",
+          updatedAt: "2026-07-06T01:00:00.000Z",
+        },
+        {
+          workspaceId: "T1",
+          channelId: "C1",
+          memoryId: "chanmem_fixture_rule",
+          text: "テスト応答は短めにする。",
+          attributes: {},
+          tags: ["rule"],
+          importance: 0.5,
+          status: "active",
+          updatedAt: "2026-07-06T00:00:00.000Z",
+        },
+        {
+          workspaceId: "T1",
+          channelId: "C1",
+          memoryId: "chanmem_fixture_birthday",
+          text: "架空太郎は2000年1月2日生まれ。",
+          attributes: {
+            date_kind: "birthday",
+            include_in_daily_reminder: true,
+            date_validation: {
+              normalized_date: "2000-01-02",
+            },
+          },
+          tags: ["family", "birthday"],
+          importance: 0.9,
+          status: "active",
+          updatedAt: "2026-07-06T02:00:00.000Z",
+        },
+      ]),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        tasks,
+        taskEvents: {},
+        memoryItems: {},
+        channelMemories,
+      } as never,
+      {
+        source: "scheduler",
+        workspaceId: "T1",
+        userId: "U1",
+        channelId: "C1",
+        logger: new Logger({ test: "scheduled-list-tasks-dated-memory" }),
+      } as never,
+    );
+
+    const result = await executor.execute({
+      id: "tool-list-tasks-scheduled-with-memory",
+      type: "agent.tool_use",
+      name: "search_context",
+      input: {
+        task_statuses: ["open", "in_progress"],
+        task_due_before: "2026-07-14T00:00:00+09:00",
+        limit: 10,
+      },
+    });
+
+    expect(channelMemories.search).toHaveBeenCalledWith({
+      workspaceId: "T1",
+      channelId: "C1",
+      query: "",
+      limit: 20,
+      statuses: ["active"],
+    });
+    expect(toolPayload(result)).toMatchObject({
+      count: 2,
+      tasks: [
+        {
+          task_id: "task_fixture_b",
+          title: "テスト作業B",
+        },
+      ],
+      memories: [
+        {
+          scope: "channel",
+          memory_id: "chanmem_fixture_deadline",
+          text: "テスト申請Aは2026-07-07が期限。",
+        },
+      ],
+    });
+    expect(JSON.stringify(toolPayload(result))).not.toContain("chanmem_fixture_rule");
+    expect(JSON.stringify(toolPayload(result))).not.toContain("chanmem_fixture_birthday");
+  });
+
   it("searches saved tasks and memories through one read-only tool", async () => {
     const memoryItems = {
       search: vi.fn().mockResolvedValue([

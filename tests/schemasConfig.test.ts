@@ -435,6 +435,44 @@ describe("task schemas", () => {
       recurringTaskRecurrenceSchema.parse({ frequency: "monthly", daysOfMonth: [32] }),
     ).toThrow();
     expect(
+      recurringTaskRecurrenceSchema.parse({
+        frequency: "yearly",
+        monthOfYear: 6,
+        daysOfWeek: ["sunday"],
+        weekOfMonth: 3,
+      }),
+    ).toMatchObject({
+      frequency: "yearly",
+      interval: 1,
+      monthOfYear: 6,
+    });
+    expect(() =>
+      recurringTaskRecurrenceSchema.parse({ frequency: "yearly", daysOfMonth: [20] }),
+    ).toThrow("monthOfYear");
+    expect(() =>
+      recurringTaskRecurrenceSchema.parse({
+        frequency: "yearly",
+        monthOfYear: 6,
+        daysOfMonth: [20],
+        daysOfWeek: ["sunday"],
+        weekOfMonth: 3,
+      }),
+    ).toThrow();
+    expect(() =>
+      recurringTaskRecurrenceSchema.parse({
+        frequency: "yearly",
+        monthOfYear: 2,
+        daysOfMonth: [30],
+      }),
+    ).toThrow("does not exist");
+    expect(
+      recurringTaskRecurrenceSchema.parse({
+        frequency: "yearly",
+        monthOfYear: 2,
+        daysOfMonth: [29],
+      }),
+    ).toMatchObject({ monthOfYear: 2, daysOfMonth: [29] });
+    expect(
       recurringTaskSchema.parse({
         recurringTaskId: "rt1",
         workspaceId: "T1",
@@ -444,10 +482,42 @@ describe("task schemas", () => {
         updatedAt: "updated",
       }),
     ).toMatchObject({
+      leadTimeDays: 0,
       dueTime: "23:59",
       timezone: "Asia/Tokyo",
       enabled: true,
     });
+    expect(
+      recurringTaskSchema.parse({
+        recurringTaskId: "rt-yearly",
+        workspaceId: "T1",
+        title: "Prepare Father's Day gift",
+        recurrence: {
+          frequency: "yearly",
+          monthOfYear: 6,
+          daysOfWeek: ["sunday"],
+          weekOfMonth: 3,
+        },
+        leadTimeDays: 7,
+        dayOfTask: { title: "Send Father's Day message" },
+        createdAt: "created",
+        updatedAt: "updated",
+      }),
+    ).toMatchObject({
+      leadTimeDays: 7,
+      dayOfTask: { enabled: true, title: "Send Father's Day message" },
+    });
+    expect(() =>
+      recurringTaskSchema.parse({
+        recurringTaskId: "rt-invalid-time",
+        workspaceId: "T1",
+        title: "Invalid time",
+        recurrence: { frequency: "daily" },
+        dueTime: "25:99",
+        createdAt: "created",
+        updatedAt: "updated",
+      }),
+    ).toThrow();
   });
 });
 

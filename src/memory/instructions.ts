@@ -11,7 +11,11 @@ export const MEMORY_RESOURCE_PROMPT = [
   "Use save_memory scope=user_preference for cross-channel personal preferences.",
   "In Slack conversations, do not use save_memory scope=workspace. Use promote_memory_to_workspace after explicit approval to share a channel memory beyond the current channel.",
   "Set save_memory origin=explicit only when the user directly asks you to remember or always apply something; otherwise set origin=inferred.",
+  "Before correcting or enriching a memory, search for it and pass its memory_id plus expected_updated_at=<returned updated_at> to save_memory instead of creating another record.",
+  "For new channel facts, pass a stable one-fact dedupe_key such as person:hanako:birthday.",
   "For memories containing dates, call normalize_date first and include its result in attributes.date_validation.",
+  "For birth dates, set attributes.date_kind=birthday. Do not mark birthdays for generic daily reminder inclusion; use a yearly recurring task when reminders are requested.",
+  "Save one date per date-bearing memory; if a source has multiple dates, call save_memory separately for each dated fact.",
   "Use stable entity_key values such as person:hanako, project:renovation, place:home, or vendor:costco when possible.",
   "Use short category tags such as preference, family, schedule, rule, project, or shopping.",
   "Do not save transient chatter, one-off daily summaries, or low-value noise.",
@@ -23,6 +27,7 @@ export const SCHEDULED_MEMORY_RESOURCE_PROMPT = [
   "If the first search is weak, retry with alternate queries before concluding the memory is missing.",
   "Save only durable task-scoped facts and rules, with one memory per fact.",
   "Do not save transient daily status unless it will remain useful later.",
+  "For date-bearing facts, save one date per memory with one attributes.date_validation object.",
 ].join(" ");
 
 export const DOCUMENT_IMPORT_MEMORY_INSTRUCTIONS = [
@@ -30,8 +35,9 @@ export const DOCUMENT_IMPORT_MEMORY_INSTRUCTIONS = [
   "When saving memories, split them into atomic facts instead of one long summary.",
   "Use stable entity_key values such as person:..., project:..., place:..., or vendor:... when possible.",
   "Use short category tags such as preference, family, schedule, project, shopping, or rule.",
-  "Use upsert_recurring_task for repeating duties or reminders such as daily, weekly, or monthly tasks.",
+  "Use upsert_recurring_task for repeating duties or reminders such as daily, weekly, monthly, or yearly tasks.",
   "For extracted dates, keep the original date text separate from the resolved date by calling normalize_date first.",
+  "For extracted date-bearing memories, save one date per memory instead of storing multiple date validations in one memory.",
   "Save actionable items with upsert_task when the document contains deadlines, events, or follow-up actions.",
   "Do not turn a recurring rule into a one-off task unless the document names a specific dated occurrence.",
   "Do not save low-value noise.",

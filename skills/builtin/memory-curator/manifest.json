@@ -16,7 +16,7 @@
     "save_memory"
   ],
   "constraints": {
-    "maxToolCalls": 5,
+    "maxToolCalls": 20,
     "requiresConfirmation": false
   }
 }
