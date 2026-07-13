@@ -36,6 +36,11 @@ Use browser tools for public JavaScript-heavy or interactive pages when web_extr
 For Google Calendar writes, create a reviewable calendar draft first unless the request is an explicit approval of an existing draft.
 Keep chat replies concise and actionable.`;
 
+export const writeIntegrityPrompt = `Write integrity rules:
+- Treat a save, registration, creation, update, deletion, disablement, completion, or calendar application as complete only after the corresponding write tool returns a successful result in the current turn.
+- Never claim that data was saved, registered, created, updated, deleted, disabled, completed, or applied when only a read/search tool ran or when no matching write tool succeeded.
+- When the user explicitly requests a write, perform any required lookup or validation and then call the matching write tool. If a unique target, required confirmation, or required input is missing, ask a concise clarification or explain the blocker without implying that anything changed.`;
+
 export type SystemPromptMode = "append" | "replace";
 
 export interface BuildSystemPromptOptions {
@@ -50,7 +55,7 @@ export function buildSystemPrompt(skillPrompt: string, options: BuildSystemPromp
       ? customSystemPrompt
       : [defaultSystemPrompt, customSystemPrompt].filter(Boolean).join("\n\n");
 
-  return [basePrompt, skillPrompt].filter(Boolean).join("\n\n");
+  return [basePrompt, skillPrompt, writeIntegrityPrompt].filter(Boolean).join("\n\n");
 }
 
 export function parseSystemPromptMode(value: string | undefined): SystemPromptMode {

@@ -148,18 +148,51 @@ export class TaskStateRepository {
       input.statuses && input.statuses.length > 0
         ? input.statuses
         : (["open", "in_progress", "done", "cancelled"] as TaskStatus[]);
-    const candidates = await this.list({
-      workspaceId: input.workspaceId,
-      statuses,
-      dueBefore: input.dueBefore,
-      ownerUserId: input.ownerUserId,
-      limit: 50,
-    });
     const terms = normalizeSearchText(query).split(/\s+/).filter(Boolean);
     const limit = Math.min(Math.max(input.limit ?? 10, 1), 50);
+    const matches: TaskState[] = [];
 
-    return candidates
-      .filter((task) => matchesTaskSearch(task, terms))
+    for (const status of statuses) {
+      let exclusiveStartKey: Record<string, unknown> | undefined;
+
+      do {
+        const response = await documentClient.send(
+          new QueryCommand({
+            TableName: this.tableName,
+            IndexName: "StatusIndex",
+            KeyConditionExpression: "gsi1pk = :gsi1pk",
+            ExpressionAttributeValues: {
+              ":gsi1pk": buildStatusGsiPk(input.workspaceId, status),
+            },
+            ScanIndexForward: true,
+            Limit: 100,
+            ExclusiveStartKey: exclusiveStartKey,
+          }),
+        );
+
+        for (const item of response.Items ?? []) {
+          const task = mapTaskState(item);
+          if (input.ownerUserId && task.ownerUserId && task.ownerUserId !== input.ownerUserId) {
+            continue;
+          }
+          if (input.dueBefore && task.dueAt && task.dueAt > input.dueBefore) {
+            continue;
+          }
+          if (matchesTaskSearch(task, terms)) {
+            matches.push(task);
+          }
+        }
+
+        exclusiveStartKey = response.LastEvaluatedKey;
+      } while (exclusiveStartKey);
+    }
+
+    return matches
+      .sort((a, b) => {
+        const dueA = a.dueAt ?? "9999-12-31T23:59:59.999Z";
+        const dueB = b.dueAt ?? "9999-12-31T23:59:59.999Z";
+        return dueA.localeCompare(dueB) || b.updatedAt.localeCompare(a.updatedAt);
+      })
       .slice(0, limit);
   }
 

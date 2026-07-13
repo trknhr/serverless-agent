@@ -910,6 +910,54 @@ describe("task repositories", () => {
     ]);
   });
 
+  it("searches every task status page before applying the result limit", async () => {
+    const repo = new TaskStateRepository("states");
+    const nextPageKey = {
+      gsi1pk: "WORKSPACE#T1#STATUS#open",
+      gsi1sk: "DUE#2026-06-30#UPDATED#updated#TASK#decoy-49",
+      pk: "WORKSPACE#T1",
+      sk: "TASK#decoy-49",
+    };
+
+    sendMock
+      .mockResolvedValueOnce({
+        Items: Array.from({ length: 50 }, (_, index) => ({
+          workspaceId: "T1",
+          taskId: `decoy-${index}`,
+          title: `Unrelated task ${index}`,
+          status: "open",
+          dueAt: "2026-06-30",
+          createdAt: "created",
+          updatedAt: "updated",
+        })),
+        LastEvaluatedKey: nextPageKey,
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            workspaceId: "T1",
+            taskId: "task-target",
+            title: "対象の備品を購入",
+            status: "open",
+            createdAt: "created",
+            updatedAt: "updated",
+          },
+        ],
+      });
+
+    await expect(
+      repo.search({
+        workspaceId: "T1",
+        query: "対象の備品を購入",
+        statuses: ["open"],
+        limit: 5,
+      }),
+    ).resolves.toEqual([expect.objectContaining({ taskId: "task-target" })]);
+    expect(sendMock).toHaveBeenCalledTimes(2);
+    expect(commandInput(0)).toMatchObject({ Limit: 100 });
+    expect(commandInput(1)).toMatchObject({ ExclusiveStartKey: nextPageKey });
+  });
+
   it("gets, lists, upserts, and disables recurring tasks", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-14T00:00:00Z"));

@@ -70,16 +70,21 @@ describe("Agent runtime instructions", () => {
     expect(prompt).toContain("Use tools for durable memory");
     expect(prompt).toContain("Deployment-specific instructions.");
     expect(prompt).toContain("Skill summaries.");
+    expect(prompt).toContain("Write integrity rules");
+    expect(prompt).toContain("only after the corresponding write tool returns a successful result");
+    expect(prompt).toContain("when no matching write tool succeeded");
   });
 
-  it("can replace the default system prompt with deployment-specific instructions", () => {
+  it("keeps write integrity rules when replacing the default system prompt", () => {
     const prompt = buildSystemPrompt("Skill summaries.", {
       customSystemPrompt: "Deployment-specific instructions.",
       systemPromptMode: "replace",
     });
 
     expect(prompt).not.toContain("Use tools for durable memory");
-    expect(prompt).toBe("Deployment-specific instructions.\n\nSkill summaries.");
+    expect(prompt).toContain("Deployment-specific instructions.\n\nSkill summaries.");
+    expect(prompt).toContain("Write integrity rules");
+    expect(prompt).toContain("when no matching write tool succeeded");
   });
 
   it("parses custom system prompt mode from runtime environment values", () => {

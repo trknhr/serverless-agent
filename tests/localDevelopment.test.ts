@@ -92,6 +92,42 @@ describe("local development state", () => {
     await expect(store.get("local-session")).resolves.toHaveLength(2);
   });
 
+  it("searches local tasks after filtering the complete workspace task set", async () => {
+    const store = await createTempStateStore();
+
+    await store.update((state) => {
+      for (let index = 0; index < 50; index += 1) {
+        state.tasks.push({
+          workspaceId: "local-workspace",
+          taskId: `decoy-${index}`,
+          title: `Unrelated task ${index}`,
+          status: "open",
+          dueAt: "2026-06-30",
+          createdAt: "created",
+          updatedAt: "updated",
+        });
+      }
+      state.tasks.push({
+        workspaceId: "local-workspace",
+        taskId: "task-target",
+        title: "対象の備品を購入",
+        status: "open",
+        createdAt: "created",
+        updatedAt: "updated",
+      });
+    });
+
+    const repositories = createLocalRepositories(store);
+    await expect(
+      repositories.tasks.search({
+        workspaceId: "local-workspace",
+        query: "対象の備品を購入",
+        statuses: ["open"],
+        limit: 5,
+      }),
+    ).resolves.toEqual([expect.objectContaining({ taskId: "task-target" })]);
+  });
+
   it("runs an agent turn with file-backed local session history", async () => {
     const store = await createTempStateStore();
     const streamInputs: unknown[] = [];

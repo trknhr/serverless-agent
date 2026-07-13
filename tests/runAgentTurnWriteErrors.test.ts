@@ -6,7 +6,7 @@ import { Logger } from "../src/shared/logger";
 import { CustomToolExecutor } from "../src/tools/executeCustomTool";
 
 describe("runAgentTurn write tool errors", () => {
-  it("streams a failure notice when a write tool fails even if the model claims success", async () => {
+  it("replaces an unsupported success claim when a write tool fails", async () => {
     let agentOptions: {
       tools?: Record<string, { execute: (input: Record<string, unknown>) => Promise<ToolExecutionResult> }>;
     } = {};
@@ -78,7 +78,6 @@ describe("runAgentTurn write tool errors", () => {
     }
 
     expect(events).toMatchObject([
-      { event: "message", data: { text: "保存しました" } },
       {
         event: "message",
         data: {
@@ -87,7 +86,7 @@ describe("runAgentTurn write tool errors", () => {
       },
       { event: "metadata", data: { taskIds: [], recurringTaskIds: [], savedMemoryIds: [] } },
     ]);
-    expect(events[1]).toMatchObject({
+    expect(events[0]).toMatchObject({
       event: "message",
       data: {
         text: expect.stringContaining(
@@ -95,6 +94,7 @@ describe("runAgentTurn write tool errors", () => {
         ),
       },
     });
+    expect(events[0]).not.toMatchObject({ event: "message", data: { text: "保存しました" } });
   });
 
   it("does not stream a failure notice when a failed write is corrected by a later successful write", async () => {
@@ -205,5 +205,432 @@ describe("runAgentTurn write tool errors", () => {
       { event: "metadata", data: { taskIds: ["task_1"], recurringTaskIds: [], savedMemoryIds: [] } },
     ]);
     expect(events).toHaveLength(2);
+  });
+
+  it("replaces a write success claim when no write tool ran and separates model output from audited output", async () => {
+    class FakeToolLoopAgent {
+      constructor(_options: unknown) {}
+
+      async stream(): Promise<{ fullStream: AsyncIterable<Record<string, unknown>> }> {
+        return {
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: "保存しました" };
+          })(),
+        };
+      }
+    }
+    const ai: AgentRunnerAi = {
+      ToolLoopAgent: FakeToolLoopAgent,
+      jsonSchema: (schema) => schema,
+      tool: (options) => options,
+    };
+    const executor = {
+      execute: vi.fn(),
+      getSummary: () => ({
+        taskIds: [],
+        recurringTaskIds: [],
+        savedMemoryIds: [],
+        calendarDraftIds: [],
+      }),
+    } as unknown as CustomToolExecutor;
+    const historyStore = {
+      get: vi.fn().mockResolvedValue([]),
+      set: vi.fn().mockResolvedValue(undefined),
+    };
+    const saveTurnTrace = vi.fn().mockResolvedValue(undefined);
+    const request: AgentRuntimeRequest = {
+      content: [{ type: "text", text: "この内容を覚えておいて" }],
+      context: {
+        source: "direct_chat_api",
+        workspaceId: "T1",
+        userId: "U1",
+        channelId: "C1",
+      },
+      toolContext: {
+        workspaceId: "T1",
+        userId: "U1",
+        channelId: "C1",
+      },
+    };
+
+    const events = [];
+    for await (const event of runAgentTurn({
+      request,
+      sessionId: "session-write-audit",
+      ai,
+      modelProvider: () => ({}),
+      modelId: "test-model",
+      log: new Logger({ test: "missing-write-tool-claim" }),
+      createExecutor: () => executor,
+      sessionHistoryStore: historyStore,
+      saveTurnTrace,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toMatchObject([
+      {
+        event: "message",
+        data: { text: expect.stringContaining("宣言された変更を確認できませんでした") },
+      },
+      { event: "metadata", data: { taskIds: [], recurringTaskIds: [], savedMemoryIds: [] } },
+    ]);
+    expect(JSON.stringify(events)).not.toContain("保存しました");
+    expect(historyStore.set).toHaveBeenCalledWith("session-write-audit", [
+      { role: "user", content: "この内容を覚えておいて" },
+      { role: "assistant", content: expect.stringContaining("宣言された変更を確認できませんでした") },
+    ]);
+    expect(saveTurnTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelOutput: { text: "保存しました" },
+        output: { text: expect.stringContaining("宣言された変更を確認できませんでした") },
+      }),
+    );
+  });
+
+  it("does not accept a read-only search as evidence that a task was completed", async () => {
+    let agentOptions: {
+      tools?: Record<string, { execute: (input: Record<string, unknown>) => Promise<ToolExecutionResult> }>;
+    } = {};
+    class FakeToolLoopAgent {
+      constructor(options: unknown) {
+        agentOptions = options as typeof agentOptions;
+      }
+
+      async stream(): Promise<{ fullStream: AsyncIterable<Record<string, unknown>> }> {
+        await agentOptions.tools?.search_context.execute({
+          query: "テスト申請A",
+          task_statuses: ["open", "in_progress"],
+        });
+        return {
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: "完了にしました" };
+          })(),
+        };
+      }
+    }
+    const ai: AgentRunnerAi = {
+      ToolLoopAgent: FakeToolLoopAgent,
+      jsonSchema: (schema) => schema,
+      tool: (options) => options,
+    };
+    const executor = {
+      execute: vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ tasks: [{ task_id: "task_1" }] }) }],
+      }),
+      getSummary: () => ({
+        taskIds: [],
+        recurringTaskIds: [],
+        savedMemoryIds: [],
+        calendarDraftIds: [],
+      }),
+    } as unknown as CustomToolExecutor;
+    const request: AgentRuntimeRequest = {
+      content: [{ type: "text", text: "テスト申請Aを完了にして" }],
+      context: { source: "slack", workspaceId: "T1", userId: "U1", channelId: "C1" },
+      toolContext: { workspaceId: "T1", userId: "U1", channelId: "C1" },
+    };
+
+    const events = [];
+    for await (const event of runAgentTurn({
+      request,
+      ai,
+      modelProvider: () => ({}),
+      modelId: "test-model",
+      log: new Logger({ test: "read-only-completion-claim" }),
+      createExecutor: () => executor,
+    })) {
+      events.push(event);
+    }
+
+    expect(events[0]).toMatchObject({
+      event: "message",
+      data: { text: expect.stringContaining("宣言された変更を確認できませんでした") },
+    });
+    expect(JSON.stringify(events)).not.toContain("完了にしました");
+  });
+
+  it("keeps a task completion claim after mark_task_done succeeds", async () => {
+    let agentOptions: {
+      tools?: Record<string, { execute: (input: Record<string, unknown>) => Promise<ToolExecutionResult> }>;
+    } = {};
+    class FakeToolLoopAgent {
+      constructor(options: unknown) {
+        agentOptions = options as typeof agentOptions;
+      }
+
+      async stream(): Promise<{ fullStream: AsyncIterable<Record<string, unknown>> }> {
+        await agentOptions.tools?.mark_task_done.execute({ task_id: "task_1" });
+        return {
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: "完了にしました" };
+          })(),
+        };
+      }
+    }
+    const ai: AgentRunnerAi = {
+      ToolLoopAgent: FakeToolLoopAgent,
+      jsonSchema: (schema) => schema,
+      tool: (options) => options,
+    };
+    const executor = {
+      execute: vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ saved: true, task_id: "task_1", status: "done" }) }],
+      }),
+      getSummary: () => ({
+        taskIds: ["task_1"],
+        recurringTaskIds: [],
+        savedMemoryIds: [],
+        calendarDraftIds: [],
+      }),
+    } as unknown as CustomToolExecutor;
+    const request: AgentRuntimeRequest = {
+      content: [{ type: "text", text: "テスト申請Aを完了にして" }],
+      context: { source: "slack", workspaceId: "T1", userId: "U1", channelId: "C1" },
+      toolContext: { workspaceId: "T1", userId: "U1", channelId: "C1" },
+    };
+
+    const events = [];
+    for await (const event of runAgentTurn({
+      request,
+      ai,
+      modelProvider: () => ({}),
+      modelId: "test-model",
+      log: new Logger({ test: "successful-completion-claim" }),
+      createExecutor: () => executor,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toMatchObject([
+      { event: "message", data: { text: "完了にしました" } },
+      { event: "metadata", data: { taskIds: ["task_1"] } },
+    ]);
+  });
+
+  it.each([
+    "完了にしました",
+    "タスクを作成しました",
+  ])("does not use a memory write to support a task-domain claim: %s", async (modelText) => {
+    let agentOptions: {
+      tools?: Record<string, { execute: (input: Record<string, unknown>) => Promise<ToolExecutionResult> }>;
+    } = {};
+    class FakeToolLoopAgent {
+      constructor(options: unknown) {
+        agentOptions = options as typeof agentOptions;
+      }
+
+      async stream(): Promise<{ fullStream: AsyncIterable<Record<string, unknown>> }> {
+        await agentOptions.tools?.save_memory.execute({ text: "テスト用メモ", scope: "channel" });
+        return {
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: modelText };
+          })(),
+        };
+      }
+    }
+    const ai: AgentRunnerAi = {
+      ToolLoopAgent: FakeToolLoopAgent,
+      jsonSchema: (schema) => schema,
+      tool: (options) => options,
+    };
+    const executor = {
+      execute: vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ saved: true, memory_id: "mem_1" }) }],
+      }),
+      getSummary: () => ({
+        taskIds: [],
+        recurringTaskIds: [],
+        savedMemoryIds: ["mem_1"],
+        calendarDraftIds: [],
+      }),
+    } as unknown as CustomToolExecutor;
+    const request: AgentRuntimeRequest = {
+      content: [{ type: "text", text: "テスト申請Aを完了にして" }],
+      context: { source: "slack", workspaceId: "T1", userId: "U1", channelId: "C1" },
+      toolContext: { workspaceId: "T1", userId: "U1", channelId: "C1" },
+    };
+
+    const events = [];
+    for await (const event of runAgentTurn({
+      request,
+      ai,
+      modelProvider: () => ({}),
+      modelId: "test-model",
+      log: new Logger({ test: "unrelated-write-completion-claim" }),
+      createExecutor: () => executor,
+    })) {
+      events.push(event);
+    }
+
+    expect(events[0]).toMatchObject({
+      event: "message",
+      data: { text: expect.stringContaining("宣言された変更を確認できませんでした") },
+    });
+    expect(events[1]).toMatchObject({ event: "metadata", data: { savedMemoryIds: ["mem_1"] } });
+  });
+
+  it.each([
+    "対象タスクを完了登録しました",
+    "購入済みとのこと、メモしておきます",
+  ])("blocks an unverified production write-claim form: %s", async (modelText) => {
+    class FakeToolLoopAgent {
+      constructor(_options: unknown) {}
+
+      async stream(): Promise<{ fullStream: AsyncIterable<Record<string, unknown>> }> {
+        return {
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: modelText };
+          })(),
+        };
+      }
+    }
+    const ai: AgentRunnerAi = {
+      ToolLoopAgent: FakeToolLoopAgent,
+      jsonSchema: (schema) => schema,
+      tool: (options) => options,
+    };
+    const executor = {
+      execute: vi.fn(),
+      getSummary: () => ({
+        taskIds: [],
+        recurringTaskIds: [],
+        savedMemoryIds: [],
+        calendarDraftIds: [],
+      }),
+    } as unknown as CustomToolExecutor;
+    const request: AgentRuntimeRequest = {
+      content: [{ type: "text", text: "更新して" }],
+      context: { source: "slack", workspaceId: "T1", userId: "U1", channelId: "C1" },
+      toolContext: { workspaceId: "T1", userId: "U1", channelId: "C1" },
+    };
+
+    const events = [];
+    for await (const event of runAgentTurn({
+      request,
+      ai,
+      modelProvider: () => ({}),
+      modelId: "test-model",
+      log: new Logger({ test: "production-write-claim" }),
+      createExecutor: () => executor,
+    })) {
+      events.push(event);
+    }
+
+    expect(events[0]).toMatchObject({
+      event: "message",
+      data: { text: expect.stringContaining("宣言された変更を確認できませんでした") },
+    });
+  });
+
+  it("keeps a memory-domain claim after save_memory succeeds", async () => {
+    let agentOptions: {
+      tools?: Record<string, { execute: (input: Record<string, unknown>) => Promise<ToolExecutionResult> }>;
+    } = {};
+    class FakeToolLoopAgent {
+      constructor(options: unknown) {
+        agentOptions = options as typeof agentOptions;
+      }
+
+      async stream(): Promise<{ fullStream: AsyncIterable<Record<string, unknown>> }> {
+        await agentOptions.tools?.save_memory.execute({ text: "購入済み", scope: "channel" });
+        return {
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: "購入済みとのこと、メモしておきます" };
+          })(),
+        };
+      }
+    }
+    const ai: AgentRunnerAi = {
+      ToolLoopAgent: FakeToolLoopAgent,
+      jsonSchema: (schema) => schema,
+      tool: (options) => options,
+    };
+    const executor = {
+      execute: vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ saved: true, memory_id: "mem_1" }) }],
+      }),
+      getSummary: () => ({
+        taskIds: [],
+        recurringTaskIds: [],
+        savedMemoryIds: ["mem_1"],
+        calendarDraftIds: [],
+      }),
+    } as unknown as CustomToolExecutor;
+    const request: AgentRuntimeRequest = {
+      content: [{ type: "text", text: "購入済みと覚えておいて" }],
+      context: { source: "slack", workspaceId: "T1", userId: "U1", channelId: "C1" },
+      toolContext: { workspaceId: "T1", userId: "U1", channelId: "C1" },
+    };
+
+    const events = [];
+    for await (const event of runAgentTurn({
+      request,
+      ai,
+      modelProvider: () => ({}),
+      modelId: "test-model",
+      log: new Logger({ test: "successful-memory-claim" }),
+      createExecutor: () => executor,
+    })) {
+      events.push(event);
+    }
+
+    expect(events[0]).toEqual({
+      event: "message",
+      data: { text: "購入済みとのこと、メモしておきます" },
+    });
+  });
+
+  it.each([
+    "その情報は既に保存されています。",
+    "どのタスクを完了にしますか？",
+    "そのタスクは既に完了しました。",
+    "作業が完了しました。",
+    "作業が完了しましたね。",
+  ])("does not flag a read-only state description or clarification: %s", async (modelText) => {
+    class FakeToolLoopAgent {
+      constructor(_options: unknown) {}
+
+      async stream(): Promise<{ fullStream: AsyncIterable<Record<string, unknown>> }> {
+        return {
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: modelText };
+          })(),
+        };
+      }
+    }
+    const ai: AgentRunnerAi = {
+      ToolLoopAgent: FakeToolLoopAgent,
+      jsonSchema: (schema) => schema,
+      tool: (options) => options,
+    };
+    const executor = {
+      execute: vi.fn(),
+      getSummary: () => ({
+        taskIds: [],
+        recurringTaskIds: [],
+        savedMemoryIds: [],
+        calendarDraftIds: [],
+      }),
+    } as unknown as CustomToolExecutor;
+    const request: AgentRuntimeRequest = {
+      content: [{ type: "text", text: "確認して" }],
+      context: { source: "slack", workspaceId: "T1", userId: "U1", channelId: "C1" },
+      toolContext: { workspaceId: "T1", userId: "U1", channelId: "C1" },
+    };
+
+    const events = [];
+    for await (const event of runAgentTurn({
+      request,
+      ai,
+      modelProvider: () => ({}),
+      modelId: "test-model",
+      log: new Logger({ test: "non-write-claim" }),
+      createExecutor: () => executor,
+    })) {
+      events.push(event);
+    }
+
+    expect(events[0]).toEqual({ event: "message", data: { text: modelText } });
   });
 });

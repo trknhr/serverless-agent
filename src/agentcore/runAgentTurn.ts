@@ -83,6 +83,12 @@ const bedrockServiceTiers = ["reserved", "priority", "default", "flex"] as const
 const inMemorySessionHistories = new Map<string, SessionHistoryMessage[]>();
 const maxSessionHistoryMessages = 20;
 const writeToolNames = new Set([
+  "propose_skill",
+  "approve_skill",
+  "enable_skill",
+  "reject_skill",
+  "archive_skill",
+  "disable_skill",
   "save_memory",
   "promote_memory_to_workspace",
   "upsert_task",
@@ -97,6 +103,96 @@ const writeToolNames = new Set([
   "apply_calendar_draft",
   "discard_calendar_draft",
 ]);
+
+type WriteCapability =
+  | "any_write"
+  | "memory_write"
+  | "task_write"
+  | "complete_task"
+  | "recurring_task_write"
+  | "scheduled_reminder_write"
+  | "calendar_draft_write"
+  | "apply_calendar"
+  | "skill_write";
+
+const writeClaimPatterns: Array<{ capability: WriteCapability; pattern: RegExp }> = [
+  {
+    capability: "apply_calendar",
+    pattern:
+      /(?:^|[\n。！？!?])\s*(?:はい[、,]?\s*)?(?:Google\s*)?カレンダー(?:に|へ)[^。\n]{0,60}(?:登録|追加|反映)(?:しました|したよ|した)(?=$|[\s。！!？?])/iu,
+  },
+  {
+    capability: "apply_calendar",
+    pattern: /\bI(?:'ve| have)?\s+(?:added|applied)\b[^.!?\n]{0,80}\b(?:Google\s+)?Calendar\b/i,
+  },
+  {
+    capability: "complete_task",
+    pattern:
+      /(?:^|[\n。！？!?])\s*(?:はい[、,]?\s*)?(?:完了(?:済み)?(?:に|として登録)(?:しました|したよ|した)|(?:タスク|TODO|ToDo|todo|「[^」]{1,80}」|『[^』]{1,80}』)[^。\n]{0,60}を完了(?:済み)?(?:に)?(?:しました|したよ|した)|[^。\n]{1,80}を完了(?:済み)?登録(?:しました|したよ|した))(?=$|[\s。！!？?])/u,
+  },
+  {
+    capability: "complete_task",
+    pattern:
+      /\bI(?:'ve| have)?\s+marked\b[^.!?\n]{0,80}\b(?:task|todo|to-do)\b[^.!?\n]{0,40}\b(?:done|complete(?:d)?)\b/i,
+  },
+  {
+    capability: "memory_write",
+    pattern:
+      /(?:^|[\n。！？!?、,])\s*(?:はい[、,]?\s*)?(?:(?:この|その)?(?:情報|内容|メモ|記憶|「[^」]{1,80}」|『[^』]{1,80}』)[^。\n]{0,40}(?:を|は)?\s*)?(?:メモ|記憶)(?:に)?(?:しておき|しました|したよ|した|しておきます|しておきました)(?=$|[\s。！!？?])/u,
+  },
+  {
+    capability: "memory_write",
+    pattern:
+      /(?:^|[\n。！？!?、,])\s*(?:はい[、,]?\s*)?(?:(?:この|その)?(?:情報|内容|予定|メモ|記憶|リマインダー)[^。\n]{0,40}(?:を|は)?\s*)?覚えておき(?:ます|ました|ますね|ましたよ)(?=$|[\s。！!？?])/u,
+  },
+  {
+    capability: "memory_write",
+    pattern: /\bI(?:'ve| have)?\s+(?:saved|registered|remembered)\b[^.!?\n]{0,80}\b(?:memory|note|information|preference)\b/i,
+  },
+  {
+    capability: "memory_write",
+    pattern:
+      /(?:^|[\n。！？!?])\s*(?:はい[、,]?\s*)?(?:情報|内容|メモ|記憶)[^。\n]{0,60}(?:を)?(?:保存|登録|作成|追加|更新|変更)(?:しておき(?:ました|ます)|しました|したよ|した)(?=$|[\s。！!？?])/u,
+  },
+  {
+    capability: "task_write",
+    pattern:
+      /(?:^|[\n。！？!?])\s*(?:はい[、,]?\s*)?(?:タスク|TODO|ToDo|todo|「[^」]{1,80}」|『[^』]{1,80}』)[^。\n]{0,80}(?:を)?(?:保存|登録|作成|追加|更新|変更|削除|無効(?:化|に))(?:しておき(?:ました|ます)|しました|したよ|した)(?=$|[\s。！!？?])/u,
+  },
+  {
+    capability: "task_write",
+    pattern: /\bI(?:'ve| have)?\s+(?:created|added|updated|changed|deleted|disabled)\b[^.!?\n]{0,80}\b(?:task|todo|to-do)\b/i,
+  },
+  {
+    capability: "recurring_task_write",
+    pattern:
+      /(?:^|[\n。！？!?])\s*(?:はい[、,]?\s*)?(?:定期|繰り返し|毎日|毎週|毎月|毎年)[^。\n]{0,80}(?:タスク|作業)[^。\n]{0,60}(?:保存|登録|作成|追加|更新|変更|削除|無効(?:化|に))(?:しておき(?:ました|ます)|しました|したよ|した)(?=$|[\s。！!？?])/u,
+  },
+  {
+    capability: "scheduled_reminder_write",
+    pattern:
+      /(?:^|[\n。！？!?])\s*(?:はい[、,]?\s*)?(?:定期)?(?:リマインダー|通知)[^。\n]{0,80}(?:を)?(?:保存|登録|作成|追加|更新|変更|削除|無効(?:化|に))(?:しておき(?:ました|ます)|しました|したよ|した)(?=$|[\s。！!？?])/u,
+  },
+  {
+    capability: "calendar_draft_write",
+    pattern:
+      /(?:^|[\n。！？!?])\s*(?:はい[、,]?\s*)?(?:カレンダー)?下書き[^。\n]{0,80}(?:を)?(?:保存|作成|追加|更新|変更|削除|破棄)(?:しておき(?:ました|ます)|しました|したよ|した)(?=$|[\s。！!？?])/u,
+  },
+  {
+    capability: "skill_write",
+    pattern:
+      /(?:^|[\n。！？!?])\s*(?:はい[、,]?\s*)?スキル[^。\n]{0,80}(?:を)?(?:保存|提案|作成|承認|有効(?:化|に)|無効(?:化|に)|更新|変更|却下|削除|アーカイブ)(?:しておき(?:ました|ます)|しました|したよ|した)(?=$|[\s。！!？?])/u,
+  },
+  {
+    capability: "any_write",
+    pattern:
+      /(?:^|[\n。！？!?])\s*(?:はい[、,]?\s*)?(?:保存|登録|更新|変更|削除|無効(?:化|に))(?:しておき(?:ました|ます)|しました|したよ|した)(?=$|[\s。！!？?])/u,
+  },
+  {
+    capability: "any_write",
+    pattern: /\bI(?:'ve| have)?\s+(?:saved|registered|created|added|updated|changed|deleted|removed|disabled)\b/i,
+  },
+];
 
 const inMemorySessionHistoryStore: SessionHistoryStore = {
   get(sessionId: string) {
@@ -120,6 +216,7 @@ export async function* runAgentTurn(options: RunAgentTurnOptions): AsyncGenerato
   const selectedModelId = selectModelId(request, options.documentModelId ?? options.modelId, options.modelId);
   const selectedBedrockServiceTier =
     selectedModelId === options.modelId ? options.bedrockServiceTier : undefined;
+  let modelOutputText = "";
   let assistantText = "";
   let summary = emptyToolSummary();
   let status: AgentTurnTraceRecord["status"] = "completed";
@@ -181,16 +278,24 @@ export async function* runAgentTurn(options: RunAgentTurnOptions): AsyncGenerato
         continue;
       }
 
-      assistantText += part.text;
-      yield { event: "message", data: { text: part.text } };
+      modelOutputText += part.text;
     }
 
     const writeToolFailureNotice = buildWriteToolFailureNotice(toolCalls, request);
-    if (writeToolFailureNotice) {
-      const separator = assistantText.trim() ? "\n\n" : "";
-      const noticeText = `${separator}${writeToolFailureNotice}`;
-      assistantText += noticeText;
-      yield { event: "message", data: { text: noticeText } };
+    const unsupportedWriteClaims = findUnsupportedWriteClaims(modelOutputText, toolCalls);
+    if (unsupportedWriteClaims.length > 0) {
+      assistantText = writeToolFailureNotice ?? buildUnverifiedWriteClaimNotice(request);
+      options.log.warn("Replaced an unverified write success claim", {
+        capabilities: unsupportedWriteClaims,
+        successfulWriteTools: toolCalls
+          .filter((call) => writeToolNames.has(call.name) && !call.isError)
+          .map((call) => call.name),
+      });
+    } else {
+      assistantText = appendNotice(modelOutputText, writeToolFailureNotice);
+    }
+    if (assistantText) {
+      yield { event: "message", data: { text: assistantText } };
     }
 
     summary = executor?.getSummary() ?? summary;
@@ -210,7 +315,8 @@ export async function* runAgentTurn(options: RunAgentTurnOptions): AsyncGenerato
   } finally {
     if (options.saveTurnTrace) {
       try {
-        const modelOutputText = assistantText ? truncateTraceText(assistantText) : undefined;
+        const tracedModelOutputText = modelOutputText ? truncateTraceText(modelOutputText) : undefined;
+        const tracedOutputText = assistantText ? truncateTraceText(assistantText) : undefined;
         await options.saveTurnTrace({
           traceId,
           turnId,
@@ -230,8 +336,8 @@ export async function* runAgentTurn(options: RunAgentTurnOptions): AsyncGenerato
           taskId: request.context.taskId,
           sourceId: request.context.sourceId,
           input: summarizeAgentContentBlocks(request.content),
-          output: modelOutputText ? { text: modelOutputText } : undefined,
-          modelOutput: modelOutputText ? { text: modelOutputText } : undefined,
+          output: tracedOutputText ? { text: tracedOutputText } : undefined,
+          modelOutput: tracedModelOutputText ? { text: tracedModelOutputText } : undefined,
           toolCalls,
           summary,
           error: errorMessage,
@@ -300,6 +406,95 @@ function buildWriteToolFailureNotice(
     "Cause:",
     ...lines,
   ].join("\n");
+}
+
+function findUnsupportedWriteClaims(
+  modelOutputText: string,
+  toolCalls: AgentTurnToolCallTrace[],
+): WriteCapability[] {
+  const claimedCapabilities = new Set(
+    writeClaimPatterns
+      .filter(({ pattern }) => pattern.test(modelOutputText))
+      .map(({ capability }) => capability),
+  );
+  if (claimedCapabilities.size === 0) {
+    return [];
+  }
+
+  const supportedCapabilities = new Set<WriteCapability>();
+  for (const call of toolCalls) {
+    if (call.isError || !writeToolNames.has(call.name)) {
+      continue;
+    }
+    for (const capability of successfulWriteCapabilities(call)) {
+      supportedCapabilities.add(capability);
+    }
+  }
+
+  return [...claimedCapabilities].filter((capability) => !supportedCapabilities.has(capability));
+}
+
+function successfulWriteCapabilities(call: AgentTurnToolCallTrace): WriteCapability[] {
+  const input = isRecord(call.input) ? call.input : {};
+
+  switch (call.name) {
+    case "propose_skill":
+    case "approve_skill":
+    case "enable_skill":
+    case "reject_skill":
+    case "archive_skill":
+    case "disable_skill":
+      return ["any_write", "skill_write"];
+    case "save_memory":
+    case "promote_memory_to_workspace":
+      return ["any_write", "memory_write"];
+    case "upsert_task":
+      return input.status === "done"
+        ? ["any_write", "task_write", "complete_task"]
+        : ["any_write", "task_write"];
+    case "patch_task":
+      return input.status === "done"
+        ? ["any_write", "task_write", "complete_task"]
+        : ["any_write", "task_write"];
+    case "mark_task_done":
+      return ["any_write", "task_write", "complete_task"];
+    case "upsert_recurring_task":
+    case "disable_recurring_task":
+      return ["any_write", "recurring_task_write"];
+    case "create_scheduled_reminder":
+    case "update_scheduled_reminder":
+    case "delete_scheduled_reminder":
+      return ["any_write", "scheduled_reminder_write"];
+    case "create_calendar_draft":
+    case "discard_calendar_draft":
+      return ["any_write", "calendar_draft_write"];
+    case "apply_calendar_draft":
+      return ["any_write", "calendar_draft_write", "apply_calendar"];
+    default:
+      return [];
+  }
+}
+
+function buildUnverifiedWriteClaimNotice(request: AgentRuntimeRequest): string {
+  if (shouldUseJapaneseWriteFailureNotice(request)) {
+    return [
+      "宣言された変更を確認できませんでした。",
+      "対応する書き込み処理の成功記録がないため、その変更が行われたとは確認できません。もう一度実行してください。",
+    ].join("\n");
+  }
+
+  return [
+    "The claimed change could not be verified.",
+    "There is no successful matching write operation, so that change cannot be confirmed. Please try again.",
+  ].join("\n");
+}
+
+function appendNotice(modelOutputText: string, notice: string | undefined): string {
+  if (!notice) {
+    return modelOutputText;
+  }
+
+  return [modelOutputText.trimEnd(), notice].filter(Boolean).join("\n\n");
 }
 
 function hasLaterSuccessfulEquivalentWrite(
