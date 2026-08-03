@@ -15,6 +15,7 @@ interface CliOptions {
   workspaceId: string;
   conversationId?: string;
   status: BindingStatus;
+  expiresAt?: string;
 }
 
 async function main(): Promise<void> {
@@ -46,6 +47,7 @@ async function main(): Promise<void> {
         workspaceId: options.workspaceId,
         conversationId: options.conversationId,
         status: options.status,
+        expiresAt: options.expiresAt,
         createdAt: now,
         updatedAt: now,
       },
@@ -94,6 +96,9 @@ function parseArgs(argv: string[]): CliOptions {
       case "--status":
         options.status = parseStatus(argv[++index]);
         break;
+      case "--expires-at":
+        options.expiresAt = parseTimestamp(argv[++index], "--expires-at");
+        break;
       case "--disabled":
         options.status = "disabled";
         break;
@@ -131,6 +136,7 @@ function parseArgs(argv: string[]): CliOptions {
     workspaceId: options.workspaceId,
     conversationId: options.conversationId,
     status: options.status ?? "active",
+    expiresAt: options.expiresAt,
   };
 }
 
@@ -156,6 +162,14 @@ function parseStatus(value: string): BindingStatus {
   }
 
   throw new Error(`Invalid status: ${value}`);
+}
+
+function parseTimestamp(value: string, option: string): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    throw new Error(`Invalid ${option} timestamp: ${value}`);
+  }
+  return new Date(timestamp).toISOString();
 }
 
 function requireConversationKey(options: CliOptions): string {
@@ -184,6 +198,7 @@ function printUsage(): void {
     "  --workspace-id ws_123",
     "  --conversation-id line:group:G1",
     "  --status active|disabled",
+    "  --expires-at 2026-08-11T12:00:00Z",
     "  --disabled",
     "",
     "Conversation key examples:",

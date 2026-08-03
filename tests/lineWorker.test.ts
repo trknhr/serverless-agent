@@ -195,6 +195,7 @@ describe("LINE events worker", () => {
           workspaceId: "ws_1",
           userId: "line:user:U1",
           channelId: "line:group:G1",
+          providerAccountId: "line-bot",
           attachmentSourceIds: ["src_archived"],
         },
       },

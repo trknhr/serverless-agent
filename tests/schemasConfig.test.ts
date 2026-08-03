@@ -622,6 +622,8 @@ describe("environment loaders", () => {
     expect(loadSchedulerEnv()).toMatchObject({
       LINE_CHANNEL_ACCESS_TOKEN_SECRET_ID: "line-token",
       RECURRING_TASKS_TABLE_NAME: "recurring-tasks",
+      SCHEDULER_DAILY_SEND_LIMIT: 5,
+      SCHEDULER_MONTHLY_SEND_LIMIT: 31,
     });
     expect(loadSlackInteractionsEnv()).toMatchObject({
       GOOGLE_OAUTH_START_URL: "https://oauth/start",

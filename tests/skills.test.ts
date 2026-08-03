@@ -1707,6 +1707,68 @@ describe("load_skill tool", () => {
     expect(memoryItems.save).not.toHaveBeenCalled();
   });
 
+  it("preserves the LINE provider account when creating a reminder for the current conversation", async () => {
+    const scheduledTasks = {
+      get: vi.fn().mockResolvedValue(null),
+      save: vi.fn(),
+    };
+    const scheduler = {
+      buildScheduleName: vi.fn().mockReturnValue("serverless-agent-sched-1"),
+      put: vi.fn().mockResolvedValue({
+        scheduleName: "serverless-agent-sched-1",
+        scheduleGroupName: "default",
+        scheduleExpression: "cron(0 8 * * ? *)",
+        timezone: "Asia/Tokyo",
+      }),
+    };
+    const executor = new CustomToolExecutor(
+      {
+        scheduledTasks,
+      } as never,
+      {
+        source: "line",
+        workspaceId: "family:beta-user",
+        userId: "line:user:U1",
+        channelId: "line:user:U1",
+        providerAccountId: "Ubot",
+        logger,
+      },
+      {
+        scheduledReminderScheduler: scheduler as never,
+      },
+    );
+
+    const result = await executor.execute({
+      id: "tool-create-reminder",
+      type: "agent.tool_use",
+      name: "create_scheduled_reminder",
+      input: {
+        name: "毎朝8時のリマインド",
+        prompt: "未完了タスクと今日の予定を短く知らせてください。",
+        recurrence: {
+          frequency: "daily",
+          time: "08:00",
+        },
+        timezone: "Asia/Tokyo",
+      },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(scheduler.put).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outputChannelId: "line:user:U1",
+        outputProvider: "line",
+        outputProviderAccountId: "Ubot",
+        outputConversationKey: "user:U1",
+      }),
+    );
+    expect(scheduledTasks.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outputProviderAccountId: "Ubot",
+      }),
+    );
+  });
+
   it("infers the scheduled reminder provider when updating the output conversation key", async () => {
     const scheduledTasks = {
       get: vi.fn().mockResolvedValue({

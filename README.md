@@ -429,6 +429,18 @@ days before building the reminder prompt. Scheduled reminders control when the
 assistant posts; recurring task definitions control which repeated duties are
 included in the reminder.
 
+Each scheduled run also checks upcoming open tasks and actionable dated memory.
+When that context supports a useful next step, the assistant may append at most
+one proactive suggestion, such as drafting a message or preparing a checklist.
+Suggestions are read-only and require explicit approval before any data change
+or external action.
+
+Scheduled delivery is limited per workspace before the agent is invoked.
+`SCHEDULER_DAILY_SEND_LIMIT` defaults to 5 and
+`SCHEDULER_MONTHLY_SEND_LIMIT` defaults to 31; daily and monthly counters use
+JST calendar boundaries. For LINE tasks, an inactive or expired provider
+conversation binding also stops the run before model usage.
+
 Recurring tasks support daily, weekly, monthly, and yearly rules. A yearly rule
 uses `monthOfYear` with either a fixed `daysOfMonth` value or an nth weekday.
 `leadTimeDays` moves the primary deadline before the event, and `dayOfTask` can

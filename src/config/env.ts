@@ -30,6 +30,7 @@ const runtimeBaseEnvSchema = z.object({
   SCHEDULER_TARGET_ARN: z.string().min(1).optional(),
   SCHEDULER_TARGET_ROLE_ARN: z.string().min(1).optional(),
   SCHEDULER_DAILY_SEND_LIMIT: z.coerce.number().int().min(0).default(5),
+  SCHEDULER_MONTHLY_SEND_LIMIT: z.coerce.number().int().min(0).default(31),
   DAILY_LIMIT_TTL_SECONDS: z.coerce.number().int().positive().default(259200),
   WORK_SESSION_IDLE_TIMEOUT_SECONDS: z.coerce.number().int().min(60).max(28_800).default(900),
   WORK_SESSION_MAX_LIFETIME_SECONDS: z.coerce.number().int().min(60).max(28_800).default(28_800),

@@ -11,6 +11,7 @@ import { AgentTurnTraceRepository } from "../../repo/agentTurnTraceRepository";
 import { ConversationSessionRepository } from "../../repo/conversationSessionRepository";
 import { ConversationTurnRepository } from "../../repo/conversationTurnRepository";
 import { DailyLimitRepository } from "../../repo/dailyLimitRepository";
+import { ProviderBindingRepository } from "../../repo/providerBindingRepository";
 import { SessionRepository } from "../../repo/sessionRepository";
 import { RecurringTaskRepository } from "../../repo/recurringTaskRepository";
 import { TaskEventRepository } from "../../repo/taskEventRepository";
@@ -39,7 +40,9 @@ interface SchedulerPayload {
 
 const SCHEDULE_TIMEZONE = "Asia/Tokyo";
 const RECURRING_TASK_LOOKAHEAD_DAYS = 7;
+const PROACTIVE_SUGGESTION_LOOKAHEAD_DAYS = 7;
 const SCHEDULER_SEND_LIMIT_KIND = "scheduler_send";
+const SCHEDULER_MONTHLY_SEND_LIMIT_KIND = "scheduler_monthly_send";
 const env = loadSchedulerEnv();
 const secretsProvider = new SecretsProvider();
 const agentClient = new AgentCoreRuntimeClient({
@@ -64,6 +67,7 @@ const sessionRepository = new SessionRepository(env.SESSION_TABLE_NAME);
 const conversationSessionRepository = new ConversationSessionRepository(env.CONVERSATION_SESSIONS_TABLE_NAME);
 const conversationTurnRepository = new ConversationTurnRepository(env.CONVERSATION_TURNS_TABLE_NAME);
 const dailyLimitRepository = new DailyLimitRepository(env.PROCESSED_EVENTS_TABLE_NAME);
+const providerBindingRepository = new ProviderBindingRepository(env.PROVIDER_BINDINGS_TABLE_NAME);
 const agentTurnTraceRepository = env.AGENT_TURN_TRACES_TABLE_NAME
   ? new AgentTurnTraceRepository(env.AGENT_TURN_TRACES_TABLE_NAME)
   : null;
@@ -103,6 +107,12 @@ export async function handler(
   const outputTarget = resolveScheduledOutputTarget(task);
   const autoClosedTasks = await autoCloseExpiredTasks(task.workspaceId, scheduledAtIso, log);
   const materializedRecurringTasks = await materializeRecurringTasks(task.workspaceId, scheduledAtIso, log);
+  if (!(await scheduledOutputAccessIsActive(task, outputTarget, log))) {
+    return;
+  }
+  if (!(await consumeScheduledSendLimits(task, outputTarget, log))) {
+    return;
+  }
 
   const reusableSessionRecord = task.reuseSession
     ? await sessionRepository.findByThread(task.workspaceId, outputTarget.channelId, task.taskId)
@@ -461,6 +471,9 @@ function buildScheduledPrompt(
   }
 
   const parts = formatInTimeZone(date, SCHEDULE_TIMEZONE);
+  const suggestionDueBefore = new Date(
+    date.getTime() + PROACTIVE_SUGGESTION_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
   const promptParts = [
     "Scheduling context:",
     `- Current scheduled run time: ${parts.date} ${parts.time} (${parts.weekday})`,
@@ -473,6 +486,12 @@ function buildScheduledPrompt(
     "- Only include facts, reminders, dates, tasks, events, and notes that are present in tool results, the scheduling context, or the scheduled reminder prompt.",
     "- Do not invent or infer extra memo items, calendar events, reminders, deadlines, or family notes that were not returned by tools.",
     "- If the prompt asks for a memo or note and no grounded item is available, omit that section or say there is no note to add.",
+    "Proactive suggestion:",
+    `- Before deciding whether to add a suggestion, call search_context once with task_statuses=[\"open\",\"in_progress\"], task_due_before=\"${suggestionDueBefore}\", limit=20, and include_web=false.`,
+    "- You may add one short final suggestion only when the search results or scheduled reminder prompt support a concrete, timely next action.",
+    "- Prefer a useful assist such as drafting a message, preparing a checklist, breaking down a task, or organizing questions; briefly say why it is timely.",
+    "- Omit the suggestion entirely when there is no clearly useful action, the evidence is uncertain, or it would merely repeat the reminder content.",
+    "- A suggestion must not create, update, complete, or delete data, apply a calendar change, or send a message. Offer or draft only, and wait for explicit user approval before any action.",
   ];
   if (env.DEFAULT_RESPONSE_LANGUAGE) {
     promptParts.push(`- Reply language: ${env.DEFAULT_RESPONSE_LANGUAGE}.`);
@@ -502,34 +521,6 @@ async function postScheduledMessage(
   | { provider: "slack"; channelId: string; messageTs?: string; text: string }
   | { provider: "line"; channelId: string; text: string }
 > {
-  const allowed = await dailyLimitRepository.consume({
-    workspaceId: task.workspaceId,
-    kind: SCHEDULER_SEND_LIMIT_KIND,
-    limit: env.SCHEDULER_DAILY_SEND_LIMIT,
-    ttlSeconds: env.DAILY_LIMIT_TTL_SECONDS,
-  });
-  if (!allowed) {
-    logger.warn("Scheduler daily send limit exceeded", {
-      component: "scheduled-agent-runner",
-      workspaceId: task.workspaceId,
-      taskId: task.taskId,
-      provider: outputTarget.provider,
-      limit: env.SCHEDULER_DAILY_SEND_LIMIT,
-    });
-    if (outputTarget.provider === "line") {
-      return {
-        provider: "line",
-        channelId: outputTarget.channelId,
-        text: buildScheduledLineMessage(task, text),
-      };
-    }
-    return {
-      provider: "slack",
-      channelId: outputTarget.channelId,
-      text: buildScheduledSlackMessage(task, text),
-    };
-  }
-
   if (outputTarget.provider === "line") {
     const messageText = buildScheduledLineMessage(task, text);
     await lineClient.pushText(outputTarget.targetId, messageText);
@@ -547,6 +538,84 @@ async function postScheduledMessage(
     messageTs: message?.ts,
     text: messageText,
   };
+}
+
+async function consumeScheduledSendLimits(
+  task: ScheduledTask,
+  outputTarget: ScheduledOutputTarget,
+  log: ReturnType<typeof logger.child>,
+): Promise<boolean> {
+  const now = new Date();
+  const dailyAllowed = await dailyLimitRepository.consume({
+    workspaceId: task.workspaceId,
+    kind: SCHEDULER_SEND_LIMIT_KIND,
+    limit: env.SCHEDULER_DAILY_SEND_LIMIT,
+    period: "day",
+    now,
+    ttlSeconds: env.DAILY_LIMIT_TTL_SECONDS,
+  });
+  if (!dailyAllowed) {
+    log.warn("Scheduler daily send limit exceeded", {
+      workspaceId: task.workspaceId,
+      provider: outputTarget.provider,
+      limit: env.SCHEDULER_DAILY_SEND_LIMIT,
+    });
+    return false;
+  }
+
+  const monthlyAllowed = await dailyLimitRepository.consume({
+    workspaceId: task.workspaceId,
+    kind: SCHEDULER_MONTHLY_SEND_LIMIT_KIND,
+    limit: env.SCHEDULER_MONTHLY_SEND_LIMIT,
+    period: "month",
+    now,
+    ttlSeconds: env.DAILY_LIMIT_TTL_SECONDS,
+  });
+  if (!monthlyAllowed) {
+    log.warn("Scheduler monthly send limit exceeded", {
+      workspaceId: task.workspaceId,
+      provider: outputTarget.provider,
+      limit: env.SCHEDULER_MONTHLY_SEND_LIMIT,
+    });
+    return false;
+  }
+  return true;
+}
+
+async function scheduledOutputAccessIsActive(
+  task: ScheduledTask,
+  outputTarget: ScheduledOutputTarget,
+  log: ReturnType<typeof logger.child>,
+): Promise<boolean> {
+  if (outputTarget.provider !== "line" || !task.outputProviderAccountId) {
+    return true;
+  }
+  const binding = await providerBindingRepository.findConversationBinding(
+    "line",
+    task.outputProviderAccountId,
+    outputTarget.conversationKey,
+  );
+  if (!binding) {
+    return true;
+  }
+
+  const now = new Date();
+  const expiresAt = binding.expiresAt ? Date.parse(binding.expiresAt) : null;
+  const expirationIsActive =
+    expiresAt === null || (Number.isFinite(expiresAt) && expiresAt > now.getTime());
+  const active =
+    binding.status === "active" &&
+    binding.workspaceId === task.workspaceId &&
+    expirationIsActive;
+  if (!active) {
+    log.info("Scheduled LINE output binding is inactive or expired; skipping run", {
+      workspaceId: task.workspaceId,
+      conversationKey: outputTarget.conversationKey,
+      bindingStatus: binding.status,
+      expiresAt: binding.expiresAt,
+    });
+  }
+  return active;
 }
 
 function buildScheduledTraceId(workspaceId: string, taskId: string, scheduledAtIso: string): string {

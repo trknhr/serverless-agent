@@ -149,6 +149,7 @@ function createToolExecutor(
       workspaceId: request.toolContext.workspaceId,
       userId: request.toolContext.userId,
       channelId: request.toolContext.channelId,
+      providerAccountId: request.toolContext.providerAccountId,
       conversationId: request.context.conversationTs,
       logger: log,
       attachmentSourceIds: request.toolContext.attachmentSourceIds,

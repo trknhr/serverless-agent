@@ -4,6 +4,7 @@ import { CalendarDraftRepository } from "../src/repo/calendarDraftRepository";
 import { ChannelMemoryRepository } from "../src/repo/channelMemoryRepository";
 import { ConversationSessionRepository } from "../src/repo/conversationSessionRepository";
 import { ConversationTurnRepository } from "../src/repo/conversationTurnRepository";
+import { DailyLimitRepository } from "../src/repo/dailyLimitRepository";
 import { EventDedupRepository } from "../src/repo/eventDedupRepository";
 import { GoogleOAuthConnectionRepository } from "../src/repo/googleOAuthConnectionRepository";
 import { MemoryItemRepository } from "../src/repo/memoryItemRepository";
@@ -37,6 +38,38 @@ function commandInput(callIndex = 0): Record<string, unknown> {
 }
 
 describe("basic DynamoDB repositories", () => {
+  it("uses a JST month bucket and retains monthly usage through the next-month reporting window", async () => {
+    const repo = new DailyLimitRepository("usage");
+    const now = new Date("2026-06-30T15:30:00.000Z");
+    sendMock.mockResolvedValueOnce({});
+
+    await expect(
+      repo.consume({
+        workspaceId: "family:alpha",
+        kind: "monthly_ai_request",
+        limit: 300,
+        period: "month",
+        now,
+        ttlSeconds: 259200,
+      }),
+    ).resolves.toBe(true);
+
+    expect(commandInput()).toMatchObject({
+      TableName: "usage",
+      Key: {
+        pk: "USAGE#WORKSPACE#family:alpha#DATE#2026-07#KIND#monthly_ai_request",
+      },
+      ExpressionAttributeValues: {
+        ":workspaceId": "family:alpha",
+        ":kind": "monthly_ai_request",
+        ":date": "2026-07",
+        ":ttl": Math.floor(new Date("2026-08-07T15:00:00.000Z").getTime() / 1000),
+        ":one": 1,
+        ":limit": 300,
+      },
+    });
+  });
+
   it("marks events processed and handles duplicate conditional failures", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-14T00:00:00Z"));
@@ -304,6 +337,34 @@ describe("basic DynamoDB repositories", () => {
       workspaceId: "line:group:G1",
       source: "fallback",
     });
+  });
+
+  it("does not resolve an expired provider conversation binding", async () => {
+    const repo = new ProviderBindingRepository("provider-bindings");
+    sendMock.mockResolvedValueOnce({
+      Item: {
+        provider: "line",
+        providerAccountId: "Ubot",
+        bindingKind: "conversation",
+        providerConversationKey: "group:G1",
+        workspaceId: "family:alpha",
+        conversationId: "line:group:G1",
+        status: "active",
+        expiresAt: "2000-01-01T00:00:00.000Z",
+        createdAt: "created",
+        updatedAt: "updated",
+      },
+    });
+
+    await expect(
+      repo.resolveWorkspace({
+        provider: "line",
+        providerAccountId: "Ubot",
+        providerConversationKey: "group:G1",
+        fallbackWorkspaceId: "line:group:G1",
+        resolutionMode: "bound_only",
+      }),
+    ).resolves.toBeNull();
   });
 
   it("creates, lists, and expires owner-scoped work sessions", async () => {

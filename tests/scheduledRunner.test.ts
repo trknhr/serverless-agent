@@ -86,6 +86,8 @@ afterEach(() => {
 
 describe("scheduled agent runner", () => {
   it("keeps scheduled Slack reminders on Slack", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-29T00:00:00.000Z"));
     mocks.documentSend
       .mockResolvedValueOnce({
         Item: {
@@ -129,6 +131,11 @@ describe("scheduled agent runner", () => {
     const agentRequestText = mocks.agentInvoke.mock.calls[0][0].request.content[0].text;
     expect(agentRequestText).toContain("Only include facts, reminders, dates, tasks, events, and notes that are present in tool results");
     expect(agentRequestText).toContain("If the prompt asks for a memo or note and no grounded item is available, omit that section");
+    expect(agentRequestText).toContain("Before deciding whether to add a suggestion, call search_context once");
+    expect(agentRequestText).toContain('task_statuses=["open","in_progress"]');
+    expect(agentRequestText).toContain('task_due_before="2026-06-05T00:00:00.000Z"');
+    expect(agentRequestText).toContain("You may add one short final suggestion only");
+    expect(agentRequestText).toContain("Offer or draft only, and wait for explicit user approval");
     expect(mocks.agentInvoke).toHaveBeenCalledWith(
       expect.objectContaining({
         request: expect.objectContaining({
@@ -530,6 +537,56 @@ describe("scheduled agent runner", () => {
     expect(mocks.slackPostMessage).not.toHaveBeenCalled();
   });
 
+  it("does not invoke or send a scheduled LINE reminder after beta access expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-16T00:00:00.000Z"));
+    mocks.documentSend
+      .mockResolvedValueOnce({
+        Item: {
+          taskId: "morning",
+          name: "Morning Reminder",
+          prompt: "Post today's reminder.",
+          workspaceId: "family:alpha",
+          outputChannelId: "line:group:G1",
+          outputProvider: "line",
+          outputProviderAccountId: "Ubot",
+          outputConversationKey: "group:G1",
+          enabled: true,
+          reuseSession: false,
+          createdAt: "2026-06-01T00:00:00.000Z",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({
+        Item: {
+          provider: "line",
+          providerAccountId: "Ubot",
+          bindingKind: "conversation",
+          providerConversationKey: "group:G1",
+          workspaceId: "family:alpha",
+          conversationId: "line:group:G1",
+          status: "active",
+          expiresAt: "2026-06-15T00:00:00.000Z",
+          createdAt: "2026-06-01T00:00:00.000Z",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        },
+      });
+
+    const { handler } = await import("../src/functions/scheduled-agent-runner");
+
+    await handler({
+      taskId: "morning",
+      workspaceId: "family:alpha",
+    });
+
+    expect(mocks.agentInvoke).not.toHaveBeenCalled();
+    expect(mocks.linePushText).not.toHaveBeenCalled();
+    expect(mocks.slackPostMessage).not.toHaveBeenCalled();
+  });
+
   it("does not send scheduled reminders after the daily workspace limit is exhausted", async () => {
     mocks.documentSend
       .mockResolvedValueOnce({
@@ -566,7 +623,46 @@ describe("scheduled agent runner", () => {
       workspaceId: "ws_1",
     });
 
+    expect(mocks.agentInvoke).not.toHaveBeenCalled();
     expect(mocks.linePushText).not.toHaveBeenCalled();
     expect(mocks.slackPostMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke the agent after the monthly scheduled-send limit is exhausted", async () => {
+    process.env.SCHEDULER_MONTHLY_SEND_LIMIT = "31";
+    mocks.documentSend
+      .mockResolvedValueOnce({
+        Item: {
+          taskId: "morning",
+          name: "Morning Reminder",
+          prompt: "Post today's reminder.",
+          workspaceId: "ws_1",
+          outputChannelId: "line:group:G1",
+          enabled: true,
+          reuseSession: false,
+          createdAt: "2026-05-29T00:00:00.000Z",
+          updatedAt: "2026-05-29T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce({ name: "ConditionalCheckFailedException" });
+
+    const { handler } = await import("../src/functions/scheduled-agent-runner");
+
+    await handler({
+      taskId: "morning",
+      workspaceId: "ws_1",
+    });
+
+    expect(mocks.agentInvoke).not.toHaveBeenCalled();
+    expect(mocks.linePushText).not.toHaveBeenCalled();
+    expect(mocks.slackPostMessage).not.toHaveBeenCalled();
+    const monthlyLimitCommand = mocks.documentSend.mock.calls[5][0].input as Record<string, any>;
+    expect(monthlyLimitCommand.Key).toEqual({
+      pk: expect.stringContaining("#KIND#scheduler_monthly_send"),
+    });
   });
 });

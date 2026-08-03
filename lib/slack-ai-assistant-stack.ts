@@ -75,6 +75,9 @@ export class SlackAiAssistantStack extends Stack {
     const schedulerDailySendLimit =
       resolveOptionalConfigValue(this, "schedulerDailySendLimit", "SCHEDULER_DAILY_SEND_LIMIT") ??
       "5";
+    const schedulerMonthlySendLimit =
+      resolveOptionalConfigValue(this, "schedulerMonthlySendLimit", "SCHEDULER_MONTHLY_SEND_LIMIT") ??
+      "31";
     const dailyLimitTTLSeconds =
       resolveOptionalConfigValue(this, "dailyLimitTTLSeconds", "DAILY_LIMIT_TTL_SECONDS") ??
       "259200";
@@ -344,6 +347,7 @@ export class SlackAiAssistantStack extends Stack {
       SCHEDULER_SCHEDULE_NAME_PREFIX: schedulerScheduleNamePrefix,
       SCHEDULER_DEFAULT_TIME_ZONE: schedulerDefaultTimeZone,
       SCHEDULER_DAILY_SEND_LIMIT: schedulerDailySendLimit,
+      SCHEDULER_MONTHLY_SEND_LIMIT: schedulerMonthlySendLimit,
       DAILY_LIMIT_TTL_SECONDS: dailyLimitTTLSeconds,
       WORK_SESSION_IDLE_TIMEOUT_SECONDS: workSessionIdleTimeoutSeconds,
       WORK_SESSION_MAX_LIFETIME_SECONDS: workSessionMaxLifetimeSeconds,

@@ -14,6 +14,7 @@ export interface ProviderBinding {
   workspaceId: string;
   conversationId?: string;
   status: ProviderBindingStatus;
+  expiresAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -73,6 +74,7 @@ export class ProviderBindingRepository {
           workspaceId: record.workspaceId,
           conversationId: record.conversationId,
           status: record.status,
+          expiresAt: record.expiresAt,
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,
         },
@@ -145,7 +147,7 @@ function activeResolution(
   binding: ProviderBinding,
   source: Exclude<ResolvedWorkspace["source"], "fallback">,
 ): ResolvedWorkspace | null {
-  if (binding.status !== "active") {
+  if (binding.status !== "active" || bindingIsExpired(binding)) {
     return null;
   }
 
@@ -153,6 +155,14 @@ function activeResolution(
     workspaceId: binding.workspaceId,
     source,
   };
+}
+
+function bindingIsExpired(binding: ProviderBinding, now = new Date()): boolean {
+  if (!binding.expiresAt) {
+    return false;
+  }
+  const expiresAt = Date.parse(binding.expiresAt);
+  return !Number.isFinite(expiresAt) || expiresAt <= now.getTime();
 }
 
 function requireConversationKey(binding: ProviderBinding): string {
@@ -172,6 +182,7 @@ function mapProviderBinding(item: Record<string, unknown>): ProviderBinding {
     workspaceId: item.workspaceId as string,
     conversationId: item.conversationId as string | undefined,
     status: item.status as ProviderBindingStatus,
+    expiresAt: item.expiresAt as string | undefined,
     createdAt: item.createdAt as string,
     updatedAt: item.updatedAt as string,
   };

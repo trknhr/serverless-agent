@@ -538,6 +538,7 @@ export interface ToolExecutionContext {
   workspaceId: string;
   userId?: string;
   channelId?: string;
+  providerAccountId?: string;
   conversationId?: string;
   logger: Logger;
   attachmentSourceIds?: string[];
@@ -1842,7 +1843,9 @@ export class CustomToolExecutor {
       workspaceId: this.context.workspaceId,
       outputChannelId: output.outputChannelId,
       outputProvider: output.outputProvider,
-      outputProviderAccountId: parsed.output_provider_account_id,
+      outputProviderAccountId:
+        parsed.output_provider_account_id ??
+        (output.outputProvider === this.context.source ? this.context.providerAccountId : undefined),
       outputConversationKey: output.outputConversationKey,
       enabled: parsed.enabled ?? true,
       scheduleName: scheduler.buildScheduleName(this.context.workspaceId, taskId),
@@ -1903,7 +1906,10 @@ export class CustomToolExecutor {
       prompt: parsed.prompt ?? existing.prompt,
       outputChannelId: output.outputChannelId,
       outputProvider: output.outputProvider,
-      outputProviderAccountId: parsed.output_provider_account_id ?? existing.outputProviderAccountId,
+      outputProviderAccountId:
+        parsed.output_provider_account_id ??
+        existing.outputProviderAccountId ??
+        (output.outputProvider === this.context.source ? this.context.providerAccountId : undefined),
       outputConversationKey: output.outputConversationKey,
       enabled: parsed.enabled ?? existing.enabled,
       scheduleName: existing.scheduleName ?? scheduler.buildScheduleName(existing.workspaceId, existing.taskId),

@@ -127,6 +127,7 @@ export async function handler(event: SQSEvent): Promise<void> {
           workspaceId: queueMessage.workspaceId,
           userId: queueMessage.userId,
           channelId: queueMessage.channelId,
+          providerAccountId: queueMessage.providerAccountId,
           attachmentSourceIds,
           memoryWritePolicy: {
             allowWorkspaceMemory: false,
