@@ -60,6 +60,6 @@
     "esbuild": "0.28.1",
     "ts-node": "10.9.2",
     "typescript": "6.0.2",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.11"
   }
 }
