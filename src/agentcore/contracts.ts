@@ -99,8 +99,14 @@ export const agentToolContextSchema = z.object({
     .optional(),
 });
 
+export const agentHistoryMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string().max(100_000),
+});
+
 export const agentRuntimeRequestSchema = z.object({
   content: z.array(agentContentBlockSchema).min(1),
+  history: z.array(agentHistoryMessageSchema).max(40).optional(),
   context: z
     .object({
       source: z.string().min(1),

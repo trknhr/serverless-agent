@@ -33,6 +33,7 @@ multi-adapter assistant core:
 - Slack attachment handling for PDFs, images, and text-like files
 - local document and Markdown ingestion through IAM-protected APIs
 - direct terminal chat through an IAM-protected API
+- a web chat UI with streaming replies and saved conversations
 - Google Calendar OAuth and draft-then-apply calendar tools
 - optional public web search and URL extraction tools with pluggable search
   providers and Readability-based page extraction
@@ -87,6 +88,12 @@ Direct terminal chat
   -> API Gateway
   -> Lambda (chat-api)
   -> AgentCore Runtime (SlackAgent)
+
+Web chat
+  -> CloudFront + private S3
+  -> Lambda function URL (response streaming)
+  -> AgentCore Runtime (SlackAgent), streamed
+  -> DynamoDB web conversations and messages
 
 State
   -> DynamoDB
@@ -179,6 +186,8 @@ tests/
    - `/example/serverless-agent/google-calendar`
    - optional, for API-key-backed `web_search` providers:
      `/example/serverless-agent/web-search-api-key`
+   - required before the web chat UI will accept requests:
+     `/example/serverless-agent/web-chat-access-key`
 
    Example:
 
@@ -671,10 +680,88 @@ npm run ask-agent -- \
   "Show only the items due tonight."
 ```
 
+## Web Chat
+
+The web UI is a static TypeScript page bundled with the repo's existing esbuild
+toolchain. It does not add a second frontend framework. CloudFront serves the
+page from a private S3 bucket. The browser calls a Lambda function URL directly
+so replies can stream. API Gateway still fronts Slack, LINE, imports, and
+`POST /chat/messages`, and that route stays capped at 29 seconds.
+
+Amazon Bedrock AgentCore's `InvokeAgentRuntime` API returns a streaming body.
+The AgentCore Node server flushes each value yielded by the runtime generator
+as server-sent events. For `source: "web_chat"`, the runtime yields `delta`
+events as model text arrives, then one final `message` event. That final
+message is the text after the existing write-integrity check, so a streamed
+draft can be replaced if the model claimed a save that no tool completed.
+Slack and LINE do not use this source, and their workers still read one
+buffered reply.
+
+The function URL uses `AuthType: NONE` because a browser cannot SigV4-sign
+requests the way `POST /chat/messages` does. The function instead requires
+`Authorization: Bearer <key>`. The key is an SSM `SecureString` and is not
+compiled into the page. Paste it into the connection form; the browser keeps
+it in session storage. `workspaceId` and `userId` select the DynamoDB owner,
+the same way the IAM chat API trusts the signed caller to pass those ids.
+This is a shared deployment key, not per-user login.
+
+Create the key before using a deployed UI:
+
+```bash
+aws ssm put-parameter \
+  --name /example/serverless-agent/web-chat-access-key \
+  --type SecureString \
+  --value "$(openssl rand -hex 32)" \
+  --overwrite
+```
+
+CDK outputs:
+
+- `WebChatUrl`: CloudFront URL for the page
+- `WebChatApiUrl`: streaming function URL written into the page's `config.json`
+- `WebChatAccessKeyParameterName`: SSM parameter the function reads
+
+Conversations and messages are stored in `WebConversationsTable` and
+`WebMessagesTable`. Reopening a chat loads those messages. The next turn sends
+the latest 20 as the model's real user and assistant messages, not as a single
+stuffed prompt. Older messages stay in the sidebar transcript. The web function
+waits up to 4 minutes for AgentCore; the Lambda itself allows 5 minutes.
+Token streaming starts only after AgentCore emits the first delta, so a cold
+runtime still shows a "Starting" status first.
+
+Run the UI locally against Bedrock, using the same file-backed state as
+`dev:chat`:
+
+```bash
+cp .env.local.example .env.local
+# Set BEDROCK_MODEL_ID in .env.local.
+npm install
+npm run dev:web
+```
+
+Open `http://127.0.0.1:4173`. The local server is bound to loopback and does
+not require the bearer key unless you set `WEB_CHAT_ACCESS_KEY` or pass
+`--access-key`. Use `--demo` to stream a sample reply without calling Bedrock:
+
+```bash
+npm run dev:web -- --demo
+npm run dev:web -- --port 4173 --state-file /tmp/serverless-agent-state.json
+```
+
+`npm run synth` and `npm run deploy` build `web/dist` first. Deploy still uses
+the existing CDK app:
+
+```bash
+npm run deploy -- \
+  -c defaultScheduleChannel=<slack-channel-id> \
+  -c bedrockModelId=<bedrock-model-id>
+```
+
 ## Local Development
 
 ```bash
 npm install
+npm run build:web
 npm run typecheck
 npm test
 npm run test:coverage
@@ -696,6 +783,9 @@ and lines.
   `SecureString` values; `web_extract` blocks localhost, private IPs, and
   credentialed URLs before fetching.
 - `imports/*` and `/chat/messages` routes use `AWS_IAM` authorization.
+- The web chat function URL is not IAM-authorized. It rejects requests that do
+  not send the shared bearer key from `web-chat-access-key`. Do not commit
+  that key. The page does not embed it.
 - Local scripts sign requests with SigV4 using the current AWS credentials.
 - IAM principals running local scripts need `execute-api:Invoke` permission for
   the relevant API routes.

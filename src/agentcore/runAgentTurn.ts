@@ -35,6 +35,14 @@ export interface AgentRunnerAi {
 
 export type AgentTurnEvent =
   | {
+      event: "delta";
+      data: { text: string };
+    }
+  | {
+      event: "status";
+      data: { text: string };
+    }
+  | {
       event: "message";
       data: { text: string };
     }
@@ -47,6 +55,7 @@ export type AgentTurnEvent =
         calendarDraftIds: string[];
         traceId?: string;
         turnId?: string;
+        runtimeSessionId?: string;
       };
     };
 
@@ -260,6 +269,7 @@ export async function* runAgentTurn(options: RunAgentTurnOptions): AsyncGenerato
 
     const history = await getSessionHistory(options);
     const userHistoryText = toHistoryText(request.content);
+    const streamDeltas = request.context.source === "web_chat";
     const stream = await agent.stream({
       messages: [
         ...history,
@@ -274,11 +284,20 @@ export async function* runAgentTurn(options: RunAgentTurnOptions): AsyncGenerato
       if (part.type === "error") {
         throw new Error(`Model stream failed: ${formatStreamError(part.error)}`);
       }
-      if (part.type !== "text-delta" || typeof part.text !== "string") {
+      if (streamDeltas && (part.type === "tool-call" || part.type === "tool-input-start")) {
+        const toolName = typeof part.toolName === "string" ? part.toolName : undefined;
+        if (toolName) {
+          yield { event: "status", data: { text: describeToolStatus(toolName) } };
+        }
+      }
+      if (part.type !== "text-delta" || typeof part.text !== "string" || part.text.length === 0) {
         continue;
       }
 
       modelOutputText += part.text;
+      if (streamDeltas) {
+        yield { event: "delta", data: { text: part.text } };
+      }
     }
 
     const writeToolFailureNotice = buildWriteToolFailureNotice(toolCalls, request);
@@ -674,11 +693,44 @@ async function buildEnabledSkillPrompt(
 }
 
 async function getSessionHistory(options: RunAgentTurnOptions): Promise<SessionHistoryMessage[]> {
+  if (options.request.history) {
+    return options.request.history.map((message) => ({
+      role: message.role,
+      content: message.content,
+    }));
+  }
   if (!shouldUseSessionHistory(options)) {
     return [];
   }
 
   return await (options.sessionHistoryStore ?? inMemorySessionHistoryStore).get(options.sessionId!);
+}
+
+function describeToolStatus(toolName: string): string {
+  const labels: Record<string, string> = {
+    search_context: "Searching saved context",
+    web_search: "Searching the web",
+    web_extract: "Reading a page",
+    browser_start: "Opening a browser",
+    browser_open_url: "Opening a page",
+    browser_snapshot: "Reading the page",
+    browser_extract: "Reading the page",
+    browser_close: "Closing the browser",
+    read_attachment_image: "Looking at an image",
+    get_weather_forecast: "Checking the weather",
+    save_memory: "Saving a memory",
+    promote_memory_to_workspace: "Sharing a memory",
+    upsert_task: "Updating a task",
+    patch_task: "Updating a task",
+    mark_task_done: "Completing a task",
+    upsert_recurring_task: "Updating a recurring task",
+    create_scheduled_reminder: "Scheduling a reminder",
+    update_scheduled_reminder: "Updating a reminder",
+    create_calendar_draft: "Drafting a calendar event",
+    apply_calendar_draft: "Updating the calendar",
+    load_skill: "Loading a skill",
+  };
+  return labels[toolName] ?? `Using ${toolName.replaceAll("_", " ")}`;
 }
 
 async function saveSessionHistory(
@@ -687,7 +739,7 @@ async function saveSessionHistory(
   userText: string,
   assistantText: string,
 ): Promise<void> {
-  if (!shouldUseSessionHistory(options)) {
+  if (options.request.history || !shouldUseSessionHistory(options)) {
     return;
   }
 

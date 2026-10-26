@@ -4,10 +4,13 @@ import * as apigateway from "aws-cdk-lib/aws-apigateway";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as eventsources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import * as scheduler from "aws-cdk-lib/aws-scheduler";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import {
   AgentCoreApplication,
@@ -43,6 +46,9 @@ export class SlackAiAssistantStack extends Stack {
     const googleCalendarParameterName =
       resolveOptionalConfigValue(this, "googleCalendarParameterName", "GOOGLE_CALENDAR_PARAMETER_NAME") ??
       `${DEFAULT_PARAMETER_PREFIX}/google-calendar`;
+    const webChatAccessKeyParameterName =
+      resolveOptionalConfigValue(this, "webChatAccessKeyParameterName", "WEB_CHAT_ACCESS_KEY_PARAMETER_NAME") ??
+      `${DEFAULT_PARAMETER_PREFIX}/web-chat-access-key`;
     const webSearchProvider = resolveOptionalConfigValue(this, "webSearchProvider", "WEB_SEARCH_PROVIDER");
     const webSearchApiKeyParameterName = resolveOptionalConfigValue(
       this,
@@ -263,6 +269,26 @@ export class SlackAiAssistantStack extends Stack {
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
     });
 
+    const webConversationsTable = new dynamodb.Table(this, "WebConversationsTable", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+    });
+    webConversationsTable.addGlobalSecondaryIndex({
+      indexName: "UpdatedIndex",
+      partitionKey: { name: "ownerKey", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "updatedAt", type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
+    const webMessagesTable = new dynamodb.Table(this, "WebMessagesTable", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+    });
+
     const attachmentArchiveBucket = new s3.Bucket(this, "SlackAttachmentArchiveBucket", {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
@@ -459,6 +485,29 @@ export class SlackAiAssistantStack extends Stack {
       },
     });
 
+    const webChat = createNodeFunction(this, "WebChatFunction", {
+      entry: "web-chat",
+      timeout: Duration.minutes(5),
+      memorySize: 512,
+      environment: {
+        ...commonEnvironment,
+        ...toolEnvironment,
+        WEB_CONVERSATIONS_TABLE_NAME: webConversationsTable.tableName,
+        WEB_MESSAGES_TABLE_NAME: webMessagesTable.tableName,
+        WEB_CHAT_ACCESS_KEY_PARAMETER_NAME: webChatAccessKeyParameterName,
+        AGENT_RESPONSE_TIMEOUT_MS: "240000",
+      },
+    });
+    const webChatUrl = webChat.addFunctionUrl({
+      authType: lambda.FunctionUrlAuthType.NONE,
+      invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
+      cors: {
+        allowedOrigins: ["*"],
+        allowedHeaders: ["authorization", "content-type", "x-request-id"],
+        allowedMethods: [lambda.HttpMethod.GET, lambda.HttpMethod.POST],
+      },
+    });
+
     const scheduledRunner = createNodeFunction(this, "ScheduledAgentRunnerFunction", {
       entry: "scheduled-agent-runner",
       timeout: Duration.minutes(5),
@@ -554,6 +603,9 @@ export class SlackAiAssistantStack extends Stack {
     processedEventsTable.grantReadWriteData(lineIngress);
     processedEventsTable.grantReadWriteData(scheduledRunner);
     skillsTable.grantReadWriteData(chatApi);
+    webConversationsTable.grantReadWriteData(webChat);
+    webMessagesTable.grantReadWriteData(webChat);
+    grantSecureParameterRead(this, webChatAccessKeyParameterName, [webChat]);
     scheduledTasksTable.grantReadWriteData(scheduledRunner);
     recurringTasksTable.grantReadWriteData(scheduledRunner);
     providerBindingsTable.grantReadData(ingress);
@@ -628,7 +680,8 @@ export class SlackAiAssistantStack extends Stack {
     slackAgentRuntime.grantInvoke(scheduledRunner);
     slackAgentRuntime.grantInvoke(documentImportWorker);
     slackAgentRuntime.grantInvoke(chatApi);
-    for (const agentInvoker of [worker, lineWorker, scheduledRunner, documentImportWorker, chatApi]) {
+    slackAgentRuntime.grantInvoke(webChat);
+    for (const agentInvoker of [worker, lineWorker, scheduledRunner, documentImportWorker, chatApi, webChat]) {
       agentInvoker.addToRolePolicy(
         new iam.PolicyStatement({
           actions: [
@@ -674,6 +727,7 @@ export class SlackAiAssistantStack extends Stack {
     lineWorker.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
     documentImportWorker.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
     chatApi.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
+    webChat.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
     slackInteractions.addEnvironment("GOOGLE_OAUTH_START_URL", googleOAuthStartUrl);
     const importsResource = api.root.addResource("imports");
     importsResource.addResource("uploads").addMethod("POST", new apigateway.LambdaIntegration(documentImportApi), {
@@ -730,7 +784,7 @@ export class SlackAiAssistantStack extends Stack {
         : new scheduler.CfnScheduleGroup(this, "ScheduledReminderScheduleGroup", {
             name: schedulerScheduleGroupName,
           });
-    for (const agentInvoker of [worker, lineWorker, documentImportWorker, chatApi]) {
+    for (const agentInvoker of [worker, lineWorker, documentImportWorker, chatApi, webChat]) {
       agentInvoker.addEnvironment("SCHEDULER_TARGET_ARN", scheduledRunner.functionArn);
       agentInvoker.addEnvironment("SCHEDULER_TARGET_ROLE_ARN", schedulerInvokeRole.roleArn);
     }
@@ -783,6 +837,47 @@ export class SlackAiAssistantStack extends Stack {
     });
     new cdk.CfnOutput(this, "ChatApiFunctionName", {
       value: chatApi.functionName,
+    });
+    const webChatBucket = new s3.Bucket(this, "WebChatBucket", {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+    });
+    const webChatDistribution = new cloudfront.Distribution(this, "WebChatDistribution", {
+      defaultRootObject: "index.html",
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+      defaultBehavior: {
+        origin: origins.S3BucketOrigin.withOriginAccessControl(webChatBucket),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+      },
+    });
+    new s3deploy.BucketDeployment(this, "WebChatAssets", {
+      destinationBucket: webChatBucket,
+      distribution: webChatDistribution,
+      distributionPaths: ["/*"],
+      prune: true,
+      sources: [
+        s3deploy.Source.asset(join(__dirname, "../web/dist")),
+        s3deploy.Source.jsonData("config.json", {
+          apiBaseUrl: webChatUrl.url,
+        }),
+      ],
+    });
+    new cdk.CfnOutput(this, "WebChatUrl", {
+      value: `https://${webChatDistribution.distributionDomainName}`,
+    });
+    new cdk.CfnOutput(this, "WebChatApiUrl", {
+      value: webChatUrl.url,
+    });
+    new cdk.CfnOutput(this, "WebChatAccessKeyParameterName", {
+      value: webChatAccessKeyParameterName,
+    });
+    new cdk.CfnOutput(this, "WebConversationsTableName", {
+      value: webConversationsTable.tableName,
+    });
+    new cdk.CfnOutput(this, "WebMessagesTableName", {
+      value: webMessagesTable.tableName,
     });
     new cdk.CfnOutput(this, "DocumentImportWorkerFunctionName", {
       value: documentImportWorker.functionName,
