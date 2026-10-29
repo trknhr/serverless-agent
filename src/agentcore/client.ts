@@ -3,10 +3,12 @@ import {
   InvokeAgentRuntimeCommand,
 } from "@aws-sdk/client-bedrock-agentcore";
 import { AgentRunResult } from "../agent/types";
+import { AgentTurnEvent } from "./runAgentTurn";
 import {
   AgentRuntimeRequest,
   agentRuntimeResponseSchema,
 } from "./contracts";
+import { consumeSseBuffer, parseSseDocument } from "../webchat/sse";
 
 export interface AgentCoreRuntimeClientOptions {
   runtimeArn: string;
@@ -56,6 +58,84 @@ export class AgentCoreRuntimeClient {
     }
   }
 
+  async *invokeStream(input: InvokeAgentInput): AsyncGenerator<AgentTurnEvent> {
+    const timeoutMs = this.options.responseTimeoutMs;
+    if (!timeoutMs) {
+      yield* this.streamOnce(input);
+      return;
+    }
+
+    const abortController = new AbortController();
+    const timer = setTimeout(() => abortController.abort(), timeoutMs);
+    const iterator = this.streamOnce(input, abortController.signal);
+    const timeout = new Promise<never>((_, reject) => {
+      const fail = () => reject(new Error(`AgentCore runtime response timed out after ${timeoutMs}ms`));
+      if (abortController.signal.aborted) {
+        fail();
+        return;
+      }
+      abortController.signal.addEventListener("abort", fail, { once: true });
+    });
+    try {
+      while (true) {
+        const next = await Promise.race([iterator.next(), timeout]);
+        if (next.done) {
+          break;
+        }
+        yield next.value;
+      }
+    } finally {
+      clearTimeout(timer);
+      await iterator.return(undefined);
+    }
+  }
+
+  private async *streamOnce(input: InvokeAgentInput, abortSignal?: AbortSignal): AsyncGenerator<AgentTurnEvent> {
+    const response = await this.client.send(
+      new InvokeAgentRuntimeCommand({
+        agentRuntimeArn: this.options.runtimeArn,
+        qualifier: this.options.qualifier || undefined,
+        runtimeSessionId: input.sessionId,
+        runtimeUserId: input.runtimeUserId,
+        contentType: "application/json",
+        accept: "text/event-stream, application/json",
+        payload: Buffer.from(JSON.stringify(input.request), "utf-8"),
+      }),
+      abortSignal ? { abortSignal } : undefined,
+    );
+
+    let buffer = "";
+    let sawMetadata = false;
+    for await (const chunk of readUtf8Chunks(response.response)) {
+      const consumed = consumeSseBuffer(buffer + chunk);
+      buffer = consumed.rest;
+      for (const event of consumed.events) {
+        const mapped = mapRuntimeSseEvent(event.event, event.data, response.runtimeSessionId);
+        if (mapped?.event === "metadata") {
+          sawMetadata = true;
+        }
+        if (mapped?.event === "error") {
+          throw new Error(`AgentCore runtime failed: ${mapped.data.message}`);
+        }
+        if (mapped) {
+          yield mapped;
+        }
+      }
+    }
+    if (!sawMetadata && response.runtimeSessionId) {
+      yield {
+        event: "metadata",
+        data: {
+          taskIds: [],
+          recurringTaskIds: [],
+          savedMemoryIds: [],
+          calendarDraftIds: [],
+          runtimeSessionId: response.runtimeSessionId,
+        },
+      };
+    }
+  }
+
   private async invokeOnce(input: InvokeAgentInput, abortSignal?: AbortSignal): Promise<AgentRunResult> {
     const response = await this.client.send(
       new InvokeAgentRuntimeCommand({
@@ -87,7 +167,7 @@ export class AgentCoreRuntimeClient {
 }
 
 function parseRuntimeResponse(raw: string) {
-  const sseEvents = parseSseEvents(raw);
+  const sseEvents = parseSseDocument(raw);
   if (sseEvents.length > 0) {
     const errorEvent = sseEvents.find((event) => event.event === "error");
     if (errorEvent) {
@@ -139,26 +219,96 @@ function formatRuntimeError(data: string): string {
   return String(parsed).trim() || "Unknown runtime error";
 }
 
-function parseSseEvents(raw: string): Array<{ event: string; data: string }> {
-  const chunks = raw.split(/\n\n+/);
-  const events: Array<{ event: string; data: string }> = [];
-
-  for (const chunk of chunks) {
-    const lines = chunk.split(/\r?\n/);
-    const event = lines
-      .find((line) => line.startsWith("event:"))
-      ?.slice("event:".length)
-      .trim();
-    const dataLines = lines
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice("data:".length).trimStart());
-
-    if (event && dataLines.length > 0) {
-      events.push({ event, data: dataLines.join("\n") });
-    }
+function mapRuntimeSseEvent(
+  event: string,
+  data: string,
+  runtimeSessionId?: string,
+): AgentTurnEvent | { event: "error"; data: { message: string } } | undefined {
+  const parsed = parseJsonIfPossible(data);
+  if (event === "delta" && isRecord(parsed) && typeof parsed.text === "string") {
+    return { event: "delta", data: { text: parsed.text } };
   }
+  if (event === "status" && isRecord(parsed) && typeof parsed.text === "string") {
+    return { event: "status", data: { text: parsed.text } };
+  }
+  if (event === "message") {
+    const text = isRecord(parsed) && typeof parsed.text === "string" ? parsed.text : String(parsed);
+    return { event: "message", data: { text } };
+  }
+  if (event === "metadata" && isRecord(parsed)) {
+    return {
+      event: "metadata",
+      data: {
+        taskIds: stringArray(parsed.taskIds),
+        recurringTaskIds: stringArray(parsed.recurringTaskIds),
+        savedMemoryIds: stringArray(parsed.savedMemoryIds),
+        calendarDraftIds: stringArray(parsed.calendarDraftIds),
+        traceId: typeof parsed.traceId === "string" ? parsed.traceId : undefined,
+        turnId: typeof parsed.turnId === "string" ? parsed.turnId : undefined,
+        runtimeSessionId:
+          typeof parsed.runtimeSessionId === "string" ? parsed.runtimeSessionId : runtimeSessionId,
+      },
+    };
+  }
+  if (event === "error") {
+    return { event: "error", data: { message: formatRuntimeError(data) } };
+  }
+  return undefined;
+}
 
-  return events;
+async function* readUtf8Chunks(body: unknown): AsyncGenerator<string> {
+  if (!body || typeof body !== "object") {
+    return;
+  }
+  const streamBody = body as {
+    transformToWebStream?: () => ReadableStream<Uint8Array>;
+    transformToString?: () => Promise<string>;
+    [Symbol.asyncIterator]?: () => AsyncIterator<Uint8Array | string>;
+  };
+  if (typeof streamBody.transformToWebStream === "function") {
+    const reader = streamBody.transformToWebStream().getReader();
+    const decoder = new TextDecoder();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        if (value) {
+          yield decoder.decode(value, { stream: true });
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const rest = decoder.decode();
+    if (rest) {
+      yield rest;
+    }
+    return;
+  }
+  if (typeof streamBody[Symbol.asyncIterator] === "function") {
+    const decoder = new TextDecoder();
+    for await (const chunk of streamBody as AsyncIterable<Uint8Array | string>) {
+      if (typeof chunk === "string") {
+        yield chunk;
+        continue;
+      }
+      yield decoder.decode(chunk, { stream: true });
+    }
+    const rest = decoder.decode();
+    if (rest) {
+      yield rest;
+    }
+    return;
+  }
+  if (typeof streamBody.transformToString === "function") {
+    yield await streamBody.transformToString();
+  }
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 function parseJsonIfPossible(value: string): unknown {

@@ -139,7 +139,9 @@ async function main(): Promise<void> {
       }
       continue;
     }
-    metadata = event.data;
+    if (event.event === "metadata") {
+      metadata = event.data;
+    }
   }
 
   if (options.json) {

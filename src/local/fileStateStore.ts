@@ -10,6 +10,7 @@ import { WorkSessionRecord } from "../shared/contracts";
 import { RecurringTask } from "../tasks/recurringTask";
 import { ScheduledTask } from "../tasks/taskDefinition";
 import { TaskEventRecord, TaskState } from "../tasks/taskState";
+import { WebChatMessage, WebConversation } from "../webchat/types";
 
 export const DEFAULT_LOCAL_STATE_PATH = ".serverless-agent/local-state/state.json";
 
@@ -27,6 +28,8 @@ export interface LocalState {
   workSessions: WorkSessionRecord[];
   generatedSkills: GeneratedSkillRecord[];
   builtinSkillOverrides: BuiltinSkillOverride[];
+  webConversations: WebConversation[];
+  webMessages: WebChatMessage[];
 }
 
 export class FileStateStore implements SessionHistoryStore {
@@ -98,6 +101,8 @@ export function createEmptyState(): LocalState {
     workSessions: [],
     generatedSkills: [],
     builtinSkillOverrides: [],
+    webConversations: [],
+    webMessages: [],
   };
 }
 
@@ -118,5 +123,7 @@ function normalizeState(state: Partial<LocalState>): LocalState {
     workSessions: state.workSessions ?? [],
     generatedSkills: state.generatedSkills ?? [],
     builtinSkillOverrides: state.builtinSkillOverrides ?? [],
+    webConversations: state.webConversations ?? [],
+    webMessages: state.webMessages ?? [],
   };
 }
