@@ -306,6 +306,11 @@ Context options:
 - `googleCalendarParameterName`: optional override for the Google Calendar
   `SecureString` parameter
 - `googleCalendarTimeZone`: optional override for calendar defaults
+- `webChatAuthMode`: `access-key` (default) or `cognito`
+- `webChatAccessKeyParameterName`: optional shared-key parameter override when
+  using `access-key` mode
+- `webChatCognitoDomainPrefix`: optional globally unique Cognito domain prefix
+  when using `cognito` mode
 - `defaultResponseLanguage`: optional default language for scheduled reminders
   and other non-user-triggered runs, such as `ja` or `en`
 - `schedulerScheduleNamePrefix`: optional override for EventBridge Scheduler
@@ -698,12 +703,23 @@ Slack and LINE do not use this source, and their workers still read one
 buffered reply.
 
 The function URL uses `AuthType: NONE` because a browser cannot SigV4-sign
-requests the way `POST /chat/messages` does. The function instead requires
-`Authorization: Bearer <key>`. The key is an SSM `SecureString` and is not
-compiled into the page. Paste it into the connection form; the browser keeps
-it in session storage. `workspaceId` and `userId` select the DynamoDB owner,
-the same way the IAM chat API trusts the signed caller to pass those ids.
-This is a shared deployment key, not per-user login.
+requests the way `POST /chat/messages` does. Application-level authentication
+is selected with `webChatAuthMode`:
+
+- `access-key` (default) requires `Authorization: Bearer <key>`. The shared key
+  is an SSM `SecureString`, is never compiled into the page, and is kept in
+  browser session storage.
+- `cognito` provisions a Cognito user pool, app client, and managed login
+  domain federated with Google. Google OAuth credentials are read from AWS
+  Secrets Manager (default: `/example/serverless-agent/web-chat-google-oauth`).
+  The browser uses authorization code + PKCE, keeps the ID token in
+  session storage, and sends it as the bearer token. The Lambda verifies its
+  signature, issuer, audience, token use, and expiry. It derives `userId` from
+  the verified `sub` claim and ignores owner IDs supplied by the browser.
+
+The Cognito user pool is the workspace boundary. The web client redirects
+directly to Google and does not show Cognito's local email/password form. This
+removes the shared access-key and owner inputs from the web UI.
 
 Create the key before using a deployed UI:
 
@@ -715,11 +731,26 @@ aws ssm put-parameter \
   --overwrite
 ```
 
+Or deploy with Cognito authentication:
+
+```bash
+npm run deploy -- \
+  -c bedrockModelId=<bedrock-model-id> \
+  -c webChatAuthMode=cognito \
+  -c webChatGoogleOAuthSecretName=/serverless-agent/web-chat-google-oauth
+```
+
+The default Cognito domain prefix is derived from the stack name and AWS
+account. Override it when necessary with
+`-c webChatCognitoDomainPrefix=<globally-unique-prefix>`.
+
 CDK outputs:
 
 - `WebChatUrl`: CloudFront URL for the page
 - `WebChatApiUrl`: streaming function URL written into the page's `config.json`
 - `WebChatAccessKeyParameterName`: SSM parameter the function reads
+- Cognito mode instead outputs `WebChatUserPoolId` and
+  `WebChatUserPoolClientId`
 
 Conversations and messages are stored in `WebConversationsTable` and
 `WebMessagesTable`. Reopening a chat loads those messages. The next turn sends

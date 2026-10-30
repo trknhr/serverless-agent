@@ -11,10 +11,6 @@ const ownerSchema = z.object({
   userId: z.string().min(1).max(200),
 });
 
-const messageSchema = ownerSchema.extend({
-  text: z.string().trim().min(1).max(20_000),
-});
-
 export interface WebChatHttpRequest {
   method: string;
   path: string;
@@ -28,6 +24,7 @@ export interface WebChatHttpDeps {
   agent: WebChatAgent;
   accessKey?: string;
   allowUnauthenticated?: boolean;
+  authenticatedOwner?: { workspaceId: string; userId: string };
   timeZone?: string;
   resources?: AgentRuntimeResources;
   log?: Logger;
@@ -85,6 +82,9 @@ export async function collectWebChatEvents(events: AsyncIterable<WebChatServerEv
 }
 
 function authorize(headers: Record<string, string | undefined>, deps: WebChatHttpDeps): WebChatHttpResult | undefined {
+  if (deps.authenticatedOwner) {
+    return undefined;
+  }
   const header = headerValue(headers, "authorization");
   if (!deps.accessKey) {
     if (deps.allowUnauthenticated) {
@@ -115,7 +115,7 @@ function authorize(headers: Record<string, string | undefined>, deps: WebChatHtt
 }
 
 async function listConversations(request: WebChatHttpRequest, deps: WebChatHttpDeps): Promise<WebChatHttpResult> {
-  const owner = ownerSchema.parse({
+  const owner = resolveOwner(deps, {
     workspaceId: request.query.workspaceId,
     userId: request.query.userId,
   });
@@ -124,7 +124,7 @@ async function listConversations(request: WebChatHttpRequest, deps: WebChatHttpD
 }
 
 async function createConversation(request: WebChatHttpRequest, deps: WebChatHttpDeps): Promise<WebChatHttpResult> {
-  const owner = ownerSchema.parse(request.body ?? {});
+  const owner = resolveOwner(deps, request.body ?? {});
   const conversation = await deps.store.createConversation({
     ...owner,
     now: (deps.now ?? (() => new Date()))(),
@@ -137,7 +137,7 @@ async function getMessages(
   request: WebChatHttpRequest,
   deps: WebChatHttpDeps,
 ): Promise<WebChatHttpResult> {
-  const owner = ownerSchema.parse({
+  const owner = resolveOwner(deps, {
     workspaceId: request.query.workspaceId,
     userId: request.query.userId,
   });
@@ -154,17 +154,18 @@ async function postMessage(
   request: WebChatHttpRequest,
   deps: WebChatHttpDeps,
 ): Promise<WebChatHttpResult> {
-  const input = messageSchema.parse(request.body ?? {});
+  const body = z.object({ text: z.string().trim().min(1).max(20_000) }).passthrough().parse(request.body ?? {});
+  const owner = resolveOwner(deps, request.body ?? {});
   const traceId = headerValue(request.headers, "x-request-id") ?? `web_${Date.now()}`;
   return {
     kind: "sse",
     events: runWebChatTurn({
       store: deps.store,
       agent: deps.agent,
-      workspaceId: input.workspaceId,
-      userId: input.userId,
+      workspaceId: owner.workspaceId,
+      userId: owner.userId,
       conversationId,
-      text: input.text,
+      text: body.text,
       traceId,
       timeZone: deps.timeZone,
       resources: deps.resources,
@@ -172,6 +173,10 @@ async function postMessage(
       log: deps.log,
     }),
   };
+}
+
+function resolveOwner(deps: WebChatHttpDeps, input: unknown): { workspaceId: string; userId: string } {
+  return deps.authenticatedOwner ?? ownerSchema.parse(input);
 }
 
 function headerValue(headers: Record<string, string | undefined>, name: string): string | undefined {

@@ -5,6 +5,7 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as eventsources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
@@ -49,6 +50,14 @@ export class SlackAiAssistantStack extends Stack {
     const webChatAccessKeyParameterName =
       resolveOptionalConfigValue(this, "webChatAccessKeyParameterName", "WEB_CHAT_ACCESS_KEY_PARAMETER_NAME") ??
       `${DEFAULT_PARAMETER_PREFIX}/web-chat-access-key`;
+    const webChatAuthMode =
+      resolveOptionalConfigValue(this, "webChatAuthMode", "WEB_CHAT_AUTH_MODE") ?? "access-key";
+    if (webChatAuthMode !== "access-key" && webChatAuthMode !== "cognito") {
+      throw new Error("webChatAuthMode must be either access-key or cognito");
+    }
+    const webChatGoogleOAuthSecretName =
+      resolveOptionalConfigValue(this, "webChatGoogleOAuthSecretName", "WEB_CHAT_GOOGLE_OAUTH_SECRET_NAME") ??
+      `${DEFAULT_PARAMETER_PREFIX}/web-chat-google-oauth`;
     const webSearchProvider = resolveOptionalConfigValue(this, "webSearchProvider", "WEB_SEARCH_PROVIDER");
     const webSearchApiKeyParameterName = resolveOptionalConfigValue(
       this,
@@ -485,6 +494,38 @@ export class SlackAiAssistantStack extends Stack {
       },
     });
 
+    const webChatUserPool = webChatAuthMode === "cognito"
+      ? new cognito.UserPool(this, "WebChatUserPool", {
+          selfSignUpEnabled: false,
+          signInAliases: { email: true },
+          standardAttributes: { email: { required: true, mutable: true } },
+          passwordPolicy: { minLength: 12 },
+          removalPolicy: cdk.RemovalPolicy.RETAIN,
+        })
+      : undefined;
+    const cognitoDomainPrefix =
+      resolveOptionalConfigValue(this, "webChatCognitoDomainPrefix", "WEB_CHAT_COGNITO_DOMAIN_PREFIX") ??
+      `${this.stackName}-${this.account}`.toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 63);
+    const webChatUserPoolDomain = webChatUserPool?.addDomain("WebChatDomain", {
+      cognitoDomain: { domainPrefix: cognitoDomainPrefix },
+    });
+    const webChatGoogleIdentityProvider = webChatUserPool
+      ? new cognito.UserPoolIdentityProviderGoogle(this, "WebChatGoogleIdentityProvider", {
+          userPool: webChatUserPool,
+          clientId: cdk.SecretValue.secretsManager(webChatGoogleOAuthSecretName, {
+            jsonField: "clientId",
+          }).unsafeUnwrap(),
+          clientSecretValue: cdk.SecretValue.secretsManager(webChatGoogleOAuthSecretName, {
+            jsonField: "clientSecret",
+          }),
+          scopes: ["openid", "email", "profile"],
+          attributeMapping: {
+            email: cognito.ProviderAttribute.GOOGLE_EMAIL,
+            fullname: cognito.ProviderAttribute.GOOGLE_NAME,
+          },
+        })
+      : undefined;
+
     const webChat = createNodeFunction(this, "WebChatFunction", {
       entry: "web-chat",
       timeout: Duration.minutes(5),
@@ -494,7 +535,10 @@ export class SlackAiAssistantStack extends Stack {
         ...toolEnvironment,
         WEB_CONVERSATIONS_TABLE_NAME: webConversationsTable.tableName,
         WEB_MESSAGES_TABLE_NAME: webMessagesTable.tableName,
-        WEB_CHAT_ACCESS_KEY_PARAMETER_NAME: webChatAccessKeyParameterName,
+        WEB_CHAT_AUTH_MODE: webChatAuthMode,
+        ...(webChatAuthMode === "access-key"
+          ? { WEB_CHAT_ACCESS_KEY_PARAMETER_NAME: webChatAccessKeyParameterName }
+          : { WEB_CHAT_COGNITO_USER_POOL_ID: webChatUserPool!.userPoolId }),
         AGENT_RESPONSE_TIMEOUT_MS: "240000",
       },
     });
@@ -605,7 +649,9 @@ export class SlackAiAssistantStack extends Stack {
     skillsTable.grantReadWriteData(chatApi);
     webConversationsTable.grantReadWriteData(webChat);
     webMessagesTable.grantReadWriteData(webChat);
-    grantSecureParameterRead(this, webChatAccessKeyParameterName, [webChat]);
+    if (webChatAuthMode === "access-key") {
+      grantSecureParameterRead(this, webChatAccessKeyParameterName, [webChat]);
+    }
     scheduledTasksTable.grantReadWriteData(scheduledRunner);
     recurringTasksTable.grantReadWriteData(scheduledRunner);
     providerBindingsTable.grantReadData(ingress);
@@ -852,6 +898,24 @@ export class SlackAiAssistantStack extends Stack {
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
       },
     });
+    const webChatPageUrl = `https://${webChatDistribution.distributionDomainName}`;
+    const webChatUserPoolClient = webChatUserPool?.addClient("WebChatClient", {
+      generateSecret: false,
+      authFlows: { userSrp: true },
+      oAuth: {
+        flows: { authorizationCodeGrant: true },
+        scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL],
+        callbackUrls: [webChatPageUrl],
+        logoutUrls: [webChatPageUrl],
+      },
+      supportedIdentityProviders: [cognito.UserPoolClientIdentityProvider.GOOGLE],
+    });
+    if (webChatUserPoolClient && webChatGoogleIdentityProvider) {
+      webChatUserPoolClient.node.addDependency(webChatGoogleIdentityProvider);
+    }
+    if (webChatUserPoolClient) {
+      webChat.addEnvironment("WEB_CHAT_COGNITO_CLIENT_ID", webChatUserPoolClient.userPoolClientId);
+    }
     new s3deploy.BucketDeployment(this, "WebChatAssets", {
       destinationBucket: webChatBucket,
       distribution: webChatDistribution,
@@ -861,18 +925,34 @@ export class SlackAiAssistantStack extends Stack {
         s3deploy.Source.asset(join(__dirname, "../web/dist")),
         s3deploy.Source.jsonData("config.json", {
           apiBaseUrl: webChatUrl.url,
+          authMode: webChatAuthMode,
+          ...(webChatUserPoolClient && webChatUserPoolDomain
+            ? {
+                cognito: {
+                  clientId: webChatUserPoolClient.userPoolClientId,
+                  domain: webChatUserPoolDomain.baseUrl(),
+                  redirectUri: webChatPageUrl,
+                  identityProvider: "Google",
+                },
+              }
+            : {}),
         }),
       ],
     });
     new cdk.CfnOutput(this, "WebChatUrl", {
-      value: `https://${webChatDistribution.distributionDomainName}`,
+      value: webChatPageUrl,
     });
     new cdk.CfnOutput(this, "WebChatApiUrl", {
       value: webChatUrl.url,
     });
-    new cdk.CfnOutput(this, "WebChatAccessKeyParameterName", {
-      value: webChatAccessKeyParameterName,
-    });
+    if (webChatAuthMode === "access-key") {
+      new cdk.CfnOutput(this, "WebChatAccessKeyParameterName", {
+        value: webChatAccessKeyParameterName,
+      });
+    } else {
+      new cdk.CfnOutput(this, "WebChatUserPoolId", { value: webChatUserPool!.userPoolId });
+      new cdk.CfnOutput(this, "WebChatUserPoolClientId", { value: webChatUserPoolClient!.userPoolClientId });
+    }
     new cdk.CfnOutput(this, "WebConversationsTableName", {
       value: webConversationsTable.tableName,
     });

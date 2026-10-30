@@ -10,11 +10,15 @@ import { formatSse } from "../../webchat/sse";
 import { WebChatAgent, buildWebChatAgentRequest } from "../../webchat/turn";
 import { routeWebChat } from "../../webchat/http";
 import { z } from "zod";
+import { CognitoWebChatVerifier, createCognitoWebChatVerifier } from "../../webchat/cognito";
 
 const webChatExtraEnvSchema = z.object({
   WEB_CONVERSATIONS_TABLE_NAME: z.string().min(1),
   WEB_MESSAGES_TABLE_NAME: z.string().min(1),
-  WEB_CHAT_ACCESS_KEY_PARAMETER_NAME: z.string().min(1),
+  WEB_CHAT_AUTH_MODE: z.enum(["access-key", "cognito"]).default("access-key"),
+  WEB_CHAT_ACCESS_KEY_PARAMETER_NAME: z.string().min(1).optional(),
+  WEB_CHAT_COGNITO_USER_POOL_ID: z.string().min(1).optional(),
+  WEB_CHAT_COGNITO_CLIENT_ID: z.string().min(1).optional(),
 });
 
 interface FunctionUrlEvent {
@@ -30,19 +34,10 @@ interface StreamingRuntime {
   streamifyResponse<TEvent>(
     handler: (event: TEvent, responseStream: Writable, context: Context) => Promise<void>,
   ): (event: TEvent, responseStream: Writable, context: Context) => Promise<void>;
-  HttpResponseStream: {
-    from(writable: Writable, metadata: Record<string, unknown>): Writable;
-  };
 }
 
-const corsHeaders = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-headers": "authorization,content-type,x-request-id",
-  "access-control-allow-methods": "GET,POST,OPTIONS",
-  "cache-control": "no-store",
-};
-
 let cachedAccessKey: Promise<string> | undefined;
+let cachedCognitoVerifier: CognitoWebChatVerifier | undefined;
 
 async function handleWebChatLambda(event: FunctionUrlEvent, responseStream: Writable): Promise<void> {
   const env = loadChatApiEnv();
@@ -52,21 +47,40 @@ async function handleWebChatLambda(event: FunctionUrlEvent, responseStream: Writ
   const resources = buildAgentRuntimeResources(env);
   const agent = createStreamingAgent(env);
   let accessKey: string | undefined;
-  try {
-    accessKey = await loadAccessKey(extra.WEB_CHAT_ACCESS_KEY_PARAMETER_NAME);
-  } catch (error) {
-    log.error("Web chat access key could not be loaded", {
-      error: error instanceof Error ? error.message : "unknown",
-    });
-    writeJson(responseStream, 503, { ok: false, error: "not_configured", message: "Web chat access key is not configured." });
-    return;
+  let authenticatedOwner: { workspaceId: string; userId: string } | undefined;
+  if (extra.WEB_CHAT_AUTH_MODE === "cognito") {
+    if (!extra.WEB_CHAT_COGNITO_USER_POOL_ID || !extra.WEB_CHAT_COGNITO_CLIENT_ID) {
+      await writeJson(responseStream, 503, { ok: false, error: "not_configured", message: "Cognito authentication is not configured." });
+      return;
+    }
+    try {
+      cachedCognitoVerifier ??= createCognitoWebChatVerifier(
+        extra.WEB_CHAT_COGNITO_USER_POOL_ID,
+        extra.WEB_CHAT_COGNITO_CLIENT_ID,
+      );
+      authenticatedOwner = await cachedCognitoVerifier.verifyAuthorization(headerValue(event.headers, "authorization"));
+    } catch (error) {
+      log.warn("Web chat Cognito token was rejected", { error: error instanceof Error ? error.message : "unknown" });
+      await writeJson(responseStream, 401, { ok: false, error: "unauthorized", message: "Sign in to use web chat." });
+      return;
+    }
+  } else {
+    try {
+      accessKey = await loadAccessKey(extra.WEB_CHAT_ACCESS_KEY_PARAMETER_NAME ?? "");
+    } catch (error) {
+      log.error("Web chat access key could not be loaded", {
+        error: error instanceof Error ? error.message : "unknown",
+      });
+      await writeJson(responseStream, 503, { ok: false, error: "not_configured", message: "Web chat access key is not configured." });
+      return;
+    }
   }
 
   let body: unknown = {};
   try {
     body = parseBody(event);
   } catch {
-    writeJson(responseStream, 400, { ok: false, error: "bad_request", message: "Request body must be JSON." });
+    await writeJson(responseStream, 400, { ok: false, error: "bad_request", message: "Request body must be JSON." });
     return;
   }
 
@@ -84,6 +98,7 @@ async function handleWebChatLambda(event: FunctionUrlEvent, responseStream: Writ
         store,
         agent,
         accessKey,
+        authenticatedOwner,
         allowUnauthenticated: false,
         timeZone: env.GOOGLE_CALENDAR_TIME_ZONE,
         resources,
@@ -92,19 +107,19 @@ async function handleWebChatLambda(event: FunctionUrlEvent, responseStream: Writ
     );
   } catch (error) {
     log.error("Web chat request failed", { error: error instanceof Error ? error.message : "unknown" });
-    writeJson(responseStream, 500, { ok: false, error: "internal_error" });
+    await writeJson(responseStream, 500, { ok: false, error: "internal_error" });
     return;
   }
 
   if (result.kind === "json") {
-    writeJson(responseStream, result.status, result.body);
+    await writeJson(responseStream, result.status, result.body);
     return;
   }
 
   const stream = openResponse(responseStream, 200, {
-    ...corsHeaders,
-    "content-type": "text/event-stream; charset=utf-8",
-    "x-accel-buffering": "no",
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-store",
+    "X-Accel-Buffering": "no",
   });
   try {
     for await (const chunk of result.events) {
@@ -158,20 +173,24 @@ function parseBody(event: FunctionUrlEvent): unknown {
   return JSON.parse(text);
 }
 
-function writeJson(responseStream: Writable, statusCode: number, body: unknown): void {
+async function writeJson(responseStream: Writable, statusCode: number, body: unknown): Promise<void> {
   const stream = openResponse(responseStream, statusCode, {
-    ...corsHeaders,
-    "content-type": "application/json; charset=utf-8",
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
   });
   stream.end(JSON.stringify(body));
 }
 
-function openResponse(responseStream: Writable, statusCode: number, headers: Record<string, string>): Writable {
-  const streaming = (globalThis as unknown as { awslambda?: StreamingRuntime }).awslambda;
-  if (!streaming) {
-    return responseStream;
-  }
-  return streaming.HttpResponseStream.from(responseStream, { statusCode, headers });
+function openResponse(responseStream: Writable, _statusCode: number, _headers: Record<string, string>): Writable {
+  // HttpResponseStream.from currently yields malformed Function URL responses
+  // in the deployed runtime. The application protocol carries JSON/SSE errors,
+  // while Function URL configuration supplies CORS headers.
+  return responseStream;
+}
+
+function headerValue(headers: Record<string, string | undefined> | undefined, name: string): string | undefined {
+  const match = Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === name);
+  return match?.[1]?.trim() || undefined;
 }
 
 const streamingRuntime = (globalThis as unknown as { awslambda?: StreamingRuntime }).awslambda;

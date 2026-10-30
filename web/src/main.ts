@@ -22,12 +22,25 @@ interface Settings {
   userId: string;
 }
 
+interface CognitoConfig {
+  clientId: string;
+  domain: string;
+  redirectUri: string;
+  identityProvider?: string;
+}
+
 const settingsKey = "serverless-agent-web-chat";
 const accessKeyName = "serverless-agent-web-chat-key";
+const idTokenName = "serverless-agent-web-chat-id-token";
+const pkceVerifierName = "serverless-agent-web-chat-pkce-verifier";
+const oauthStateName = "serverless-agent-web-chat-oauth-state";
 
 const state: {
   settings: Settings;
   mode: string;
+  authMode: "access-key" | "cognito";
+  cognito?: CognitoConfig;
+  idToken: string;
   conversations: ConversationSummary[];
   activeId?: string;
   messages: ChatMessage[];
@@ -37,6 +50,8 @@ const state: {
 } = {
   settings: loadSettings(),
   mode: "",
+  authMode: "access-key",
+  idToken: sessionStorage.getItem(idTokenName) ?? "",
   conversations: [],
   messages: [],
   streaming: false,
@@ -55,17 +70,27 @@ async function boot(root: HTMLElement): Promise<void> {
   try {
     const response = await fetch("./config.json", { cache: "no-store" });
     if (response.ok) {
-      const config = (await response.json()) as { apiBaseUrl?: string; mode?: string };
+      const config = (await response.json()) as {
+        apiBaseUrl?: string;
+        mode?: string;
+        authMode?: "access-key" | "cognito";
+        cognito?: CognitoConfig;
+      };
       if (!state.settings.apiBaseUrl && config.apiBaseUrl) {
         state.settings.apiBaseUrl = config.apiBaseUrl.replace(/\/$/, "");
       }
       state.mode = config.mode ?? "";
+      state.authMode = config.authMode ?? "access-key";
+      state.cognito = config.cognito;
+      if (state.authMode === "cognito") {
+        await completeCognitoSignIn();
+      }
     }
   } catch {
     state.error = "Could not load config.json. Start the local server with npm run dev:web.";
   }
   render(root);
-  if (state.settings.workspaceId && state.settings.userId) {
+  if (state.authMode === "access-key" || state.idToken) {
     await refreshConversations(root);
   }
 }
@@ -91,7 +116,7 @@ function renderSidebar(root: HTMLElement): HTMLElement {
   const create = el("button", "new-chat") as HTMLButtonElement;
   create.type = "button";
   create.textContent = "New chat";
-  create.disabled = state.streaming;
+  create.disabled = state.streaming || !isAuthenticated();
   create.addEventListener("click", () => void startNewChat(root));
   const list = el("div", "conversation-list");
   for (const conversation of state.conversations) {
@@ -110,6 +135,9 @@ function renderSidebar(root: HTMLElement): HTMLElement {
 }
 
 function renderSettings(root: HTMLElement): HTMLElement {
+  if (state.authMode === "cognito") {
+    return renderCognitoAuth(root);
+  }
   const form = el("form", "settings") as HTMLFormElement;
   form.append(
     field("Workspace", "workspaceId", state.settings.workspaceId),
@@ -139,7 +167,27 @@ function renderSettings(root: HTMLElement): HTMLElement {
   return form;
 }
 
+function renderCognitoAuth(root: HTMLElement): HTMLElement {
+  const panel = el("div", "settings");
+  const hint = el("p");
+  hint.textContent = state.idToken ? "Signed in with Cognito." : "Sign in to access your conversations.";
+  const button = el("button") as HTMLButtonElement;
+  button.type = "button";
+  button.textContent = state.idToken ? "Sign out" : "Sign in";
+  button.addEventListener("click", () => {
+    if (state.idToken) {
+      signOut();
+    } else {
+      void startCognitoSignIn();
+    }
+    render(root);
+  });
+  panel.append(hint, button);
+  return panel;
+}
+
 function renderMain(root: HTMLElement): HTMLElement {
+  const authenticated = isAuthenticated();
   const main = el("main", "main");
   const top = el("header", "topbar");
   const heading = el("h2");
@@ -151,9 +199,11 @@ function renderMain(root: HTMLElement): HTMLElement {
   if (state.messages.length === 0) {
     const empty = el("div", "empty");
     const prompt = el("h2");
-    prompt.textContent = "How can I help?";
+    prompt.textContent = authenticated ? "How can I help?" : "Sign in to continue";
     const sub = el("p");
-    sub.textContent = "Ask a question. Replies stream as the model writes them.";
+    sub.textContent = authenticated
+      ? "Ask a question. Replies stream as the model writes them."
+      : "Use the Sign in button to access your conversations.";
     empty.append(prompt, sub);
     column.append(empty);
   } else {
@@ -183,7 +233,7 @@ function renderMain(root: HTMLElement): HTMLElement {
   input.name = "text";
   input.rows = 1;
   input.placeholder = "Message the assistant";
-  input.disabled = state.streaming;
+  input.disabled = state.streaming || !authenticated;
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -193,7 +243,7 @@ function renderMain(root: HTMLElement): HTMLElement {
   const send = el("button", "send") as HTMLButtonElement;
   send.type = "submit";
   send.textContent = "Send";
-  send.disabled = state.streaming;
+  send.disabled = state.streaming || !authenticated;
   form.append(input, send);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -210,6 +260,10 @@ function renderMain(root: HTMLElement): HTMLElement {
     thread.scrollTop = thread.scrollHeight;
   });
   return main;
+}
+
+function isAuthenticated(): boolean {
+  return state.authMode !== "cognito" || Boolean(state.idToken);
 }
 
 function renderMessage(message: ChatMessage, streaming: boolean): HTMLElement {
@@ -377,8 +431,8 @@ function applyEvent(assistant: ChatMessage, event: string, data: string): void {
 async function refreshConversations(root: HTMLElement): Promise<void> {
   try {
     const response = await api(`/api/conversations?${ownerQuery()}`);
-    const payload = (await readJson(response)) as { conversations?: ConversationSummary[]; message?: string };
-    if (!response.ok) {
+    const payload = (await readJson(response)) as { ok?: boolean; conversations?: ConversationSummary[]; message?: string };
+    if (!response.ok || payload.ok === false) {
       state.error = payload.message ?? "Could not load chats.";
       render(root);
       return;
@@ -396,7 +450,9 @@ async function api(path: string, init: { method?: string; body?: string } = {}):
   if (init.body) {
     headers.set("content-type", "application/json");
   }
-  if (state.settings.accessKey) {
+  if (state.authMode === "cognito" && state.idToken) {
+    headers.set("authorization", `Bearer ${state.idToken}`);
+  } else if (state.settings.accessKey) {
     headers.set("authorization", `Bearer ${state.settings.accessKey}`);
   }
   return fetch(`${state.settings.apiBaseUrl}${path}`, {
@@ -404,6 +460,93 @@ async function api(path: string, init: { method?: string; body?: string } = {}):
     headers,
     body: init.body,
   });
+}
+
+async function startCognitoSignIn(): Promise<void> {
+  const config = requireCognitoConfig();
+  const verifier = randomUrlSafe(64);
+  const oauthState = randomUrlSafe(32);
+  sessionStorage.setItem(pkceVerifierName, verifier);
+  sessionStorage.setItem(oauthStateName, oauthState);
+  const challenge = base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+  const query = new URLSearchParams({
+    response_type: "code",
+    client_id: config.clientId,
+    redirect_uri: config.redirectUri,
+    scope: "openid email",
+    state: oauthState,
+    code_challenge_method: "S256",
+    code_challenge: challenge,
+  });
+  if (config.identityProvider) {
+    query.set("identity_provider", config.identityProvider);
+  }
+  window.location.assign(`${config.domain}/oauth2/authorize?${query}`);
+}
+
+async function completeCognitoSignIn(): Promise<void> {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
+  if (!code) {
+    return;
+  }
+  const verifier = sessionStorage.getItem(pkceVerifierName);
+  const expectedState = sessionStorage.getItem(oauthStateName);
+  if (!verifier || !expectedState || params.get("state") !== expectedState) {
+    throw new Error("The sign-in response could not be verified. Please sign in again.");
+  }
+  const config = requireCognitoConfig();
+  const response = await fetch(`${config.domain}/oauth2/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: config.clientId,
+      redirect_uri: config.redirectUri,
+      code,
+      code_verifier: verifier,
+    }),
+  });
+  const payload = (await response.json()) as { id_token?: string; error_description?: string };
+  if (!response.ok || !payload.id_token) {
+    throw new Error(payload.error_description ?? "Cognito sign-in failed.");
+  }
+  state.idToken = payload.id_token;
+  sessionStorage.setItem(idTokenName, payload.id_token);
+  sessionStorage.removeItem(pkceVerifierName);
+  sessionStorage.removeItem(oauthStateName);
+  window.history.replaceState({}, document.title, window.location.pathname);
+}
+
+function signOut(): void {
+  const config = requireCognitoConfig();
+  state.idToken = "";
+  state.conversations = [];
+  state.messages = [];
+  sessionStorage.removeItem(idTokenName);
+  const query = new URLSearchParams({ client_id: config.clientId, logout_uri: config.redirectUri });
+  window.location.assign(`${config.domain}/logout?${query}`);
+}
+
+function requireCognitoConfig(): CognitoConfig {
+  if (!state.cognito) {
+    throw new Error("Cognito is not configured for this web chat.");
+  }
+  return state.cognito;
+}
+
+function randomUrlSafe(length: number): string {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return base64Url(bytes);
+}
+
+function base64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function owner(): { workspaceId: string; userId: string } {

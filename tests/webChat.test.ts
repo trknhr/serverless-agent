@@ -198,6 +198,30 @@ describe("web chat routes", () => {
     expect(result).toMatchObject({ kind: "json", status: 503 });
   });
 
+  it("uses the authenticated owner instead of caller-supplied owner fields", async () => {
+    const store = await createStore();
+    const deps = {
+      store,
+      agent: { async *run() { /* unused */ } },
+      authenticatedOwner: { workspaceId: "cognito:pool", userId: "verified-sub" },
+    };
+    const created = await routeWebChat(
+      request("POST", "/api/conversations", undefined, { workspaceId: "spoofed", userId: "attacker" }),
+      deps,
+    );
+    expect(created).toMatchObject({
+      status: 201,
+      body: {
+        conversation: { workspaceId: "cognito:pool", userId: "verified-sub" },
+      },
+    });
+    const listed = await routeWebChat(
+      request("GET", "/api/conversations", { workspaceId: "spoofed", userId: "attacker" }),
+      deps,
+    );
+    expect(listed).toMatchObject({ status: 200, body: { conversations: [expect.any(Object)] } });
+  });
+
   it("returns 400 for an empty message and 404 for an unknown conversation", async () => {
     const deps = {
       store: await createStore(),
