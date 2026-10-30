@@ -29,7 +29,7 @@
     "dev:chat": "ts-node scripts/dev-chat.ts"
   },
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "^4.0.0",
+    "@ai-sdk/amazon-bedrock": "^4.0.172",
     "@aws-crypto/sha256-js": "5.2.0",
     "@aws-sdk/client-bedrock-agentcore": "^3.996.0",
     "@aws-sdk/client-dynamodb": "3.1029.0",
@@ -45,7 +45,7 @@
     "@opentelemetry/auto-instrumentations-node": "^0.77.0",
     "@smithy/protocol-http": "5.3.14",
     "@smithy/signature-v4": "5.3.14",
-    "ai": "^6.0.0",
+    "ai": "^6.0.277",
     "aws-cdk-lib": "2.260.0",
     "aws-jwt-verify": "^5.2.1",
     "bedrock-agentcore": "^0.2.3",
