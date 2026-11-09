@@ -548,7 +548,7 @@ export class SlackAiAssistantStack extends Stack {
       cors: {
         allowedOrigins: ["*"],
         allowedHeaders: ["authorization", "content-type", "x-request-id"],
-        allowedMethods: [lambda.HttpMethod.GET, lambda.HttpMethod.POST],
+        allowedMethods: [lambda.HttpMethod.GET, lambda.HttpMethod.POST, lambda.HttpMethod.PATCH, lambda.HttpMethod.DELETE],
       },
     });
 
@@ -649,6 +649,7 @@ export class SlackAiAssistantStack extends Stack {
     skillsTable.grantReadWriteData(chatApi);
     webConversationsTable.grantReadWriteData(webChat);
     webMessagesTable.grantReadWriteData(webChat);
+    googleOAuthConnectionsTable.grantReadWriteData(webChat);
     if (webChatAuthMode === "access-key") {
       grantSecureParameterRead(this, webChatAccessKeyParameterName, [webChat]);
     }

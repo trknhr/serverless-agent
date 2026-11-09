@@ -11,6 +11,7 @@ import { RecurringTask } from "../tasks/recurringTask";
 import { ScheduledTask } from "../tasks/taskDefinition";
 import { TaskEventRecord, TaskState } from "../tasks/taskState";
 import { WebChatMessage, WebConversation } from "../webchat/types";
+import { Connection, ConnectionAccount } from "../repo/connectionRepository";
 
 export const DEFAULT_LOCAL_STATE_PATH = ".serverless-agent/local-state/state.json";
 
@@ -30,6 +31,8 @@ export interface LocalState {
   builtinSkillOverrides: BuiltinSkillOverride[];
   webConversations: WebConversation[];
   webMessages: WebChatMessage[];
+  connections: Connection[];
+  connectionAccounts: ConnectionAccount[];
 }
 
 export class FileStateStore implements SessionHistoryStore {
@@ -103,6 +106,8 @@ export function createEmptyState(): LocalState {
     builtinSkillOverrides: [],
     webConversations: [],
     webMessages: [],
+    connections: [],
+    connectionAccounts: [],
   };
 }
 
@@ -125,5 +130,7 @@ function normalizeState(state: Partial<LocalState>): LocalState {
     builtinSkillOverrides: state.builtinSkillOverrides ?? [],
     webConversations: state.webConversations ?? [],
     webMessages: state.webMessages ?? [],
+    connections: state.connections ?? [],
+    connectionAccounts: state.connectionAccounts ?? [],
   };
 }

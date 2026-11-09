@@ -786,7 +786,20 @@ export const customToolDefinitions = [
       "Start Google Calendar OAuth authorization for the current user. Only use this when the user explicitly asks to connect, authorize, link, or sign in to Google Calendar. Do not use this for ordinary reminders, recurring tasks, household chores, or schedule notes. This returns authorization guidance only; it does not read or write calendar data.",
     input_schema: {
       type: "object",
-      properties: {},
+      properties: {
+        connection_id: {
+          type: "string",
+          description: "Optional stable connection name. Defaults to google-calendar.",
+        },
+        account_label: {
+          type: "string",
+          description: "Optional human label such as Work or Personal.",
+        },
+        make_default: {
+          type: "boolean",
+          description: "Make this Google account the default for the connection. The first account becomes default automatically.",
+        },
+      },
     },
   },
   {

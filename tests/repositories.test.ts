@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentTurnTraceRepository } from "../src/repo/agentTurnTraceRepository";
 import { CalendarDraftRepository } from "../src/repo/calendarDraftRepository";
+import { ConnectionRepository } from "../src/repo/connectionRepository";
 import { ChannelMemoryRepository } from "../src/repo/channelMemoryRepository";
 import { ConversationSessionRepository } from "../src/repo/conversationSessionRepository";
 import { ConversationTurnRepository } from "../src/repo/conversationTurnRepository";
@@ -2479,5 +2480,122 @@ describe("calendar, source document, and OAuth repositories", () => {
       connectedAt: "provided",
       updatedAt: "provided-updated",
     });
+  });
+
+  it("stores multiple accounts beneath a reusable connection", async () => {
+    const repo = new ConnectionRepository("connections");
+    sendMock.mockResolvedValueOnce({});
+    sendMock.mockResolvedValueOnce({});
+    await repo.saveConnection({
+      workspaceId: "T1",
+      userId: "U1",
+      connectionId: "google-calendar",
+      provider: "google",
+      capability: "calendar",
+      displayName: "Google Calendar",
+      defaultAccountId: "google-sub-1",
+      status: "active",
+    });
+    expect(commandInput(1)).toMatchObject({
+      Item: {
+        pk: "WORKSPACE#T1#USER#U1",
+        sk: "CONNECTION#google-calendar",
+        itemType: "connection",
+        defaultAccountId: "google-sub-1",
+      },
+    });
+
+    sendMock.mockResolvedValueOnce({});
+    sendMock.mockResolvedValueOnce({});
+    await repo.saveAccount({
+      workspaceId: "T1",
+      userId: "U1",
+      connectionId: "google-calendar",
+      accountId: "google-sub-2",
+      providerAccountId: "google-sub-2",
+      displayName: "Personal",
+      email: "personal@example.com",
+      status: "active",
+      credentials: { refreshToken: "refresh-2" },
+    });
+    expect(commandInput(3)).toMatchObject({
+      Item: {
+        sk: "CONNECTION#google-calendar#ACCOUNT#google-sub-2",
+        itemType: "account",
+        email: "personal@example.com",
+      },
+    });
+
+    sendMock.mockResolvedValueOnce({ Items: [
+      { workspaceId: "T1", userId: "U1", connectionId: "google-calendar", accountId: "a1", displayName: "Work", status: "active", credentials: {}, connectedAt: "c", updatedAt: "u" },
+      { workspaceId: "T1", userId: "U1", connectionId: "google-calendar", accountId: "a2", displayName: "Personal", status: "active", credentials: {}, connectedAt: "c", updatedAt: "u" },
+    ] });
+    await expect(repo.listAccounts("T1", "U1", "google-calendar")).resolves.toHaveLength(2);
+    expect(commandInput(4)).toMatchObject({
+      ExpressionAttributeValues: {
+        ":pk": "WORKSPACE#T1#USER#U1",
+        ":prefix": "CONNECTION#google-calendar#ACCOUNT#",
+      },
+    });
+  });
+
+  it.each([undefined, false])("refreshes the runtime token when reauthorizing its default (makeDefault=%s)", async (makeDefault) => {
+    const repo = new GoogleOAuthConnectionRepository("connections");
+    sendMock.mockResolvedValue({});
+    sendMock.mockResolvedValueOnce({}).mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: { defaultAccountId: "sub-1" } });
+    await repo.saveAccount({ workspaceId: "T1", userId: "U1", refreshToken: "new-token" },
+      { accountId: "sub-1", makeDefault });
+    expect(sendMock.mock.calls.map(([command]) => command.input)).toContainEqual(expect.objectContaining({
+      Item: expect.objectContaining({ sk: "GOOGLE_CALENDAR", refreshToken: "new-token" }),
+    }));
+  });
+
+  it.each([false, true])("keeps named connection defaults out of the runtime (makeDefault=%s)", async (makeDefault) => {
+    const repo = new GoogleOAuthConnectionRepository("connections");
+    sendMock.mockResolvedValue({});
+    await repo.saveAccount({ workspaceId: "T1", userId: "U1", refreshToken: "named-token" },
+      { connectionId: "work-calendar", accountId: "sub-2", makeDefault });
+    expect(sendMock.mock.calls.map(([command]) => command.input.Item).filter(Boolean)).toEqual([
+      expect.objectContaining({ sk: "CONNECTION#work-calendar#ACCOUNT#sub-2" }),
+      expect.objectContaining({ sk: "CONNECTION#work-calendar", defaultAccountId: "sub-2" }),
+    ]);
+  });
+
+  it("keeps explicit named default changes out of the runtime", async () => {
+    const repo = new GoogleOAuthConnectionRepository("connections");
+    sendMock.mockResolvedValue({});
+    sendMock.mockResolvedValueOnce({ Item: { connectionId: "work-calendar" } })
+      .mockResolvedValueOnce({ Item: { accountId: "sub-2", status: "active" } })
+      .mockResolvedValueOnce({}).mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: { accountId: "sub-2", credentials: { refreshToken: "named-token" } } });
+    await repo.setDefaultAccount("T1", "U1", "sub-2", "work-calendar");
+    expect(sendMock.mock.calls.some(([command]) => command.input.Item?.sk === "GOOGLE_CALENDAR")).toBe(false);
+  });
+
+  it("makes the first Google account default while preserving account records", async () => {
+    const repo = new GoogleOAuthConnectionRepository("connections");
+    for (let index = 0; index < 7; index += 1) sendMock.mockResolvedValueOnce({});
+    await repo.saveAccount({
+      workspaceId: "T1",
+      userId: "U1",
+      googleSubject: "sub-1",
+      googleEmail: "work@example.com",
+      refreshToken: "refresh-1",
+      calendarId: "primary",
+    }, { accountId: "sub-1", displayName: "Work" });
+
+    expect(commandInput(1)).toMatchObject({ Item: {
+      sk: "CONNECTION#google-calendar#ACCOUNT#sub-1",
+      displayName: "Work",
+    } });
+    expect(commandInput(4)).toMatchObject({ Item: {
+      sk: "CONNECTION#google-calendar",
+      defaultAccountId: "sub-1",
+    } });
+    expect(commandInput(6)).toMatchObject({ Item: {
+      sk: "GOOGLE_CALENDAR",
+      googleEmail: "work@example.com",
+    } });
   });
 });

@@ -148,7 +148,10 @@ The stack creates these DynamoDB tables:
 - `CalendarDraftsTable`: reviewable Google Calendar event drafts
 - `SkillsTable`: workspace-scoped generated skills and built-in skill overrides
 - `SourceDocumentsTable`: imported or archived source document metadata
-- `GoogleOAuthConnectionsTable`: per-user Google Calendar OAuth connections
+- `GoogleOAuthConnectionsTable`: generic per-user external connections. Each
+  connection has a stable `connectionId`, provider/capability metadata, a
+  default account, and any number of account records. Google Calendar is the
+  first adapter; existing single-account records remain readable.
 
 ## Repository Layout
 

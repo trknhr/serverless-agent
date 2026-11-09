@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentRuntimeRequest } from "../src/agentcore/contracts";
 import { AgentRunnerAi, runAgentTurn } from "../src/agentcore/runAgentTurn";
 import { FileStateStore } from "../src/local/fileStateStore";
+import { LocalConnectionRepository } from "../src/local/localRepositories";
 import { Logger } from "../src/shared/logger";
 import { bearerMatches } from "../src/webchat/access";
 import { FileWebChatStore } from "../src/webchat/fileWebChatStore";
@@ -222,6 +223,24 @@ describe("web chat routes", () => {
     expect(listed).toMatchObject({ status: 200, body: { conversations: [expect.any(Object)] } });
   });
 
+  it("isolates connection mutations to the authenticated owner", async () => {
+    const connections = { saveConnection: vi.fn(async (input) => input) };
+    const deps = {
+      store: await createStore(),
+      agent: { async *run() {} },
+      authenticatedOwner: { workspaceId: "verified-workspace", userId: "verified-user" },
+      connections: connections as never,
+    };
+    const result = await routeWebChat(request("POST", "/api/connections", undefined, {
+      workspaceId: "victim", userId: "victim", connectionId: "test",
+      provider: "google", capability: "calendar", displayName: "Test",
+    }), deps);
+    expect(result).toMatchObject({ status: 201 });
+    expect(connections.saveConnection).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: "verified-workspace", userId: "verified-user",
+    }));
+  });
+
   it("returns 400 for an empty message and 404 for an unknown conversation", async () => {
     const deps = {
       store: await createStore(),
@@ -241,6 +260,37 @@ describe("web chat routes", () => {
       expect(body).toContain("Conversation was not found");
     }
     await expect(routeWebChat(request("GET", "/nope"), deps)).resolves.toMatchObject({ status: 404 });
+  });
+
+  it("manages local connections with multiple accounts and a default", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "web-connections-"));
+    tempDirs.push(dir);
+    const stateStore = new FileStateStore(join(dir, "state.json"));
+    const deps = {
+      store: new FileWebChatStore(stateStore),
+      agent: { async *run() { /* unused */ } },
+      allowUnauthenticated: true,
+      connections: new LocalConnectionRepository(stateStore),
+    };
+    const owner = { workspaceId: "local", userId: "user" };
+    await expect(routeWebChat(request("POST", "/api/connections", undefined, {
+      ...owner, connectionId: "google-calendar", provider: "google", capability: "calendar", displayName: "Google Calendar",
+    }), deps)).resolves.toMatchObject({ status: 201 });
+    await routeWebChat(request("POST", "/api/connections/google-calendar/accounts", undefined, {
+      ...owner, accountId: "work", displayName: "Work", email: "work@example.com",
+    }), deps);
+    await routeWebChat(request("POST", "/api/connections/google-calendar/accounts", undefined, {
+      ...owner, accountId: "personal", displayName: "Personal", email: "personal@example.com",
+    }), deps);
+    await routeWebChat(request("PATCH", "/api/connections/google-calendar/accounts/personal", undefined, {
+      ...owner, makeDefault: true,
+    }), deps);
+    const listed = await routeWebChat(request("GET", "/api/connections", owner), deps);
+    expect(listed).toMatchObject({ status: 200, body: { connections: [{
+      connectionId: "google-calendar", defaultAccountId: "personal",
+      accounts: [{ accountId: "work" }, { accountId: "personal" }],
+    }] } });
+    expect(JSON.stringify(listed)).not.toContain("credentials");
   });
 });
 

@@ -19,6 +19,7 @@ import { RecurringTask, recurringTaskSchema } from "../tasks/recurringTask";
 import { ScheduledTask } from "../tasks/taskDefinition";
 import { TaskEventRecord, TaskState, TaskStatus } from "../tasks/taskState";
 import { FileStateStore } from "./fileStateStore";
+import { Connection, ConnectionAccount } from "../repo/connectionRepository";
 
 export function createLocalRepositories(store: FileStateStore) {
   const skills = new LocalSkillRepository(store);
@@ -32,8 +33,88 @@ export function createLocalRepositories(store: FileStateStore) {
     recurringTasks: new LocalRecurringTaskRepository(store),
     calendarDrafts: new LocalCalendarDraftRepository(store),
     workSessions: new LocalWorkSessionRepository(store),
+    connections: new LocalConnectionRepository(store),
     skills,
   };
+}
+
+export class LocalConnectionRepository {
+  constructor(private readonly store: FileStateStore) {}
+
+  async listConnections(workspaceId: string, userId: string): Promise<Connection[]> {
+    const state = await this.store.load();
+    return state.connections.filter((item) => item.workspaceId === workspaceId && item.userId === userId);
+  }
+
+  async listAccounts(workspaceId: string, userId: string, connectionId: string): Promise<ConnectionAccount[]> {
+    const state = await this.store.load();
+    return state.connectionAccounts.filter((item) =>
+      item.workspaceId === workspaceId && item.userId === userId && item.connectionId === connectionId,
+    );
+  }
+
+  async saveConnection(input: Omit<Connection, "createdAt" | "updatedAt">): Promise<Connection> {
+    return this.store.update((state) => {
+      const existing = state.connections.find((item) =>
+        item.workspaceId === input.workspaceId && item.userId === input.userId && item.connectionId === input.connectionId,
+      );
+      const now = new Date().toISOString();
+      const record: Connection = { ...input, createdAt: existing?.createdAt ?? now, updatedAt: now };
+      upsert(state.connections, record, (item) =>
+        item.workspaceId === record.workspaceId && item.userId === record.userId && item.connectionId === record.connectionId,
+      );
+      return record;
+    });
+  }
+
+  async saveAccount(input: Omit<ConnectionAccount, "connectedAt" | "updatedAt">, makeDefault = false): Promise<ConnectionAccount> {
+    return this.store.update((state) => {
+      const connection = state.connections.find((item) =>
+        item.workspaceId === input.workspaceId && item.userId === input.userId && item.connectionId === input.connectionId,
+      );
+      if (!connection) throw new Error(`Connection not found: ${input.connectionId}`);
+      const existing = state.connectionAccounts.find((item) =>
+        item.workspaceId === input.workspaceId && item.userId === input.userId &&
+        item.connectionId === input.connectionId && item.accountId === input.accountId,
+      );
+      const now = new Date().toISOString();
+      const record: ConnectionAccount = { ...input, connectedAt: existing?.connectedAt ?? now, updatedAt: now };
+      upsert(state.connectionAccounts, record, (item) =>
+        item.workspaceId === record.workspaceId && item.userId === record.userId &&
+        item.connectionId === record.connectionId && item.accountId === record.accountId,
+      );
+      if (!connection.defaultAccountId || makeDefault) {
+        connection.defaultAccountId = record.accountId;
+        connection.updatedAt = now;
+      }
+      return record;
+    });
+  }
+
+  async setDefaultAccount(workspaceId: string, userId: string, connectionId: string, accountId: string): Promise<void> {
+    await this.store.update((state) => {
+      const connection = state.connections.find((item) => item.workspaceId === workspaceId && item.userId === userId && item.connectionId === connectionId);
+      const account = state.connectionAccounts.find((item) => item.workspaceId === workspaceId && item.userId === userId && item.connectionId === connectionId && item.accountId === accountId);
+      if (!connection || !account) throw new Error("Connection or account not found");
+      connection.defaultAccountId = accountId;
+      connection.updatedAt = new Date().toISOString();
+    });
+  }
+
+  async deleteAccount(workspaceId: string, userId: string, connectionId: string, accountId: string): Promise<void> {
+    await this.store.update((state) => {
+      const connection = state.connections.find((item) => item.workspaceId === workspaceId && item.userId === userId && item.connectionId === connectionId);
+      state.connectionAccounts = state.connectionAccounts.filter((item) =>
+        !(item.workspaceId === workspaceId && item.userId === userId && item.connectionId === connectionId && item.accountId === accountId),
+      );
+      if (connection?.defaultAccountId === accountId) {
+        connection.defaultAccountId = state.connectionAccounts.find((item) =>
+          item.workspaceId === workspaceId && item.userId === userId && item.connectionId === connectionId,
+        )?.accountId;
+        connection.updatedAt = new Date().toISOString();
+      }
+    });
+  }
 }
 
 export class LocalMemoryItemRepository {

@@ -707,11 +707,20 @@ describe("Google OAuth helpers", () => {
   it("signs, verifies, rejects tampered, and rejects expired OAuth state tokens", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-14T00:00:00Z"));
-    const token = createGoogleOAuthState({ workspaceId: "T1", userId: "U1" }, "signing");
+    const token = createGoogleOAuthState({
+      workspaceId: "T1",
+      userId: "U1",
+      connectionId: "google-calendar",
+      accountLabel: "Work",
+      makeDefault: true,
+    }, "signing");
 
     expect(verifyGoogleOAuthState(token, "signing")).toMatchObject({
       workspaceId: "T1",
       userId: "U1",
+      connectionId: "google-calendar",
+      accountLabel: "Work",
+      makeDefault: true,
     });
     expect(() => verifyGoogleOAuthState(`${token}x`, "signing")).toThrow("signature");
 

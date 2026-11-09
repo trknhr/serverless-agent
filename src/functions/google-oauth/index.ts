@@ -47,7 +47,14 @@ async function startOAuth(event: APIGatewayProxyEvent): Promise<APIGatewayProxyR
   const config = parseGoogleOAuthClientConfig(rawSecret);
   const signingSecret = await secretsProvider.getSecretString(env.SLACK_SIGNING_SECRET_SECRET_ID);
   const redirectUri = buildRedirectUri(event);
-  const state = createGoogleOAuthState({ workspaceId, userId }, signingSecret);
+  const makeDefaultValue = event.queryStringParameters?.make_default;
+  const state = createGoogleOAuthState({
+    workspaceId,
+    userId,
+    connectionId: event.queryStringParameters?.connection_id,
+    accountLabel: event.queryStringParameters?.account_label,
+    makeDefault: makeDefaultValue === undefined ? undefined : makeDefaultValue === "true",
+  }, signingSecret);
   const location = buildGoogleAuthorizationUrl({ config, redirectUri, state });
 
   return {
@@ -83,7 +90,11 @@ async function callbackOAuth(
   }
 
   const userInfo = await fetchGoogleUserInfo(token.access_token);
-  await connections.save({
+  const accountId = userInfo.sub ?? userInfo.email;
+  if (!accountId) {
+    throw new Error("Google did not return an account identifier.");
+  }
+  await connections.saveAccount({
     workspaceId: state.workspaceId,
     userId: state.userId,
     googleSubject: userInfo.sub,
@@ -92,18 +103,25 @@ async function callbackOAuth(
     calendarId: "primary",
     timeZone: env.GOOGLE_CALENDAR_TIME_ZONE,
     scopes: token.scope?.split(/\s+/).filter(Boolean),
+  }, {
+    connectionId: state.connectionId,
+    accountId,
+    displayName: state.accountLabel ?? userInfo.email ?? accountId,
+    makeDefault: state.makeDefault,
   });
 
   log.info("Google Calendar connected", {
     workspaceId: state.workspaceId,
     userId: state.userId,
     googleEmail: userInfo.email,
+    connectionId: state.connectionId ?? "google-calendar",
+    accountId,
   });
 
   return htmlResponse(
     200,
     "Google Calendar連携が完了しました",
-    "Slackに戻って、もう一度カレンダー操作を依頼してください。",
+    "接続アカウントを保存しました。チャットに戻って、もう一度カレンダー操作を依頼してください。",
   );
 }
 

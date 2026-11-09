@@ -67,6 +67,29 @@ describe("start_google_calendar_authorization tool", () => {
     });
   });
 
+  it("can target a named connection account and make it default", async () => {
+    const executor = new CustomToolExecutor(
+      { memoryItems: {}, tasks: {}, taskEvents: {} } as never,
+      {
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        logger: new Logger({ test: "google-calendar-multi-account" }),
+      },
+      { googleOAuthStartUrl: "https://app.example/google/oauth/start" },
+    );
+    const result = await executor.execute({
+      id: "tool-google-auth-2",
+      type: "agent.tool_use",
+      name: "start_google_calendar_authorization",
+      input: { connection_id: "team-calendar", account_label: "Work", make_default: true },
+    });
+    const payload = toolPayload(result);
+    const url = new URL(String(payload.authorization_url));
+    expect(url.searchParams.get("connection_id")).toBe("team-calendar");
+    expect(url.searchParams.get("account_label")).toBe("Work");
+    expect(url.searchParams.get("make_default")).toBe("true");
+  });
+
   it("keeps authorization guidance provider-neutral", async () => {
     const executor = new CustomToolExecutor(
       {

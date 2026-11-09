@@ -9,6 +9,7 @@ import { logger } from "../../shared/logger";
 import { formatSse } from "../../webchat/sse";
 import { WebChatAgent, buildWebChatAgentRequest } from "../../webchat/turn";
 import { routeWebChat } from "../../webchat/http";
+import { createConnectionManagement } from "../../webchat/connectionManagement";
 import { z } from "zod";
 import { CognitoWebChatVerifier, createCognitoWebChatVerifier } from "../../webchat/cognito";
 
@@ -99,6 +100,7 @@ async function handleWebChatLambda(event: FunctionUrlEvent, responseStream: Writ
         agent,
         accessKey,
         authenticatedOwner,
+        connections: createConnectionManagement(env.GOOGLE_OAUTH_CONNECTIONS_TABLE_NAME),
         allowUnauthenticated: false,
         timeZone: env.GOOGLE_CALENDAR_TIME_ZONE,
         resources,

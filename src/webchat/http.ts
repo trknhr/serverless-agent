@@ -5,6 +5,7 @@ import { bearerMatches } from "./access";
 import { formatSse } from "./sse";
 import { WebChatAgent, WebChatServerEvent, runWebChatTurn } from "./turn";
 import { WebChatStore } from "./types";
+import { Connection, ConnectionAccount } from "../repo/connectionRepository";
 
 const ownerSchema = z.object({
   workspaceId: z.string().min(1).max(200),
@@ -29,6 +30,14 @@ export interface WebChatHttpDeps {
   resources?: AgentRuntimeResources;
   log?: Logger;
   now?: () => Date;
+  connections?: {
+    listConnections(workspaceId: string, userId: string): Promise<Connection[]>;
+    listAccounts(workspaceId: string, userId: string, connectionId: string): Promise<ConnectionAccount[]>;
+    saveConnection(input: Omit<Connection, "createdAt" | "updatedAt">): Promise<Connection>;
+    saveAccount(input: Omit<ConnectionAccount, "connectedAt" | "updatedAt">, makeDefault?: boolean): Promise<ConnectionAccount>;
+    setDefaultAccount(workspaceId: string, userId: string, connectionId: string, accountId: string): Promise<void>;
+    deleteAccount(workspaceId: string, userId: string, connectionId: string, accountId: string): Promise<void>;
+  };
 }
 
 export type WebChatHttpResult =
@@ -57,6 +66,24 @@ async function routeWebChatUnsafe(request: WebChatHttpRequest, deps: WebChatHttp
     return auth;
   }
 
+  const connectionAccountMatch = request.path.match(/^\/api\/connections\/([^/]+)\/accounts\/([^/]+)$/);
+  if (connectionAccountMatch && method === "PATCH") {
+    return setDefaultConnectionAccount(connectionAccountMatch[1] ?? "", connectionAccountMatch[2] ?? "", request, deps);
+  }
+  if (connectionAccountMatch && method === "DELETE") {
+    return deleteConnectionAccount(connectionAccountMatch[1] ?? "", connectionAccountMatch[2] ?? "", request, deps);
+  }
+  const connectionAccountsMatch = request.path.match(/^\/api\/connections\/([^/]+)\/accounts$/);
+  if (connectionAccountsMatch && method === "POST") {
+    return createConnectionAccount(connectionAccountsMatch[1] ?? "", request, deps);
+  }
+  if (request.path === "/api/connections" && method === "GET") {
+    return listConnections(request, deps);
+  }
+  if (request.path === "/api/connections" && method === "POST") {
+    return createConnection(request, deps);
+  }
+
   const messagesMatch = request.path.match(/^\/api\/conversations\/([^/]+)\/messages$/);
   if (messagesMatch && method === "GET") {
     return getMessages(messagesMatch[1] ?? "", request, deps);
@@ -71,6 +98,66 @@ async function routeWebChatUnsafe(request: WebChatHttpRequest, deps: WebChatHttp
     return createConversation(request, deps);
   }
   return { kind: "json", status: 404, body: { ok: false, error: "not_found" } };
+}
+
+function requireConnections(deps: WebChatHttpDeps): NonNullable<WebChatHttpDeps["connections"]> {
+  if (!deps.connections) throw new Error("Connection management is not configured");
+  return deps.connections;
+}
+
+async function listConnections(request: WebChatHttpRequest, deps: WebChatHttpDeps): Promise<WebChatHttpResult> {
+  const owner = resolveOwner(deps, { workspaceId: request.query.workspaceId, userId: request.query.userId });
+  const repository = requireConnections(deps);
+  const connections = await repository.listConnections(owner.workspaceId, owner.userId);
+  const result = await Promise.all(connections.map(async (connection) => ({
+    ...connection,
+    accounts: (await repository.listAccounts(owner.workspaceId, owner.userId, connection.connectionId)).map(publicAccount),
+  })));
+  return { kind: "json", status: 200, body: { ok: true, connections: result } };
+}
+
+async function createConnection(request: WebChatHttpRequest, deps: WebChatHttpDeps): Promise<WebChatHttpResult> {
+  const body = z.object({
+    workspaceId: z.string().optional(), userId: z.string().optional(),
+    connectionId: z.string().trim().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/),
+    provider: z.string().trim().min(1).max(100), capability: z.string().trim().min(1).max(100),
+    displayName: z.string().trim().min(1).max(200),
+  }).parse(request.body ?? {});
+  const owner = resolveOwner(deps, body);
+  const connection = await requireConnections(deps).saveConnection({ ...body, ...owner, status: "active" });
+  return { kind: "json", status: 201, body: { ok: true, connection: { ...connection, accounts: [] } } };
+}
+
+async function createConnectionAccount(connectionIdRaw: string, request: WebChatHttpRequest, deps: WebChatHttpDeps): Promise<WebChatHttpResult> {
+  const connectionId = decodeURIComponent(connectionIdRaw);
+  const body = z.object({
+    workspaceId: z.string().optional(), userId: z.string().optional(), accountId: z.string().trim().min(1).max(200),
+    displayName: z.string().trim().min(1).max(200), email: z.string().email().optional(), makeDefault: z.boolean().optional(),
+  }).parse(request.body ?? {});
+  const owner = resolveOwner(deps, body);
+  const account = await requireConnections(deps).saveAccount({
+    ...owner, connectionId, accountId: body.accountId, displayName: body.displayName, email: body.email,
+    status: "active", credentials: {},
+  }, body.makeDefault);
+  return { kind: "json", status: 201, body: { ok: true, account: publicAccount(account) } };
+}
+
+async function setDefaultConnectionAccount(connectionIdRaw: string, accountIdRaw: string, request: WebChatHttpRequest, deps: WebChatHttpDeps): Promise<WebChatHttpResult> {
+  const body = z.object({ workspaceId: z.string().optional(), userId: z.string().optional(), makeDefault: z.literal(true) }).parse(request.body ?? {});
+  const owner = resolveOwner(deps, body);
+  await requireConnections(deps).setDefaultAccount(owner.workspaceId, owner.userId, decodeURIComponent(connectionIdRaw), decodeURIComponent(accountIdRaw));
+  return { kind: "json", status: 200, body: { ok: true } };
+}
+
+async function deleteConnectionAccount(connectionIdRaw: string, accountIdRaw: string, request: WebChatHttpRequest, deps: WebChatHttpDeps): Promise<WebChatHttpResult> {
+  const owner = resolveOwner(deps, { workspaceId: request.query.workspaceId, userId: request.query.userId });
+  await requireConnections(deps).deleteAccount(owner.workspaceId, owner.userId, decodeURIComponent(connectionIdRaw), decodeURIComponent(accountIdRaw));
+  return { kind: "json", status: 200, body: { ok: true } };
+}
+
+function publicAccount(account: ConnectionAccount): Omit<ConnectionAccount, "credentials"> {
+  const { credentials: _credentials, ...result } = account;
+  return result;
 }
 
 export async function collectWebChatEvents(events: AsyncIterable<WebChatServerEvent>): Promise<string> {

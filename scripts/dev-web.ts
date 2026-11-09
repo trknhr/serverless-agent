@@ -36,10 +36,11 @@ async function main(): Promise<void> {
   execFileSync("npx", ["ts-node", "scripts/build-web.ts"], { stdio: "inherit" });
   const stateStore = new FileStateStore(options.stateFile);
   const store = new FileWebChatStore(stateStore);
+  const repositories = createLocalRepositories(stateStore);
   const agent = options.demo ? createDemoAgent() : createBedrockAgent(stateStore);
   const server = createServer(async (request, response) => {
     try {
-      await handle(request, response, options, store, agent);
+      await handle(request, response, options, store, agent, repositories.connections);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Local web chat failed";
       response.writeHead(500, { "content-type": "application/json; charset=utf-8" });
@@ -59,6 +60,7 @@ async function handle(
   options: DevWebOptions,
   store: FileWebChatStore,
   agent: WebChatAgent,
+  connections: ReturnType<typeof createLocalRepositories>["connections"],
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${options.host}:${options.port}`);
   if (request.method === "OPTIONS") {
@@ -88,6 +90,7 @@ async function handle(
         allowUnauthenticated: !options.accessKey,
         timeZone: process.env.GOOGLE_CALENDAR_TIME_ZONE ?? "Asia/Tokyo",
         log: logger.child({ component: "dev-web" }),
+        connections,
       },
     );
     if (result.kind === "json") {
@@ -253,7 +256,7 @@ function corsHeaders(): Record<string, string> {
   return {
     "access-control-allow-origin": "*",
     "access-control-allow-headers": "authorization,content-type,x-request-id",
-    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
     "cache-control": "no-store",
   };
 }

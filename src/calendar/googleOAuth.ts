@@ -16,6 +16,9 @@ export interface GoogleOAuthClientConfig {
 export interface GoogleOAuthState {
   workspaceId: string;
   userId: string;
+  connectionId?: string;
+  accountLabel?: string;
+  makeDefault?: boolean;
   nonce: string;
   expiresAt: number;
 }
@@ -116,12 +119,15 @@ export async function fetchGoogleUserInfo(accessToken: string): Promise<GoogleUs
 }
 
 export function createGoogleOAuthState(
-  input: Pick<GoogleOAuthState, "workspaceId" | "userId">,
+  input: Pick<GoogleOAuthState, "workspaceId" | "userId" | "connectionId" | "accountLabel" | "makeDefault">,
   signingSecret: string,
 ): string {
   const state: GoogleOAuthState = {
     workspaceId: input.workspaceId,
     userId: input.userId,
+    connectionId: input.connectionId,
+    accountLabel: input.accountLabel,
+    makeDefault: input.makeDefault,
     nonce: randomBytes(16).toString("hex"),
     expiresAt: Date.now() + 10 * 60 * 1000,
   };

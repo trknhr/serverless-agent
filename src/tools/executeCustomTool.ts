@@ -380,7 +380,11 @@ const listCalendarEventsSchema = z.object({
   limit: z.number().int().min(1).max(50).optional(),
 });
 
-const startGoogleCalendarAuthorizationSchema = z.object({});
+const startGoogleCalendarAuthorizationSchema = z.object({
+  connection_id: z.string().min(1).optional(),
+  account_label: z.string().min(1).optional(),
+  make_default: z.boolean().optional(),
+});
 
 const listGoogleCalendarsSchema = z.object({
   min_access_role: z.enum(["freeBusyReader", "reader", "writer", "owner"]).optional(),
@@ -2002,7 +2006,7 @@ export class CustomToolExecutor {
   }
 
   private async startGoogleCalendarAuthorization(input: Record<string, unknown>): Promise<ToolExecutionResult> {
-    startGoogleCalendarAuthorizationSchema.parse(input);
+    const parsed = startGoogleCalendarAuthorizationSchema.parse(input);
     if (!this.context.userId) {
       return errorResult("Google Calendar authorization requires a user context.");
     }
@@ -2017,9 +2021,17 @@ export class CustomToolExecutor {
         this.integrations.googleOAuthStartUrl,
         this.context.workspaceId,
         this.context.userId,
+        {
+          connectionId: parsed.connection_id,
+          accountLabel: parsed.account_label,
+          makeDefault: parsed.make_default,
+        },
       ),
       workspace_id: this.context.workspaceId,
       user_id: this.context.userId,
+      connection_id: parsed.connection_id ?? "google-calendar",
+      account_label: parsed.account_label,
+      make_default: parsed.make_default,
       channel_id: this.context.channelId,
       next_step: "Ask the user to open authorization_url to connect Google Calendar for this user.",
     });

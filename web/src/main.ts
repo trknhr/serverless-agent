@@ -29,6 +29,34 @@ interface CognitoConfig {
   identityProvider?: string;
 }
 
+interface ConnectionAccountView {
+  accountId: string;
+  displayName: string;
+  email?: string;
+  status: "active" | "disabled";
+}
+
+interface ConnectionView {
+  connectionId: string;
+  provider: string;
+  capability: string;
+  displayName: string;
+  defaultAccountId?: string;
+  status: "active" | "disabled";
+  accounts: ConnectionAccountView[];
+}
+
+const connectorCatalog = [
+  { connectionId: "google-calendar", provider: "google", capability: "calendar", displayName: "Google Calendar", description: "Check and manage your schedule", icon: "31", tone: "blue" },
+  { connectionId: "gmail", provider: "google", capability: "email", displayName: "Gmail", description: "Search and draft emails", icon: "M", tone: "red" },
+  { connectionId: "google-drive", provider: "google", capability: "files", displayName: "Google Drive", description: "Search files and docs", icon: "△", tone: "green" },
+  { connectionId: "github", provider: "github", capability: "code", displayName: "GitHub", description: "Search repositories and pull requests", icon: "GH", tone: "black" },
+  { connectionId: "notion", provider: "notion", capability: "docs", displayName: "Notion", description: "Search pages and docs", icon: "N", tone: "black" },
+  { connectionId: "slack", provider: "slack", capability: "messages", displayName: "Slack", description: "Search and send messages", icon: "#", tone: "purple" },
+  { connectionId: "dropbox", provider: "dropbox", capability: "files", displayName: "Dropbox", description: "Search files and folders", icon: "◇", tone: "blue" },
+  { connectionId: "stripe", provider: "stripe", capability: "payments", displayName: "Stripe", description: "Look up payments", icon: "S", tone: "purple" },
+] as const;
+
 const settingsKey = "serverless-agent-web-chat";
 const accessKeyName = "serverless-agent-web-chat-key";
 const idTokenName = "serverless-agent-web-chat-id-token";
@@ -47,6 +75,10 @@ const state: {
   streaming: boolean;
   status: string;
   error: string;
+  view: "chat" | "connections";
+  connections: ConnectionView[];
+  connectionSearch: string;
+  showCustomConnectionForm: boolean;
 } = {
   settings: loadSettings(),
   mode: "",
@@ -57,6 +89,10 @@ const state: {
   streaming: false,
   status: "",
   error: "",
+  view: "chat",
+  connections: [],
+  connectionSearch: "",
+  showCustomConnectionForm: false,
 };
 
 const app = document.querySelector<HTMLElement>("#app");
@@ -118,6 +154,16 @@ function renderSidebar(root: HTMLElement): HTMLElement {
   create.textContent = "New chat";
   create.disabled = state.streaming || !isAuthenticated();
   create.addEventListener("click", () => void startNewChat(root));
+  const chatNavigation = el("div", "nav-switch chat-navigation");
+  const connectionNavigation = el("div", "nav-switch connection-navigation");
+  const chatButton = el("button", state.view === "chat" ? "active" : "") as HTMLButtonElement;
+  chatButton.textContent = "Chat";
+  chatButton.addEventListener("click", () => { state.view = "chat"; render(root); });
+  const connectionsButton = el("button", state.view === "connections" ? "active" : "") as HTMLButtonElement;
+  connectionsButton.textContent = "Connections";
+  connectionsButton.addEventListener("click", () => { state.view = "connections"; void refreshConnections(root); });
+  chatNavigation.append(chatButton);
+  connectionNavigation.append(connectionsButton);
   const list = el("div", "conversation-list");
   for (const conversation of state.conversations) {
     const button = el("button", `conversation${conversation.conversationId === state.activeId ? " active" : ""}`) as HTMLButtonElement;
@@ -130,7 +176,7 @@ function renderSidebar(root: HTMLElement): HTMLElement {
     button.addEventListener("click", () => void openConversation(root, conversation.conversationId));
     list.append(button);
   }
-  aside.append(brand, create, list, renderSettings(root));
+  aside.append(brand, chatNavigation, create, list, connectionNavigation, renderSettings(root));
   return aside;
 }
 
@@ -138,6 +184,13 @@ function renderSettings(root: HTMLElement): HTMLElement {
   if (state.authMode === "cognito") {
     return renderCognitoAuth(root);
   }
+  const details = el("details", "profile-settings") as HTMLDetailsElement;
+  const summary = el("summary");
+  const avatar = el("span", "profile-avatar");
+  avatar.textContent = "L";
+  const profileName = el("span");
+  profileName.textContent = "Local user";
+  summary.append(avatar, profileName);
   const form = el("form", "settings") as HTMLFormElement;
   form.append(
     field("Workspace", "workspaceId", state.settings.workspaceId),
@@ -164,7 +217,8 @@ function renderSettings(root: HTMLElement): HTMLElement {
     localStorage.setItem(settingsKey, JSON.stringify({ ...state.settings, accessKey: "" }));
     void refreshConversations(root);
   });
-  return form;
+  details.append(summary, form);
+  return details;
 }
 
 function renderCognitoAuth(root: HTMLElement): HTMLElement {
@@ -187,6 +241,7 @@ function renderCognitoAuth(root: HTMLElement): HTMLElement {
 }
 
 function renderMain(root: HTMLElement): HTMLElement {
+  if (state.view === "connections") return renderConnections(root);
   const authenticated = isAuthenticated();
   const main = el("main", "main");
   const top = el("header", "topbar");
@@ -262,6 +317,218 @@ function renderMain(root: HTMLElement): HTMLElement {
   return main;
 }
 
+function renderConnections(root: HTMLElement): HTMLElement {
+  const main = el("main", "connections-main");
+  if (state.error) {
+    const error = el("div", "error");
+    error.setAttribute("role", "alert");
+    error.textContent = state.error;
+    main.append(error);
+  }
+  const surface = el("section", "connector-surface");
+  const toolbar = el("div", "connector-toolbar");
+  const tabs = el("div", "connector-tabs");
+  const connectorsTab = el("button", "active") as HTMLButtonElement; connectorsTab.textContent = "Connectors";
+  const accountsTab = el("button") as HTMLButtonElement; accountsTab.textContent = "Accounts";
+  accountsTab.addEventListener("click", () => document.querySelector("#connected-accounts")?.scrollIntoView({ behavior: "smooth" }));
+  tabs.append(connectorsTab, accountsTab);
+  const tools = el("div", "connector-tools");
+  const searchWrap = el("label", "connector-search");
+  const searchIcon = el("span"); searchIcon.textContent = "⌕";
+  const search = document.createElement("input"); search.type = "search"; search.placeholder = "Search connectors..."; search.value = state.connectionSearch;
+  search.addEventListener("input", () => { state.connectionSearch = search.value; render(root); queueMicrotask(() => root.querySelector<HTMLInputElement>(".connector-search input")?.focus()); });
+  searchWrap.append(searchIcon, search);
+  const custom = el("button", "new-connector") as HTMLButtonElement; custom.textContent = "New Connector";
+  custom.addEventListener("click", () => { state.showCustomConnectionForm = !state.showCustomConnectionForm; render(root); });
+  tools.append(searchWrap, custom); toolbar.append(tabs, tools); surface.append(toolbar);
+  if (state.showCustomConnectionForm) surface.append(renderNewConnectionForm(root));
+
+  const featuredTitle = el("h2", "connector-section-title"); featuredTitle.textContent = "Featured"; surface.append(featuredTitle);
+  const catalog = el("div", "connector-grid");
+  const query = state.connectionSearch.trim().toLowerCase();
+  for (const connector of connectorCatalog.filter((item) => !query || `${item.displayName} ${item.description} ${item.provider}`.toLowerCase().includes(query))) {
+    const existing = state.connections.find((item) => item.connectionId === connector.connectionId);
+    catalog.append(renderConnectorCatalogItem(root, connector, existing));
+  }
+  surface.append(catalog);
+
+  const accountSection = el("section", "connected-section"); accountSection.id = "connected-accounts";
+  const accountTitle = el("h2", "connector-section-title"); accountTitle.textContent = "Connected accounts"; accountSection.append(accountTitle);
+  for (const connection of state.connections) accountSection.append(renderConnectionCard(root, connection));
+  if (state.connections.length === 0) {
+    const empty = el("div", "connections-empty"); empty.textContent = "Add a connector above, then attach Work, Personal, or other accounts."; accountSection.append(empty);
+  }
+  surface.append(accountSection); main.append(surface);
+  return main;
+}
+
+function renderConnectorCatalogItem(
+  root: HTMLElement,
+  connector: (typeof connectorCatalog)[number],
+  existing?: ConnectionView,
+): HTMLElement {
+  const row = el("article", "connector-item");
+  const icon = el("div", `connector-icon ${connector.tone}`); icon.textContent = connector.icon;
+  const copy = el("div", "connector-copy");
+  const title = el("strong"); title.textContent = connector.displayName;
+  const description = el("span"); description.textContent = connector.description; copy.append(title, description);
+  const action = el("button", existing ? "manage" : "") as HTMLButtonElement; action.type = "button"; action.textContent = existing ? "Manage" : "Add";
+  action.addEventListener("click", () => {
+    if (existing) { document.querySelector(`[data-connection-id="${existing.connectionId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); return; }
+    if (state.mode === "demo" || state.mode === "agent") {
+      showMockConnect(root, connector);
+      return;
+    }
+    void mutateConnection(root, "/api/connections", "POST", {
+      ...owner(), connectionId: connector.connectionId, provider: connector.provider,
+      capability: connector.capability, displayName: connector.displayName,
+    });
+  });
+  row.append(icon, copy, action); return row;
+}
+
+function renderNewConnectionForm(root: HTMLElement): HTMLElement {
+  const form = el("form", "connection-form") as HTMLFormElement;
+  const title = el("h3"); title.textContent = "New connection";
+  form.append(title, field("Connection ID", "connectionId", "google-calendar"), field("Provider", "provider", "google"), field("Capability", "capability", "calendar"), field("Display name", "displayName", "Google Calendar"));
+  const button = el("button") as HTMLButtonElement; button.type = "submit"; button.textContent = "Create connection"; form.append(button);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    state.showCustomConnectionForm = false;
+    void mutateConnection(root, "/api/connections", "POST", {
+      ...owner(), connectionId: String(data.get("connectionId") ?? ""), provider: String(data.get("provider") ?? ""),
+      capability: String(data.get("capability") ?? ""), displayName: String(data.get("displayName") ?? ""),
+    });
+  });
+  return form;
+}
+
+function renderConnectionCard(root: HTMLElement, connection: ConnectionView): HTMLElement {
+  const card = el("section", "connection-card");
+  card.dataset.connectionId = connection.connectionId;
+  const header = el("div", "connection-header");
+  const title = el("h3"); title.textContent = connection.displayName;
+  const meta = el("span"); meta.textContent = `${connection.accounts.length} account${connection.accounts.length === 1 ? "" : "s"} · ${connection.provider} / ${connection.capability}`;
+  header.append(title, meta); card.append(header);
+  if (state.mode === "demo" || state.mode === "agent") {
+    const connect = el("button", "mock-add-account") as HTMLButtonElement;
+    connect.textContent = "Connect another account";
+    connect.addEventListener("click", () => showMockConnect(root, connection));
+    card.append(connect);
+  }
+  const accounts = el("div", "account-list");
+  for (const account of connection.accounts) {
+    const row = el("div", "account-row");
+    const identity = el("div");
+    const name = el("strong"); name.textContent = account.displayName;
+    const detail = el("span"); detail.textContent = account.email ?? account.accountId;
+    identity.append(name, detail);
+    const actions = el("div", "account-actions");
+    if (account.accountId === connection.defaultAccountId) {
+      const badge = el("span", "default-badge"); badge.textContent = "Default"; actions.append(badge);
+    } else {
+      const makeDefault = el("button") as HTMLButtonElement; makeDefault.type = "button"; makeDefault.textContent = "Make default";
+      makeDefault.addEventListener("click", () => void mutateConnection(root, `/api/connections/${encodeURIComponent(connection.connectionId)}/accounts/${encodeURIComponent(account.accountId)}`, "PATCH", { ...owner(), makeDefault: true }));
+      actions.append(makeDefault);
+    }
+    const remove = el("button", "danger-button") as HTMLButtonElement; remove.type = "button"; remove.textContent = "Remove";
+    remove.addEventListener("click", () => void removeConnectionAccount(root, connection.connectionId, account.accountId));
+    actions.append(remove); row.append(identity, actions); accounts.append(row);
+  }
+  card.append(accounts, renderNewAccountForm(root, connection.connectionId));
+  return card;
+}
+
+function showMockConnect(root: HTMLElement, connector: Pick<ConnectionView, "connectionId" | "provider" | "capability" | "displayName">): void {
+  const dialog = document.createElement("dialog");
+  dialog.className = "mock-connect-dialog";
+  const heading = el("h2"); heading.textContent = `Connect ${connector.displayName}`;
+  const hint = el("p"); hint.textContent = "Local preview · Choose a sample account";
+  const status = el("p", "mock-connect-status"); status.setAttribute("role", "status");
+  const choices = el("div", "mock-account-choices");
+  for (const account of [
+    { accountId: "mock-work", displayName: "Work", email: "work@example.com" },
+    { accountId: "mock-personal", displayName: "Personal", email: "personal@example.com" },
+  ]) {
+    const button = el("button", "mock-account-choice") as HTMLButtonElement;
+    const name = el("strong"); name.textContent = account.displayName;
+    const email = el("span"); email.textContent = account.email;
+    button.append(name, email);
+    button.addEventListener("click", async () => {
+      dialog.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+      status.textContent = "Connecting account…";
+      try {
+        if (!state.connections.some((item) => item.connectionId === connector.connectionId)) {
+          const response = await api("/api/connections", { method: "POST", body: JSON.stringify({ ...owner(), ...connector }) });
+          if (!response.ok) throw new Error("Could not create connection.");
+        }
+        const response = await api(`/api/connections/${encodeURIComponent(connector.connectionId)}/accounts`, {
+          method: "POST", body: JSON.stringify({ ...owner(), ...account }),
+        });
+        if (!response.ok) throw new Error("Could not connect account.");
+        dialog.close(); dialog.remove();
+        await refreshConnections(root);
+        document.querySelector(`[data-connection-id="${connector.connectionId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : "Connection failed.";
+        dialog.querySelectorAll("button").forEach((item) => { item.disabled = false; });
+      }
+    });
+    choices.append(button);
+  }
+  const note = el("p", "mock-connect-note"); note.textContent = "Sample accounts are stored locally. No access to a real service is granted.";
+  const cancel = el("button", "mock-connect-cancel") as HTMLButtonElement; cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => { dialog.close(); dialog.remove(); });
+  dialog.addEventListener("cancel", () => dialog.remove());
+  dialog.append(heading, hint, choices, status, note, cancel);
+  root.append(dialog); dialog.showModal();
+}
+
+function renderNewAccountForm(root: HTMLElement, connectionId: string): HTMLElement {
+  const form = el("form", "account-form") as HTMLFormElement;
+  form.append(field("Account ID", "accountId", ""), field("Label", "displayName", ""), field("Email (optional)", "email", "", "email"));
+  const label = el("label", "checkbox-label");
+  const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.name = "makeDefault";
+  label.append(checkbox, document.createTextNode("Make default"));
+  const button = el("button") as HTMLButtonElement; button.type = "submit"; button.textContent = "Add account";
+  form.append(label, button);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault(); const data = new FormData(form);
+    const email = String(data.get("email") ?? "").trim();
+    void mutateConnection(root, `/api/connections/${encodeURIComponent(connectionId)}/accounts`, "POST", {
+      ...owner(), accountId: String(data.get("accountId") ?? ""), displayName: String(data.get("displayName") ?? ""),
+      ...(email ? { email } : {}), makeDefault: data.get("makeDefault") === "on",
+    });
+  });
+  return form;
+}
+
+async function refreshConnections(root: HTMLElement): Promise<void> {
+  state.error = "";
+  try {
+    const response = await api(`/api/connections?${ownerQuery()}`);
+    const payload = (await readJson(response)) as { connections?: ConnectionView[]; message?: string };
+    if (!response.ok) throw new Error(payload.message ?? "Could not load connections.");
+    state.connections = payload.connections ?? [];
+  } catch (error) { state.error = error instanceof Error ? error.message : "Could not load connections."; }
+  render(root);
+}
+
+async function mutateConnection(root: HTMLElement, path: string, method: string, body: Record<string, unknown>): Promise<void> {
+  try {
+    const response = await api(path, { method, body: JSON.stringify(body) });
+    const payload = await readJson(response);
+    if (!response.ok) throw new Error(String(payload.message ?? `Request failed (${response.status}).`));
+    await refreshConnections(root);
+  } catch (error) { state.error = error instanceof Error ? error.message : "Connection update failed."; render(root); }
+}
+
+async function removeConnectionAccount(root: HTMLElement, connectionId: string, accountId: string): Promise<void> {
+  if (!window.confirm("Remove this account from the connection?")) return;
+  await mutateConnection(root, `/api/connections/${encodeURIComponent(connectionId)}/accounts/${encodeURIComponent(accountId)}?${ownerQuery()}`, "DELETE", owner());
+}
+
 function isAuthenticated(): boolean {
   return state.authMode !== "cognito" || Boolean(state.idToken);
 }
@@ -282,6 +549,8 @@ function renderMessage(message: ChatMessage, streaming: boolean): HTMLElement {
 }
 
 async function startNewChat(root: HTMLElement): Promise<void> {
+  if (state.streaming) return;
+  state.view = "chat";
   state.error = "";
   try {
     const response = await api("/api/conversations", { method: "POST", body: ownerBody() });
@@ -304,6 +573,7 @@ async function openConversation(root: HTMLElement, conversationId: string): Prom
   if (state.streaming) {
     return;
   }
+  state.view = "chat";
   state.error = "";
   state.activeId = conversationId;
   try {
@@ -342,9 +612,9 @@ async function sendMessage(root: HTMLElement, text: string): Promise<void> {
   state.messages = [...state.messages, assistant];
   state.streaming = true;
   render(root);
-  const live = root.querySelector<HTMLElement>(".message.assistant:last-child .markdown");
+  const liveNode = () => root.querySelector<HTMLElement>(".message.assistant:last-child .markdown");
   const statusNode = () => root.querySelector<HTMLElement>(".status");
-  const thread = root.querySelector<HTMLElement>(".thread");
+  const threadNode = () => root.querySelector<HTMLElement>(".thread");
 
   try {
     const response = await api(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, {
@@ -373,6 +643,7 @@ async function sendMessage(root: HTMLElement, text: string): Promise<void> {
       for (const event of consumed.events) {
         applyEvent(assistant, event.event, event.data);
       }
+      const live = liveNode();
       if (live) {
         live.innerHTML = renderMarkdown(assistant.text);
         live.parentElement?.classList.add("caret");
@@ -393,6 +664,7 @@ async function sendMessage(root: HTMLElement, text: string): Promise<void> {
         }
         errorNode.textContent = state.error;
       }
+      const thread = threadNode();
       if (thread) {
         thread.scrollTop = thread.scrollHeight;
       }
@@ -403,7 +675,7 @@ async function sendMessage(root: HTMLElement, text: string): Promise<void> {
     state.streaming = false;
     state.status = "";
     await refreshConversations(root);
-    if (state.activeId) {
+    if (state.activeId && state.view === "chat") {
       await openConversation(root, state.activeId);
     }
   }

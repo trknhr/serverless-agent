@@ -49,6 +49,7 @@ export function buildGoogleOAuthStartUrl(
   startUrl: string | undefined,
   workspaceId: string,
   userId: string,
+  options?: { connectionId?: string; accountLabel?: string; makeDefault?: boolean },
 ): string {
   if (!startUrl) {
     return "Google OAuth start URL is not configured.";
@@ -57,5 +58,8 @@ export function buildGoogleOAuthStartUrl(
   const url = new URL(startUrl);
   url.searchParams.set("workspace_id", workspaceId);
   url.searchParams.set("user_id", userId);
+  if (options?.connectionId) url.searchParams.set("connection_id", options.connectionId);
+  if (options?.accountLabel) url.searchParams.set("account_label", options.accountLabel);
+  if (options?.makeDefault !== undefined) url.searchParams.set("make_default", String(options.makeDefault));
   return url.toString();
 }
