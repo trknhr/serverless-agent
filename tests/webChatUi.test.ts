@@ -16,7 +16,8 @@ async function setup(options: { connectionError?: boolean; mutationError?: boole
     if (url === "./config.json") return Response.json({});
     if (url.startsWith("/api/connections")) {
       if (options.mutationError) {
-        if (init?.method === "DELETE" || init?.method === "PATCH") return Response.json({ message: "Update denied" }, { status: 403 });
+        if (init?.method === "PATCH") return Response.json({ message: "Default update denied" }, { status: 403 });
+        if (init?.method === "DELETE") return Response.json({ message: "Removal denied" }, { status: 403 });
         return Response.json({ connections: [{ connectionId: "test", displayName: "Test", provider: "test", capability: "test", status: "active", accounts: [{ accountId: "work", displayName: "Work", status: "active" }] }] });
       }
       return options.connectionError ? Response.json({ message: "Connection request denied" }, { status: 403 }) : Response.json({ connections: [] });
@@ -83,8 +84,9 @@ it("keeps default and removal failures visible on the Connections screen", async
   click(document, "Connections");
   await vi.waitFor(() => expect([...document.querySelectorAll("button")].some((item) => item.textContent === "Make default")).toBe(true));
   click(document, "Make default");
-  await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toBe("Update denied"));
+  await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toBe("Default update denied"));
   click(document, "Remove");
-  await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toBe("Update denied"));
+  // Wait for this request's render, rather than matching the preceding PATCH error.
+  await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toBe("Removal denied"));
   expect(document.querySelector(".connections-main")).toBeTruthy();
 });
